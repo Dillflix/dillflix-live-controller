@@ -8,10 +8,13 @@ declare module "jmuxer" {
       clearBuffer: boolean;
       fps: number;
       onReady: () => void;
-      onError: () => void;
+      onError: (error: { name?: string; error?: string }) => void;
+      onKeyframePosition?: () => void;
       onUnsupportedCodec: () => void;
     });
     url?: string;
+    // Pinned 2.1.4 cleanup index; corrected for variable frame durations.
+    kfPosition: number[];
     feed(data: {
       video: Uint8Array;
       duration: number;

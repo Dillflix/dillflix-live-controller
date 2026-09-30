@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1
+
+- Fixed screen reconnect loops caused by equal encoder timestamps and long forward timestamp gaps. Preserve every encoded frame, assign positive sample durations, and compress long gaps for live viewing; backward timestamps still trigger an explicit stream reset.
+- Corrected JMuxer 2.1.4's keyframe cleanup index for variable-rate video using cumulative sample durations. Raised the emergency retention ceiling from 30 to 60 seconds so it no longer conflicts with the muxer's normal 30-second retention and ten-second cleanup cycle.
+- Preserve reconnect backoff through short-lived playback, defer buffer teardown until the muxer's error callback returns, and display/log distinct packet, buffer, and decoder diagnostics.
+- Added browser regressions for timestamp anomalies and uninterrupted variable-rate H.264 playback through buffer cleanup. No database, ADB capture, or deployment binding changes.
+
+Validation: 153 backend tests and 23 Chromium browser tests pass, including 45 seconds of uninterrupted variable-rate H.264 playback with buffer cleanup.
+
+Target Fire TV confirmation remains required; these locally reproduced failures are not proof of the particular hardware failure's cause.
+
 ## 0.7.0
 
 - Added optional live device-screen mirroring through a separate view-only ADB/scrcpy bridge. The pinned server is verified by checksum, launched with unique session ownership, and stopped after the last viewer leaves. It sends no navigation/input commands and does not change playback evidence or watch-plan state.

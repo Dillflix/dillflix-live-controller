@@ -25,7 +25,11 @@ function packet(flags: bigint, data: Buffer) {
   return Buffer.concat([header, data]);
 }
 
-async function screenFixture(page: Page, interval = 100) {
+async function screenFixture(
+  page: Page,
+  interval = 100,
+  timestamp = (index: number) => index * 100000,
+) {
   let opened = 0;
   let closed = 0;
   let latest: WebSocketRoute | undefined;
@@ -42,7 +46,7 @@ async function screenFixture(page: Page, interval = 100) {
       const frame = fixture.frames[index % fixture.frames.length];
       ws.send(
         packet(
-          (frame.key ? 1n << 62n : 0n) | BigInt(index * 100000),
+          (frame.key ? 1n << 62n : 0n) | BigInt(timestamp(index)),
           Buffer.from(frame.data, "base64"),
         ),
       );
@@ -138,7 +142,7 @@ test("background tabs release capture and return to a fresh live stream", async 
 test("an excessive retained video buffer is replaced with a fresh stream", async ({
   page,
 }) => {
-  const fixture = await screenFixture(page, 5);
+  const fixture = await screenFixture(page, 2);
   await page.goto("/");
   await expect(page.getByTestId("screen-state")).toHaveText("Live screen");
   await expect
@@ -197,4 +201,61 @@ test("unsupported browser offers an explanation without opening a stream", async
     }),
   ).toBeVisible();
   expect(fixture.opened).toBe(0);
+});
+
+for (const anomaly of ["equal", "long gap"] as const) {
+  test(`screen survives ${anomaly} encoder timestamps without reconnecting`, async ({
+    page,
+  }) => {
+    const stream = await screenFixture(page, 100, (index) => {
+      if (anomaly === "equal") return (index === 15 ? 14 : index) * 100000;
+      return index * 100000 + (index >= 15 ? 6000000 : 0);
+    });
+    await page.goto("/");
+    await expect(page.getByTestId("screen-state")).toHaveText("Live screen");
+    await expect
+      .poll(
+        () =>
+          page
+            .locator("video")
+            .evaluate((video: HTMLVideoElement) => video.currentTime),
+        { timeout: 10000 },
+      )
+      .toBeGreaterThan(3);
+    expect(stream.opened).toBe(1);
+    expect(stream.closed).toBe(0);
+    await expect(page.getByTestId("screen-state")).toHaveText("Live screen");
+  });
+}
+
+test("normal buffer retention does not restart healthy video", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  const offsets = [
+    0, 200000, 220000, 370000, 420000, 520000, 600000, 800000, 830000, 900000,
+  ];
+  const stream = await screenFixture(
+    page,
+    100,
+    (index) => Math.floor(index / 10) * 1000000 + offsets[index % 10],
+  );
+  await page.goto("/");
+  await expect(page.getByTestId("screen-state")).toHaveText("Live screen");
+  await expect
+    .poll(
+      () =>
+        page
+          .locator("video")
+          .evaluate((video: HTMLVideoElement) => video.currentTime),
+      { timeout: 55000 },
+    )
+    .toBeGreaterThan(45);
+  expect(stream.opened).toBe(1);
+  expect(stream.closed).toBe(0);
+  expect(
+    await page
+      .locator("video")
+      .evaluate((video: HTMLVideoElement) => video.buffered.start(0)),
+  ).toBeGreaterThan(0);
 });

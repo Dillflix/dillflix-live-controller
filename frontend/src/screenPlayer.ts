@@ -31,13 +31,13 @@ export function startScreenPlayer(
       socket.close();
       socket = undefined;
     }
+    video.onerror = null;
     if (muxer) {
       const url = muxer.url;
       muxer.destroy();
       if (url) URL.revokeObjectURL(url);
       muxer = undefined;
     }
-    video.onerror = null;
     video.pause();
     video.removeAttribute("src");
     video.replaceChildren();
@@ -90,14 +90,18 @@ export function startScreenPlayer(
       let lastPicture = performance.now();
       let previousTime = -1;
       let durationRemainder = 0;
+      let healthySince: number | undefined;
+      let mediaTime = 0;
       let detail = "The screen connection was interrupted. Reconnecting…";
 
       const picture = () => {
         if (!active()) return;
         lastPicture = performance.now();
+        // Brief successful playback must not reset an ongoing failure's backoff.
+        healthySince ??= lastPicture;
+        if (lastPicture - healthySince > 10000) attempt = 0;
         if (!hasPicture) {
           hasPicture = true;
-          attempt = 0;
           onState("live", "Live device screen");
         }
       };
@@ -116,6 +120,13 @@ export function startScreenPlayer(
         flushingTime: 0,
         maxDelay: 500,
         clearBuffer: true,
+        onKeyframePosition: () => {
+          // JMuxer 2.1.4 uses frameCount * latestDuration for this index,
+          // which is incorrect for scrcpy's variable-rate frames. Correct the
+          // just-added entry using our accumulated MP4 sample durations.
+          if (muxer?.kfPosition.length)
+            muxer.kfPosition[muxer.kfPosition.length - 1] = mediaTime / 1000;
+        },
         onReady: () => {
           if (!active() || socket) return;
           const url = new URL(path, window.location.href);
@@ -157,9 +168,15 @@ export function startScreenPlayer(
               }
               const pts = Number(flags & ((1n << 62n) - 1n));
               if (pending) {
-                const duration = (pts - pending.pts) / 1000;
-                if (duration <= 0 || duration > 5000)
-                  throw new Error("Video timestamp discontinuity");
+                const elapsed = (pts - pending.pts) / 1000;
+                if (elapsed < 0)
+                  throw new Error(
+                    `Encoder timestamp moved backwards (${elapsed} ms)`,
+                  );
+                // Equal timestamps need a positive MP4 sample duration. Long
+                // static-screen gaps are valid; compress them for a live view
+                // instead of treating them as corrupt H.264 or replaying a gap.
+                const duration = Math.max(1, Math.min(1000, elapsed));
                 const rounded = Math.max(
                   1,
                   Math.round(duration + durationRemainder),
@@ -170,6 +187,8 @@ export function startScreenPlayer(
                   duration: rounded,
                   isLastVideoFrameComplete: true,
                 });
+                if (!active()) return;
+                mediaTime += rounded;
               }
               if (config) {
                 const combined = new Uint8Array(config.length + data.length);
@@ -178,8 +197,11 @@ export function startScreenPlayer(
                 pending = { data: combined, pts };
                 config = undefined;
               } else pending = { data, pts };
-            } catch {
-              reconnect("The video stream could not be decoded. Reconnecting…");
+            } catch (error) {
+              const reason =
+                error instanceof Error ? error.message : "Invalid video packet";
+              console.warn("Device screen packet error:", reason);
+              reconnect(`Screen stream error: ${reason}. Reconnecting…`);
             }
           };
           socket.onclose = () => active() && reconnect(detail);
@@ -195,15 +217,31 @@ export function startScreenPlayer(
               );
           });
         },
-        onError: () => {
-          if (active()) reconnect("The screen player stalled. Reconnecting…");
+        onError: (error) => {
+          // Leave JMuxer's callback stack before destroying its buffers.
+          console.warn("Device screen media buffer error:", error);
+          queueMicrotask(() => {
+            if (active())
+              reconnect(
+                `Screen media buffer error (${error.name || "unknown"}). Reconnecting…`,
+              );
+          });
         },
         onUnsupportedCodec: () => {
           if (active()) unsupported();
         },
       });
       video.onerror = () => {
-        if (active()) reconnect("Video decoding stopped. Reconnecting…");
+        const error = video.error;
+        console.warn(
+          "Device screen decoder error:",
+          error?.code,
+          error?.message,
+        );
+        if (active())
+          reconnect(
+            `Video decoder error ${error?.code ?? "unknown"}: ${error?.message || "The browser rejected a video frame"}. Reconnecting…`,
+          );
       };
       watchdog = setInterval(() => {
         if (!active()) return;
@@ -211,9 +249,10 @@ export function startScreenPlayer(
           video.buffered.length &&
           video.buffered.end(video.buffered.length - 1) -
             video.buffered.start(0) >
-            30
+            60
         ) {
-          // Bound retained media even when an engine fails its normal MSE cleanup.
+          // JMuxer retains 30 seconds and cleans every 10 seconds. The safety
+          // ceiling must leave room for that normal retention/cleanup cycle.
           reconnect("Refreshing the screen buffer to stay live…");
           return;
         }
