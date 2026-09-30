@@ -27,7 +27,7 @@ POST the same shape to `watch-plan/preview` to inspect estimated conflicts and s
 | `reorder` | `ordered_entry_ids` | Supply each current commitment ID exactly once |
 | `remove` | `entry_id` | Remove one manual commitment |
 
-An accepted mutation returns `{command_id, revision, accepted: true}`. Fetch current state afterwards. HTTP 409 means stale revision or conflicting reuse of a command ID; 422 indicates invalid action data or an ineligible Play now request. For a transport retry with an uncertain outcome, resend the **same** command ID and body. Do not change the revision while retaining that ID.
+An accepted mutation returns `{command_id, revision, accepted: true}`. Fetch current state afterwards. HTTP 409 means stale revision or conflicting reuse of a command ID; 422 indicates invalid action data or an ineligible Play now request. For a transport retry with an uncertain outcome, resend the **same** command ID and body. Do not change the revision while retaining that ID. Version 0.6 keeps the newest 10,000 receipts per device by default, plus undo references. Once an older receipt is removed, its original revision is stale and retry returns 409 without reapplying the action. Command IDs are not permanently reserved beyond retention.
 
 The watch plan contains `{id, content_id, created_at}` entries in priority order. Re-adding existing content moves its existing commitment rather than creating a duplicate. Conflict preview returns `conflicts` (pairs of content IDs), `segments` (`start`, `end`, `content_id`, `estimated`), `unknown_timing`, and a human-readable note. A null segment content ID means automatic selection during that gap; it is not a request to stop.
 
@@ -219,6 +219,14 @@ A report has `request_id`, `executor_job_id`, `device_id`, `intent_version`, `co
 All identity fields must match the staged request. The option must belong to the original permitted set and remain compatible with current coverage. Missing verification, replay/unknown presentation, unhealthy playback, expired evidence, and timestamps over five seconds in the future are rejected. Evidence is usable for at most 15 seconds from observation, or until its earlier expiry. The controller rechecks its lease, active intent, automation mode, current selection, route compatibility, and deadline before accepting a result. Successful job history alone cannot substitute for current device evidence.
 
 Cancellation targets a request, not a global stop command. The simulator keeps cancellation tombstones and rejects lower device intents. It must not let cancellation of an old request stop newer playback. Failed cancellation delivery remains queued across restarts. The simulator chooses an option only to exercise this contract; its observations are not evidence of real TV playback.
+
+## Maintenance and database operations
+
+`GET /api/v1/maintenance` reports `state` (`starting`, `ok`, `error`), `policy`, and, after a successful pass, `last_run`, `removed`, and `counts`. Policy contains `jobs_per_device`, `receipts_per_device`, `inactive_catalog_days`, and `interval_seconds`. Counts are per table as of the last pass, not a live counter. An error adds sanitized `error` and preserves the previous successful pass. There is no HTTP restore endpoint.
+
+Maintenance preserves pending/cancellation obligations, current observations, intent fences, manual commitments, and undo references even if these exceed history limits. Old inactive catalog entries are removed only when unreferenced; cleanup never asserts event completion. The simulator retains enough intent evidence to reject replayed requests after old payloads are removed. A real executor must define its own compatible receipt-retention policy.
+
+Full database snapshots and offline restore use `python -m controller.ops`; see [operations.md](operations.md). Restore preserves saved user data/history but pauses automation, clears runtime playback claims, cancels pending work, and advances revision/intent beyond the backup and readable target. Clients should reload before issuing new commands. Database schema remains 4; configuration-transfer schema remains 1.
 
 ## Future external adapters
 

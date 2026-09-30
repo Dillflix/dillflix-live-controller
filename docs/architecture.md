@@ -14,6 +14,9 @@ The first milestone implements the web application and persistent controller ind
 | `controller/playback.py` | Playback adapter protocol and a separate persistent simulator; no device I/O |
 | `controller/content_status.py` | Independent lifecycle lookup contract, evidence validation/persistence, freshness projection, and refresh worker |
 | `controller/database.py` | Versioned SQLite migrations, records, edit history, activity, command receipts, and leases |
+| `controller/maintenance.py` | Retain recent history while preserving user and recovery references |
+| `controller/ops.py`, `controller/storage_lock.py` | Consistent SQLite backups, validation, offline restore, and cooperative process exclusion |
+| `controller/soak.py` | Isolated accelerated multi-day recovery and retention exercise |
 | `controller/fixtures.py` | Explicit sample lifecycle transitions, independent of estimated end times |
 | `controller/api.py` | Same-origin HTTP API, update notifications, and built frontend |
 | `frontend/src` | React interface using server state rather than an independent browser watch plan |
@@ -35,7 +38,7 @@ Expected viewing windows are estimates only. They cannot guarantee uninterrupted
 
 The device record separates configuration revision, manual plan, desired content, monotonically increasing intent version, and observed playback. A configuration edit increments the revision; ordinary status observations do not. A stale client gets HTTP 409 rather than overwriting another browser's changes.
 
-Command receipts are persisted with a payload hash. Repeating the exact command returns its previous receipt even after the configuration revision changes. Reusing an ID with different content is rejected. A transaction saves desired intent and a pending job together. Before accepting a simulator result, the worker reevaluates selection and checks that the intent and content still match. Superseded requests cannot become observed playback.
+Command receipts are persisted with a payload hash. While its receipt remains retained, repeating the exact command returns the previous receipt even after the configuration revision changes. Reusing a retained ID with different content is rejected. A transaction saves desired intent and a pending job together. Before accepting a simulator result, the worker reevaluates selection and checks that the intent and content still match. Superseded requests cannot become observed playback.
 
 The SQLite lease prevents a second coordinator from acting on the same device. Pending requests survive restart; the next owner can resume them after graceful lease release or expiry. The coordinator calls the playback adapter outside database transactions, inspects each request before delivery, and uses the original request ID and payload for uncertain retries. The simulator has its own durable jobs and per-device intent watermark, so a lost acknowledgement or a process exit between executor success and controller persistence can be reconciled. A current device observation is required to adopt an old success report.
 
@@ -58,6 +61,18 @@ Failure simulation has a short retry burst at 5 and 15 seconds, followed by 5-mi
 Schema version 2 adds a team directory and edit history; schema 3 adds job progress/deadlines/cancellation state and separate simulator tables; schema 4 adds content-status evidence, request IDs, health, and retry scheduling. Migrations run in a transaction, preserve earlier records, and reject a newer unsupported schema version. Existing simulated observations and their requests are adopted on upgrade; migrations never fabricate fresh content-status evidence. Undo stores scoped before/after snapshots with the originating command in the same transaction, retaining the latest 50 edits per device. It restores only the plan or configuration, never observed playback, automation mode, time, or job state. Current live eligibility is reevaluated normally. The request names the latest available edit and the current revision; a different edit or stale revision is rejected. Undo itself remains idempotent. A demo scenario reset clears that device's edit history.
 
 Configuration transfer has its own version-1 document format, separate from database and feed schema versions. Import validates the complete document, previews changes and unresolved team IDs, then replaces rules, team rankings, and preferences in one undoable command. Plan and automation records are outside its scope. Export excludes connection credentials and playback state. Unknown team identities are retained to support imports before a directory has populated.
+
+## Operations
+
+Online backup uses SQLite's backup API to include committed WAL content, then verifies and atomically publishes one standalone file. Restore requires exclusive filesystem ownership and no live leases, verifies the source/target mode and schema, saves a rollback snapshot, checkpoints the old WAL, and atomically replaces the database. Controllers hold a shared guard for their lifetime; individual database transactions also participate. The guard is supported on local Linux filesystems.
+
+Restore preserves saved user data and history, but pauses automation, clears playback claims, cancels pending work, and advances revision/intent beyond the backup and readable target. Simulator observations and old process leases are cleared; content-status checks become due. External device fencing after restore remains part of the deferred executor integration.
+
+Maintenance runs at startup and hourly in a drained background task. It keeps the newest 1,000 completed jobs and 10,000 command receipts per device by default, with explicit exemptions for current playback, pending/cancellation work, highest simulator intents, and undo references. Simulator receipts are deleted only when a higher durable intent prevents old work from executing. A purged command's original revision remains stale, so retries return 409 without replay; command IDs are not reserved forever after receipt eviction.
+
+Inactive catalog entries last seen more than 30 days ago can be removed only when not referenced by watch plans, undo snapshots, current playback, or outstanding work. Orphan status records and obsolete failure entries are then cleaned up. Completed manual commitments remain until removed by the user. Active entries and team identities stay retained. SQLite reuses freed pages; there is no automatic vacuum or backup rotation. Policy and the last pass are exposed through `/api/v1/maintenance`.
+
+The isolated soak runner advances fixture/evidence clocks through unique daily catalogs, outages, handoffs, pauses, restarts, and restore cycles. It asserts runtime/retention invariants using a temporary database, with no external calls. This complements regression tests; it does not establish real-time uptime, device correctness, or host I/O durability. See [operations.md](operations.md) for commands, limits, and remaining host checks.
 
 ## Catalog and freshness
 
@@ -89,7 +104,7 @@ Open rule drafts, overlap reviews, and import previews retain the revision they 
 - Connect real content-status and playback services after the remaining simulator recovery work. Both adapter boundaries are implemented; authoritative out-of-window event status and actual device evidence are still future work.
 - Verify the implemented coverage handoff and prolonged-outage policies against real provider route changes, executor navigation, and device heartbeat evidence.
 - Add richer tournament/session/major filters.
-- Add completed-plan cleanup, job and command retention, complete database backup/restore tooling, and longer soak testing before unattended operation.
+- Validate implemented retention and backup/restore on the target filesystem/container deployment, and run real-time endurance trials. Completed-plan cleanup remains an explicit future UX decision; commitments are not automatically deleted.
 - Implement multiple devices and explicit per-device executor ownership later. Natural-language actions can eventually translate into the same previewable API commands.
 - Build and exercise the Docker image on the target host; test Safari, physical touch devices, and deployment restart behavior.
 

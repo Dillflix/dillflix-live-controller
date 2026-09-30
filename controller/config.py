@@ -20,6 +20,10 @@ class Settings:
     playback_recovery_grace: float = 60
     recovery_stable_seconds: float = 30
     team_directory_interval: int = 3600
+    maintenance_interval: int = 3600
+    job_history_limit: int = 1000
+    command_history_limit: int = 10000
+    catalog_retention_days: int = 30
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
     @classmethod
@@ -39,4 +43,7 @@ class Settings:
             status_interval=max(5, float(os.getenv("STATUS_INTERVAL_SECONDS", "15"))),
             navigation_timeout=max(5, float(os.getenv("NAVIGATION_TIMEOUT_SECONDS", "120"))),
             playback_recovery_grace=max(5, float(os.getenv("PLAYBACK_RECOVERY_GRACE_SECONDS", "60"))),
+            job_history_limit=max(50, int(os.getenv("JOB_HISTORY_LIMIT", "1000"))),
+            command_history_limit=max(100, int(os.getenv("COMMAND_HISTORY_LIMIT", "10000"))),
+            catalog_retention_days=max(1, int(os.getenv("CATALOG_RETENTION_DAYS", "30"))),
         )

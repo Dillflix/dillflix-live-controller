@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+
+- Added consistent online SQLite backups, integrity/schema/JSON/reference verification, SHA-256 reporting, and atomic publication without overwriting existing backup files. Committed WAL data is included.
+- Added guarded offline restore, including standard-input support for Docker. Restore verifies mode/schema, saves a rollback snapshot, preserves user data/history, clears runtime playback claims, advances revision/intent, and starts automation paused. Running controllers block replacement.
+- Added startup/hourly history retention and a maintenance-health endpoint. Recent job/receipt limits and inactive-catalog age are configurable; watch plans, undo references, current playback, pending work, cancellation obligations, and simulator intent fences are preserved.
+- Documented the retained command-receipt window: an original command retried after receipt cleanup receives stale-revision 409 without being reapplied. Old playback requests remain fenced after their payloads are removed.
+- Added a reusable, isolated accelerated recovery runner and local/Docker operations guide. The 30-day run passed 2,940 ticks, 60 restarts, five restores, 15 handoffs, and 30 playback recoveries while pruning historical data.
+- Kept database schema 4 and the existing web interface. The roadmap now separates completed local operations work from outstanding target-host deployment and real-time endurance checks.
+
+Validation: 134 backend tests, 15 Chromium browser tests, and the 30-day accelerated simulator exercise pass. Docker, physical mobile devices, real-time endurance, and real status/playback services remain untested here; both adapters remain simulated.
+
+Upgrade with `git pull --ff-only` and `docker compose up -d --build`. Keep the existing `.env` and persistent volume; no new environment settings are required. See [docs/operations.md](docs/operations.md) for backups, restore, retention, and target-host checks.
+
 ## 0.5.0
 
 - Continued milestone 3 with same-event coverage handoff. A withdrawn option or changed playback locator triggers a new request containing the latest complete Teamarr snapshot and every currently permitted option. Late results from obsolete routes are fenced out.

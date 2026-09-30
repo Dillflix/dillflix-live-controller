@@ -11,3 +11,8 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .browser-cache/
+backups/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3.lock

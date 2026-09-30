@@ -12,8 +12,10 @@ from .content_status import ContentStatusAdapter, ContentStatusCoordinator, Simu
 from .coordinator import PlaybackCoordinator
 from .database import Database, encode
 from .fixtures import default_device, fixtures, make_team
+from .maintenance import policy, prune
 from .planner import content_view, parse_time, preview_plan, priority, team_key
 from .playback import PlaybackAdapter, SimulatedPlaybackAdapter
+from .storage_lock import database_guard
 from .teamarr import TeamarrClient
 
 log = logging.getLogger(__name__)
@@ -26,13 +28,19 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
         self, settings, playback: PlaybackAdapter | None = None, status: ContentStatusAdapter | None = None
     ):
         self.settings = settings
-        self.db = Database(settings.database)
-        self.playback = playback or SimulatedPlaybackAdapter(self.db, settings.observation_ttl)
-        self.status_adapter = status or SimulatedContentStatusAdapter(settings.mode, settings.status_ttl)
-        self.owner = str(uuid.uuid4())
-        self.client = TeamarrClient(settings.teamarr_url, settings.teamarr_token)
-        self.tasks = []
-        self.initialize()
+        self._database_guard = database_guard(settings.database)
+        self._database_guard.__enter__()
+        try:
+            self.db = Database(settings.database)
+            self.playback = playback or SimulatedPlaybackAdapter(self.db, settings.observation_ttl)
+            self.status_adapter = status or SimulatedContentStatusAdapter(settings.mode, settings.status_ttl)
+            self.owner = str(uuid.uuid4())
+            self.client = TeamarrClient(settings.teamarr_url, settings.teamarr_token)
+            self.tasks = []
+            self.initialize()
+        except BaseException:
+            self._database_guard.__exit__(None, None, None)
+            raise
 
     def initialize(self):
         with self.db.transaction() as db:
@@ -557,6 +565,32 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
                 log.exception("Controller tick failed; will retry")
             await asyncio.sleep(self.settings.worker_interval)
 
+    async def run_maintenance(self):
+        while True:
+            try:
+                task = asyncio.create_task(asyncio.to_thread(prune, self.db, self.settings, self.owner))
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    # A writer failure during shutdown must not swallow cancellation
+                    # and restart the hourly loop while stop() is waiting for it.
+                    await asyncio.gather(task, return_exceptions=True)
+                    raise
+            except Exception as exc:
+                log.exception("Database retention failed; will retry")
+                with self.db.transaction() as db:
+                    health = self.db.meta(db, "maintenance_health", {})
+                    health.update(state="error", error=f"{type(exc).__name__}: retention failed")
+                    self.db.set_meta(db, "maintenance_health", health)
+            await asyncio.sleep(self.settings.maintenance_interval)
+
+    def maintenance_status(self):
+        with self.db.transaction() as db:
+            return {
+                **self.db.meta(db, "maintenance_health", {"state": "starting"}),
+                "policy": policy(self.settings),
+            }
+
     async def run_feed(self):
         while True:
             with self.db.transaction() as db:
@@ -583,7 +617,11 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
             await asyncio.sleep(self.settings.team_directory_interval)
 
     def start(self):
-        self.tasks = [asyncio.create_task(self.run_worker()), asyncio.create_task(self.run_status())]
+        self.tasks = [
+            asyncio.create_task(self.run_worker()),
+            asyncio.create_task(self.run_status()),
+            asyncio.create_task(self.run_maintenance()),
+        ]
         if self.settings.mode == "teamarr":
             self.tasks.append(asyncio.create_task(self.run_feed()))
             self.tasks.append(asyncio.create_task(self.run_team_directory()))
@@ -592,5 +630,8 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
-        with self.db.transaction() as db:
-            db.execute("DELETE FROM leases WHERE owner=?", (self.owner,))
+        try:
+            with self.db.transaction() as db:
+                db.execute("DELETE FROM leases WHERE owner=?", (self.owner,))
+        finally:
+            self._database_guard.__exit__(None, None, None)

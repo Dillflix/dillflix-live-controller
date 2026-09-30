@@ -3,6 +3,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+from .storage_lock import database_guard
+
 
 def encode(value):
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
@@ -14,6 +16,10 @@ class Database:
     def __init__(self, path):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with database_guard(path):
+            self.initialize(path)
+
+    def initialize(self, path):
         db = sqlite3.connect(path, timeout=10, isolation_level=None)
         try:
             db.execute("PRAGMA busy_timeout=10000")
@@ -112,6 +118,12 @@ class Database:
 
     @contextmanager
     def transaction(self):
+        with database_guard(self.path):
+            with self.connection_transaction() as db:
+                yield db
+
+    @contextmanager
+    def connection_transaction(self):
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
@@ -201,5 +213,5 @@ class Database:
         )
         # Retain the most recent 2,000 decisions without accumulating screenshots.
         db.execute(
-            "DELETE FROM activity WHERE sequence < (SELECT COALESCE(MAX(sequence),0)-2000 FROM activity)"
+            "DELETE FROM activity WHERE sequence <= (SELECT COALESCE(MAX(sequence),0)-2000 FROM activity)"
         )

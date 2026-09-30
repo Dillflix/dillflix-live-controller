@@ -2,7 +2,7 @@
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
-**Version 0.5: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): complete unattended-operation checks before connecting real status and playback services.
+**Version 0.6: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): complete unattended-operation checks before connecting real status and playback services.
 
 ## What works
 
@@ -11,6 +11,8 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 - Ordered priority rules for leagues, season stages, teams, content kind, and coverage sources, all editable in the UI. Team rankings break ties within a rule.
 - A persistent, searchable team directory. Rank preferred teams even when they have no event in the schedule window; unranked teams tie.
 - Durable undo for watch-plan, priority, team-ranking, and settings edits, including after a restart.
+- Online SQLite backups, integrity verification, and guarded offline restore with a rollback copy and automation paused.
+- Automatic history retention that preserves commitments, undo, current playback, and unresolved recovery work.
 - Configuration export and reviewed import, with validation, cross-mode warnings, and protection against overwriting newer edits.
 - Minimum viewing time, automatic-switch cooldown, same-priority switching, and timezone settings.
 - Separate desired and observed playback, pause/resume, decision history, and side-effect-free selection/conflict previews.
@@ -55,11 +57,15 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Keep your existing `.env` and `controller-data` volume. Version 0.5 continues using database schema 4; recovery fields initialize automatically in existing device records. Older databases migrate to schema 4, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. No environment changes are required. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
+Keep your existing `.env` and `controller-data` volume. Version 0.6 continues using database schema 4. Maintenance initializes automatically and uses safe defaults for existing installations. Older databases migrate to schema 4, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. No environment changes are required. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
 
 Configuration export under **Settings → Configuration backup** saves priorities, preferred teams, and switching/display preferences. Import shows a review before replacing those fields; it preserves the watch plan and automation mode. It is a configuration transfer, not a complete database backup, and contains no Teamarr credentials. Unresolved team IDs are retained with a warning so preferences survive temporary directory gaps.
 
 **Undo last edit** restores the latest saved plan or configuration edit. It is shared across browsers for the device, survives restarts, and retains up to 50 recent edits. It does not rewind live playback or restore an earlier pause/resume state. Repeated undo walks backwards through available edits. Loading a demo scenario clears that sample history.
+
+## Backup and maintenance
+
+See [docs/operations.md](docs/operations.md) for complete Docker/local backup and restore commands, retention settings, and the accelerated recovery runner. Backups can be taken while running; restore requires the controller to be stopped and returns with automation paused. Retention runs at startup and hourly, preserving manual commitments and recovery obligations.
 
 ## Exercise playback recovery
 
@@ -133,6 +139,7 @@ Interactive request schemas are available at `/docs`; the generated OpenAPI docu
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/health` | Process health and explicit simulation mode |
+| `GET /api/v1/maintenance` | Retention policy and last maintenance outcome |
 | `GET /api/v1/overview` | One consistent snapshot for the web interface |
 | `GET /api/v1/events` | Catalog cards, lifecycle observations, options, and metadata |
 | `GET /api/v1/teams?league=nhl` | Persistent team directory and independent refresh health |
@@ -168,6 +175,6 @@ Coverage includes database upgrades, persistent undo, configuration round trips,
 
 ## Next integrations
 
-See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Next are unattended-operation checks: bounded record retention, complete database backup/restore, longer simulation runs, and deployment/mobile checks on the user's host. Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
+See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Local retention, backup/restore, and accelerated multi-day recovery checks are implemented. Next are Docker/restore trials, real-time observation, and proxy/mobile checks on the deployment host; see [the operations guide](docs/operations.md). Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
 
 Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillflix/dillflix-live-controller). This application is versioned and deployed independently of Teamarr.

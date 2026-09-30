@@ -33,7 +33,14 @@ Version 0.5 completes the coverage and prolonged-outage increment:
 - Persisted service-outage probes, navigation suspension while unreachable, restart continuity, and reconciliation of the latest manual choice on reconnect.
 - Recovery explanations, request purpose/current coverage, coverage-change and disconnect/reconnect demo controls, and desktop/mobile regression coverage.
 
-Next: complete unattended-operation checks: bounded job/receipt retention, full database backup/restore, longer simulation runs, and deployment/mobile checks on the user's host.
+Version 0.6 completes the local operations increment:
+
+- Consistent online SQLite snapshots, integrity/schema/reference checks, and offline restore with a rollback snapshot, process exclusion, advanced revision/intent, and automation paused.
+- Automatic bounded historical job/receipt retention and aged inactive-catalog cleanup, preserving watch-plan/undo references, current playback, pending work, and cancellation/intent fences.
+- A maintenance-health endpoint and documented Docker/local operations. No database schema change or required environment edit.
+- A reusable accelerated recovery runner. The 30-day exercise passed 2,940 ticks, 60 restarts, five restores, 15 coverage handoffs, and 30 recovery requests.
+
+Remaining milestone-3 work is target-host validation: Docker build and disposable restore trial, longer real-time observation with household data, and nginx/physical-mobile checks. See [operations.md](operations.md). The local environment cannot perform those host checks.
 
 Do not treat a successful local simulator run as real playback verification or as completion of all milestone-3 work.
 
