@@ -1,0 +1,1635 @@
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  CalendarCheck,
+  CalendarDays,
+  CheckCheck,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
+  FlaskConical,
+  Info,
+  LayoutGrid,
+  ListFilter,
+  LoaderCircle,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Radio,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+  Tv,
+  Users,
+  X,
+} from "lucide-react";
+import { api, ApiError, commandId } from "./api";
+import type {
+  Action,
+  Content,
+  Overview,
+  Preferences,
+  Preview,
+  Rule,
+  SimulationResult,
+  Team,
+} from "./types";
+import "./styles.css";
+
+const navs = [
+  ["events", "Events", LayoutGrid],
+  ["plan", "Watch plan", CalendarDays],
+  ["rules", "Priorities", ListFilter],
+  ["activity", "Activity", Activity],
+  ["settings", "Settings", Settings2],
+] as const;
+type View = (typeof navs)[number][0];
+type Modal =
+  | { type: "details"; id: string }
+  | {
+      type: "conflict";
+      id: string;
+      priority: "first" | "last";
+      preview: Preview;
+    }
+  | { type: "rule"; rule: Rule }
+  | { type: "teams" }
+  | { type: "simulate"; result: SimulationResult }
+  | { type: "playback" }
+  | null;
+const leagueName = (code: string) =>
+  code === "pga" ? "Golf" : code.toUpperCase();
+const initialRule = (): Rule => ({
+  id: commandId(),
+  name: "",
+  enabled: true,
+  league: "all",
+  phase: "any",
+  team_id: null,
+  source: null,
+  kind: null,
+});
+
+function Button({
+  children,
+  primary = false,
+  quiet = false,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  primary?: boolean;
+  quiet?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={`df-button ${primary ? "df-button-primary" : ""} ${quiet ? "df-button-quiet" : ""} ${props.className || ""}`}
+    >
+      {children}
+    </button>
+  );
+}
+function Pill({
+  children,
+  protected: protectedEvent = false,
+}: React.PropsWithChildren<{ protected?: boolean }>) {
+  return (
+    <span className={`df-pill ${protectedEvent ? "protected" : ""}`}>
+      {protectedEvent && <ShieldCheck size={14} />} {children}
+    </span>
+  );
+}
+function Dialog({
+  title,
+  onClose,
+  children,
+}: React.PropsWithChildren<{ title: string; onClose: () => void }>) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement;
+    ref.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "Tab") {
+        const els = Array.from(
+          ref.current?.querySelectorAll<HTMLElement>(
+            "button:not(:disabled),input,select,a[href]",
+          ) || [],
+        );
+        const first = els[0],
+          last = els[els.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previous?.focus();
+    };
+  }, [onClose]);
+  return (
+    <div
+      className="df-overlay"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="df-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dialog-title"
+        ref={ref}
+      >
+        <div className="df-dialog-head">
+          <h2 id="dialog-title">{title}</h2>
+          <Button quiet aria-label="Close dialog" onClick={onClose}>
+            <X size={18} />
+          </Button>
+        </div>
+        {children}
+      </section>
+    </div>
+  );
+}
+function Timeline({
+  preview,
+  find,
+  time,
+}: {
+  preview: Preview;
+  find: (id: string | null) => Content | undefined;
+  time: (s: string | null) => string;
+}) {
+  return (
+    <>
+      <div className="df-timeline">
+        {preview.segments.slice(0, 6).map((s, i) => (
+          <div className="df-time-entry" key={i}>
+            <time>{time(s.start)}</time>
+            <div className={`df-time-label ${s.content_id ? "manual" : ""}`}>
+              <strong>
+                {find(s.content_id)?.title || "Automatic live selection"}
+              </strong>
+              <small>Until {time(s.end)} · estimated</small>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="df-subtitle">{preview.note}</p>
+      {preview.unknown_timing.length > 0 && (
+        <p className="df-subtitle">
+          Some events have unknown end times; their overlaps cannot yet be fully
+          previewed.
+        </p>
+      )}
+    </>
+  );
+}
+function RuleForm({
+  rule,
+  teams,
+  leagues,
+  onSave,
+  onDelete,
+  busy,
+}: {
+  rule: Rule;
+  teams: Team[];
+  leagues: string[];
+  onSave: (r: Rule) => void;
+  onDelete?: () => void;
+  busy: boolean;
+}) {
+  const [draft, setDraft] = useState(rule);
+  const patch = (part: Partial<Rule>) => setDraft((d) => ({ ...d, ...part }));
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave({ ...draft, name: draft.name.trim() });
+      }}
+    >
+      <label className="df-field">
+        Name
+        <input
+          required
+          maxLength={100}
+          value={draft.name}
+          onChange={(e) => patch({ name: e.target.value })}
+        />
+      </label>
+      <label className="df-field">
+        League
+        <select
+          value={draft.league}
+          onChange={(e) => patch({ league: e.target.value })}
+        >
+          <option value="all">All sports</option>
+          {leagues.map((l) => (
+            <option key={l} value={l}>
+              {leagueName(l)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="df-row">
+        <label className="df-field" style={{ flex: 1 }}>
+          Stage
+          <select
+            value={draft.phase}
+            onChange={(e) => patch({ phase: e.target.value })}
+          >
+            {["any", "regular", "playoffs", "final_round"].map((s) => (
+              <option key={s} value={s}>
+                {s.replaceAll("_", " ")}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="df-field" style={{ flex: 1 }}>
+          Team
+          <select
+            value={draft.team_id || ""}
+            onChange={(e) => patch({ team_id: e.target.value || null })}
+          >
+            <option value="">Any team</option>
+            {teams.map((t) => (
+              <option value={t.key} key={t.key}>
+                {t.full_name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label className="df-field">
+        Coverage source
+        <select
+          value={draft.source || ""}
+          onChange={(e) => patch({ source: e.target.value || null })}
+        >
+          <option value="">Any source</option>
+          <option value="nfl_redzone">NFL RedZone</option>
+          <option value="golf">Golf coverage</option>
+          <option value="games">Games</option>
+          <option value="special_events">Special events</option>
+        </select>
+      </label>
+      <label className="df-row">
+        <input
+          className="df-switch"
+          type="checkbox"
+          checked={draft.enabled}
+          onChange={(e) => patch({ enabled: e.target.checked })}
+        />
+        Enabled
+      </label>
+      <p className="df-subtitle">
+        Every selected condition must match. Team identity is provided by the
+        schedule source.
+      </p>
+      <div className="df-dialog-actions">
+        {onDelete && (
+          <Button onClick={onDelete} disabled={busy}>
+            Delete rule
+          </Button>
+        )}
+        <button
+          className="df-button df-button-primary"
+          type="submit"
+          disabled={busy}
+        >
+          Save priority
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function App() {
+  const [data, setData] = useState<Overview | null>(null),
+    [view, setView] = useState<View>("events"),
+    [tab, setTab] = useState("live"),
+    [sport, setSport] = useState("all"),
+    [query, setQuery] = useState("");
+  const [modal, setModal] = useState<Modal>(null),
+    [notice, setNotice] = useState(""),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false),
+    [connected, setConnected] = useState(true),
+    [teamLeague, setTeamLeague] = useState("nfl");
+  const fetchVersion = useRef(0);
+  const load = useCallback(async () => {
+    const serial = ++fetchVersion.current;
+    try {
+      const next = await api<Overview>("/overview");
+      if (serial === fetchVersion.current) {
+        setData(next);
+        setConnected(true);
+      }
+    } catch (e) {
+      if (serial === fetchVersion.current) {
+        setConnected(false);
+        setError((e as Error).message);
+      }
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const source = new EventSource("/api/v1/updates");
+    source.addEventListener("update", () => void load());
+    source.onerror = () => setConnected(false);
+    const poll = setInterval(() => void load(), 10000);
+    return () => {
+      source.close();
+      clearInterval(poll);
+    };
+  }, [load]);
+  const close = useCallback(() => setModal(null), []);
+  const mutate = async (
+    fn: () => Promise<unknown>,
+    message: string,
+    closeAfter = false,
+  ) => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      setNotice(message);
+      if (closeAfter) setModal(null);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+      if (e instanceof ApiError && e.status === 409) await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!data)
+    return (
+      <div id="df-app">
+        <main className="df-main">
+          <h1>Dillflix</h1>
+          <p className="df-subtitle">
+            {error || "Loading your sports controller…"}
+          </p>
+          {error && <Button onClick={() => void load()}>Try again</Button>}
+        </main>
+      </div>
+    );
+  const d = data.device,
+    devicePath = `/devices/${d.id}`,
+    find = (id: string | null) => data.events.find((e) => e.content_id === id);
+  const time = (s: string | null) =>
+    s
+      ? new Intl.DateTimeFormat(undefined, {
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone: d.preferences.timezone,
+        }).format(new Date(s))
+      : "Time TBD";
+  const date = (s: string) =>
+    new Intl.DateTimeFormat(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: d.preferences.timezone,
+    }).format(new Date(s));
+  const timelineTime = (s: string | null) =>
+    s && date(s) !== date(data.meta.now) ? `${date(s)}, ${time(s)}` : time(s);
+  const allTeams = [
+    ...new Map(
+      data.events.flatMap((e) => e.teams).map((t) => [t.key, t]),
+    ).values(),
+  ];
+  const leagues = [
+    ...new Set([
+      ...data.events.map((e) => e.league),
+      "nfl",
+      "nhl",
+      "mlb",
+      "nba",
+      "pga",
+    ]),
+  ].sort();
+  const observed = find(d.observed?.content_id || null),
+    desired = find(d.desired),
+    protectedEvent = d.plan.some((p) => p.content_id === observed?.content_id);
+  const planCommand = (action: Action) =>
+    api(devicePath + "/watch-plan", {
+      command_id: commandId(),
+      expected_revision: d.revision,
+      action,
+    });
+  const saveRules = (
+    rules: Rule[],
+    teamRanks = d.team_ranks,
+    preferences = d.preferences,
+  ) =>
+    api(
+      devicePath + "/rules",
+      {
+        command_id: commandId(),
+        expected_revision: d.revision,
+        rules,
+        team_ranks: teamRanks,
+        preferences,
+      },
+      "PUT",
+    );
+  const togglePause = () =>
+    void mutate(
+      () =>
+        api(devicePath + "/automation", {
+          command_id: commandId(),
+          expected_revision: d.revision,
+          mode: d.automation === "active" ? "paused" : "active",
+        }),
+      d.automation === "active"
+        ? "Automation paused. Your watch plan is saved."
+        : "Automation resumed.",
+    );
+  const play = (e: Content) =>
+    void mutate(
+      () => planCommand({ type: "play_now", content_id: e.content_id }),
+      "Play now requested. This event is protected.",
+      true,
+    );
+  const add = async (e: Content) => {
+    if (busy) return;
+    if (e.watch_entry_id) {
+      setModal({ type: "details", id: e.content_id });
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const preview = await api<Preview>(devicePath + "/watch-plan/preview", {
+        command_id: commandId(),
+        expected_revision: d.revision,
+        action: { type: "add", content_id: e.content_id },
+      });
+      if (preview.conflicts.some((pair) => pair.includes(e.content_id))) {
+        setModal({
+          type: "conflict",
+          id: e.content_id,
+          priority: "last",
+          preview,
+        });
+      } else {
+        await planCommand({ type: "add", content_id: e.content_id });
+        setNotice("Added to your watch plan.");
+        setModal(null);
+        await load();
+      }
+    } catch (e) {
+      setError((e as Error).message);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = (entryId: string) =>
+    void mutate(
+      () => planCommand({ type: "remove", entry_id: entryId }),
+      "Removed from your watch plan.",
+      true,
+    );
+  const changeConflict = (priority: "first" | "last") => {
+    if (modal?.type !== "conflict") return;
+    const current = modal;
+    void mutate(async () => {
+      const preview = await api<Preview>(devicePath + "/watch-plan/preview", {
+        command_id: commandId(),
+        expected_revision: d.revision,
+        action: { type: "add", content_id: current.id, priority },
+      });
+      setModal({ ...current, priority, preview });
+    }, "Overlap preview updated.");
+  };
+  const movePlan = (index: number, delta: number) => {
+    const order = d.plan.map((p) => p.id);
+    [order[index], order[index + delta]] = [order[index + delta], order[index]];
+    void mutate(
+      () => planCommand({ type: "reorder", ordered_entry_ids: order }),
+      "Watch plan order saved.",
+    );
+  };
+  const moveRule = (index: number, delta: number) => {
+    const rules = d.rules.slice();
+    [rules[index], rules[index + delta]] = [rules[index + delta], rules[index]];
+    void mutate(() => saveRules(rules), "Priority order saved.");
+  };
+  const menu = (mobile = false) =>
+    navs.map(([key, label, Icon]) => (
+      <button
+        type="button"
+        key={key}
+        className="df-nav"
+        aria-current={view === key ? "page" : undefined}
+        onClick={() => setView(key)}
+      >
+        <Icon size={18} />
+        <span>{label}</span>
+        {key === "plan" && !mobile && (
+          <span className="df-count">{d.plan.length}</span>
+        )}
+      </button>
+    ));
+  const card = (e: Content) => {
+    const live = e.lifecycle.state === "live",
+      current =
+        d.observed?.content_id === e.content_id &&
+        d.playback_state === "verified";
+    const fail =
+      e.failure &&
+      new Date(e.failure.retry_after) > new Date(data.meta.server_time);
+    return (
+      <article
+        className={`df-event ${current ? "is-current" : ""}`}
+        key={e.content_id}
+        data-testid={`event-${e.content_id}`}
+      >
+        <div className="df-event-body">
+          <div className="df-event-top">
+            <span>{leagueName(e.league)}</span>
+            <span>·</span>
+            <span>
+              {e.phase === "unknown" ? e.kind : e.phase.replaceAll("_", " ")}
+            </span>
+            <span className={`df-event-status ${live ? "df-live" : ""}`}>
+              {fail
+                ? "Retry pending"
+                : live
+                  ? "Live"
+                  : e.lifecycle.state === "scheduled"
+                    ? time(e.start_time)
+                    : e.lifecycle.state}
+            </span>
+          </div>
+          {e.teams.length ? (
+            <div className="df-match">
+              {e.teams.map((t, i) => (
+                <div className="df-team" key={t.key}>
+                  {t.logo_url ? (
+                    <img
+                      className="df-monogram"
+                      src={t.logo_url}
+                      alt=""
+                      loading="lazy"
+                      onError={(ev) => {
+                        ev.currentTarget.style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <span className="df-monogram">{t.abbreviation}</span>
+                  )}
+                  <div className="df-team-text">
+                    <small>{t.city}</small>
+                    <strong>{t.name || t.full_name}</strong>
+                  </div>
+                  {live && e.scores[i] != null && (
+                    <span className="df-score">{e.scores[i]}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="df-broadcast">
+              <div className="df-broadcast-mark">
+                {e.source === "nfl_redzone"
+                  ? "RZ"
+                  : leagueName(e.league).slice(0, 3)}
+              </div>
+              <div>
+                <strong>{e.title}</strong>
+                <p>Live broadcast coverage</p>
+              </div>
+            </div>
+          )}
+          <div className="df-event-meta">
+            <Clock3 size={14} />
+            <span>
+              {date(e.start_time)} · {time(e.start_time)}
+              {e.expected_end_time && ` – ${time(e.expected_end_time)} est.`}
+            </span>
+          </div>
+        </div>
+        <div className="df-event-footer">
+          <span className="df-footnote">
+            {e.watch_entry_id ? <ShieldCheck size={15} /> : <Tv size={15} />}{" "}
+            {current
+              ? "Simulated playback"
+              : e.watch_entry_id
+                ? "In watch plan"
+                : e.viewing_options.length
+                  ? `${e.viewing_options.length} viewing ${e.viewing_options.length === 1 ? "option" : "options"}`
+                  : "Route needed"}
+          </span>
+          <div className="df-row" style={{ gap: 6 }}>
+            <Button
+              quiet
+              aria-label={`Details for ${e.title}`}
+              onClick={() => setModal({ type: "details", id: e.content_id })}
+            >
+              <Info size={16} />
+            </Button>
+            <Button
+              primary={e.playable && !current}
+              disabled={
+                busy || ["ended", "cancelled"].includes(e.lifecycle.state)
+              }
+              onClick={() =>
+                current
+                  ? setModal({ type: "details", id: e.content_id })
+                  : e.playable
+                    ? play(e)
+                    : void add(e)
+              }
+            >
+              {current ? (
+                "Details"
+              ) : e.playable ? (
+                <>
+                  <Play size={14} />
+                  Play now
+                </>
+              ) : e.watch_entry_id ? (
+                "Planned"
+              ) : (
+                <>
+                  <Plus size={14} />
+                  Add to plan
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </article>
+    );
+  };
+  const heading = (
+    eyebrow: string,
+    title: string,
+    subtitle: string,
+    action?: React.ReactNode,
+  ) => (
+    <div className="df-title-row">
+      <div>
+        <div className="df-eyebrow">{eyebrow}</div>
+        <h1>{title}</h1>
+        <p className="df-subtitle">{subtitle}</p>
+      </div>
+      {action}
+    </div>
+  );
+  const onNow = (e: Content) =>
+    e.lifecycle.state === "live" ||
+    (["unknown", "delayed", "suspended", "scheduled"].includes(
+      e.lifecycle.state,
+    ) &&
+      new Date(e.start_time) <= new Date(data.meta.now));
+  const visible = data.events.filter(
+    (e) =>
+      (sport === "all" || e.league === sport) &&
+      (!query ||
+        (e.title + " " + e.teams.map((t) => t.full_name).join(" "))
+          .toLowerCase()
+          .includes(query.toLowerCase())) &&
+      !["ended", "cancelled"].includes(e.lifecycle.state) &&
+      (tab === "live" ? onNow(e) : !onNow(e)),
+  );
+  const browse = () => {
+    setView("events");
+    setTab("upcoming");
+    setSport("all");
+    setQuery("");
+  };
+  const preference = (p: Partial<Preferences>) =>
+    void mutate(
+      () => saveRules(d.rules, d.team_ranks, { ...d.preferences, ...p }),
+      "Settings saved.",
+    );
+  const teamOptions = allTeams.filter((t) =>
+    data.events.some(
+      (e) => e.league === teamLeague && e.teams.some((x) => x.key === t.key),
+    ),
+  );
+  const rankedTeams = [
+    ...(d.team_ranks[teamLeague] || []).filter((key) =>
+      teamOptions.some((t) => t.key === key),
+    ),
+    ...teamOptions
+      .map((t) => t.key)
+      .filter((key) => !(d.team_ranks[teamLeague] || []).includes(key)),
+  ];
+  const modalEvent = modal && "id" in modal ? find(modal.id) : undefined;
+  return (
+    <div id="df-app">
+      <div inert={!!modal}>
+        <header className="df-header">
+          <div className="df-brand">
+            <span className="df-brand-mark" />
+            dillflix
+          </div>
+          <span className="df-header-note">Live sports</span>
+          <div className="df-header-right">
+            <span className="df-header-device">{d.name}</span>
+            <span className="df-preview">
+              {data.meta.mode === "demo"
+                ? "Demo · simulated"
+                : "Teamarr · simulated playback"}
+            </span>
+          </div>
+        </header>
+        <div className="df-app">
+          <aside className="df-sidebar" aria-label="Main navigation">
+            {menu()}
+            <div className="df-side-footer">
+              <div className="df-device">
+                <Tv size={17} />
+                {d.name}
+              </div>
+              <span>Playback simulator</span>
+            </div>
+          </aside>
+          <main className="df-main">
+            <section className="df-playing" aria-label="Now playing">
+              <div>
+                <div className="df-playing-top">
+                  {d.playback_state === "navigating" ? (
+                    <LoaderCircle size={15} />
+                  ) : (
+                    <Radio size={15} />
+                  )}
+                  <span>
+                    {d.automation === "paused"
+                      ? "Automation paused"
+                      : d.playback_state === "navigating"
+                        ? "Switching live coverage"
+                        : "Now playing"}
+                  </span>
+                  <Pill>
+                    {d.playback_state === "verified"
+                      ? "Simulated live"
+                      : d.playback_state}
+                  </Pill>
+                </div>
+                <div className="df-playing-title">
+                  {(d.playback_state === "navigating" ? desired : observed)
+                    ?.title || "Waiting for live sports"}
+                  {protectedEvent && <Pill protected>Protected</Pill>}
+                </div>
+                <div className="df-playing-detail">
+                  {d.automation === "paused"
+                    ? "Your watch plan is saved. Resume when ready."
+                    : d.reason}
+                </div>
+              </div>
+              <div className="df-playing-controls">
+                <Button onClick={togglePause} disabled={busy}>
+                  {d.automation === "paused" ? (
+                    <Play size={15} />
+                  ) : (
+                    <Pause size={15} />
+                  )}{" "}
+                  {d.automation === "paused" ? "Resume" : "Pause"}
+                </Button>
+                <Button
+                  quiet
+                  aria-label="Playback details"
+                  onClick={() => setModal({ type: "playback" })}
+                >
+                  <Info size={17} />
+                </Button>
+              </div>
+            </section>
+            {!connected && (
+              <div className="df-warning" role="status">
+                Connection interrupted. Showing the last received state;
+                reconnecting automatically.
+              </div>
+            )}
+            {data.health.state === "degraded" && (
+              <div className="df-warning">
+                Schedule refresh failed. The previous catalog and manual choices
+                are retained.
+              </div>
+            )}
+            {error && (
+              <div className="df-toast error" role="alert">
+                <span>{error}</span>
+                <Button
+                  quiet
+                  onClick={() => setError("")}
+                  aria-label="Dismiss error"
+                >
+                  <X size={16} />
+                </Button>
+              </div>
+            )}
+            {notice && (
+              <div className="df-toast" role="status">
+                <span>{notice}</span>
+                <Button
+                  quiet
+                  onClick={() => setNotice("")}
+                  aria-label="Dismiss message"
+                >
+                  <X size={16} />
+                </Button>
+              </div>
+            )}
+            {view === "events" && (
+              <>
+                {heading(
+                  "Your sports. Your priorities.",
+                  "What's on",
+                  `${data.meta.mode === "demo" ? "Sample schedule" : "Teamarr schedule"} · ${time(data.meta.now)} · ${d.preferences.timezone}`,
+                  <Button quiet onClick={browse}>
+                    <CalendarDays size={16} />
+                    Upcoming
+                  </Button>,
+                )}
+                <div className="df-toolbar">
+                  <div className="df-segmented">
+                    <button
+                      type="button"
+                      aria-pressed={tab === "live"}
+                      onClick={() => setTab("live")}
+                    >
+                      Live{" "}
+                      {
+                        data.events.filter((e) => e.lifecycle.state === "live")
+                          .length
+                      }
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={tab === "upcoming"}
+                      onClick={() => setTab("upcoming")}
+                    >
+                      Upcoming
+                    </button>
+                  </div>
+                  <label className="df-search">
+                    <span className="df-screenreader">
+                      Find a team or event
+                    </span>
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Find a team or event"
+                    />
+                  </label>
+                </div>
+                <div className="df-filters">
+                  {["all", ...leagues].map((l) => (
+                    <button
+                      type="button"
+                      className="df-filter"
+                      aria-pressed={sport === l}
+                      key={l}
+                      onClick={() => setSport(l)}
+                    >
+                      {l === "all" ? "All sports" : leagueName(l)}
+                    </button>
+                  ))}
+                </div>
+                <div className="df-section-head">
+                  <h2>{tab === "live" ? "Live coverage" : "Coming up"}</h2>
+                  <span>{visible.length} events</span>
+                </div>
+                {visible.length ? (
+                  <div className="df-grid">{visible.map(card)}</div>
+                ) : (
+                  <div className="df-empty">
+                    <h3>No events match</h3>
+                    <p>Try another sport, or check the upcoming schedule.</p>
+                    <Button
+                      onClick={() => {
+                        setSport("all");
+                        setQuery("");
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+            {view === "plan" && (
+              <>
+                {heading(
+                  "Reserved for you",
+                  "Watch plan",
+                  "Manual choices take priority over automatic selection.",
+                  <Button onClick={browse}>
+                    <Plus size={16} />
+                    Add event
+                  </Button>,
+                )}
+                {d.plan.length ? (
+                  <>
+                    <div className="df-section-head">
+                      <h2>When events overlap</h2>
+                      <span>Top event takes priority</span>
+                    </div>
+                    {d.plan.map((entry, i) => {
+                      const event = find(entry.content_id);
+                      return (
+                        <div className="df-plan-row" key={entry.id}>
+                          <span className="df-order">{i + 1}</span>
+                          <div className="df-row-copy">
+                            <strong>{event?.title || entry.content_id}</strong>
+                            <p>
+                              {event
+                                ? `${time(event.start_time)} – ${time(event.expected_end_time)} est.`
+                                : "Waiting for updated schedule data"}
+                            </p>
+                            <p>
+                              {event?.lifecycle.state} ·{" "}
+                              {event?.failure
+                                ? "Retry pending; commitment retained"
+                                : "Protected until completion"}
+                            </p>
+                          </div>
+                          <div className="df-move">
+                            <button
+                              type="button"
+                              aria-label={`Move ${event?.title} up`}
+                              disabled={busy || i === 0}
+                              onClick={() => movePlan(i, -1)}
+                            >
+                              <ChevronUp size={18} />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Move ${event?.title} down`}
+                              disabled={busy || i === d.plan.length - 1}
+                              onClick={() => movePlan(i, 1)}
+                            >
+                              <ChevronDown size={18} />
+                            </button>
+                          </div>
+                          <Button
+                            quiet
+                            aria-label={`Remove ${event?.title}`}
+                            disabled={busy}
+                            onClick={() => remove(entry.id)}
+                          >
+                            <X size={17} />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                    <section className="df-panel df-spacer">
+                      <div className="df-section-head">
+                        <h2>Expected viewing</h2>
+                        <Pill>Estimated</Pill>
+                      </div>
+                      <Timeline
+                        preview={data.plan_preview}
+                        find={find}
+                        time={timelineTime}
+                      />
+                    </section>
+                  </>
+                ) : (
+                  <div className="df-empty">
+                    <h3>Your afternoon is open</h3>
+                    <p>Add events to protect them from automatic switching.</p>
+                    <Button primary onClick={browse}>
+                      <Plus size={15} />
+                      Choose an event
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+            {view === "rules" && (
+              <>
+                {heading(
+                  "Make it your broadcast",
+                  "Priorities",
+                  "The first matching rule wins. Manual choices always come first.",
+                  <Button
+                    onClick={() =>
+                      setModal({ type: "rule", rule: initialRule() })
+                    }
+                  >
+                    <Plus size={16} />
+                    Add rule
+                  </Button>,
+                )}
+                <section className="df-panel">
+                  {d.rules.map((rule, i) => (
+                    <div className="df-rule" key={rule.id}>
+                      <span className="df-order">{i + 1}</span>
+                      <div className="df-row-copy">
+                        <strong>
+                          {rule.name}
+                          {!rule.enabled ? " · Disabled" : ""}
+                        </strong>
+                        <p>
+                          {leagueName(rule.league)} ·{" "}
+                          {rule.phase.replaceAll("_", " ")}
+                          {rule.team_id
+                            ? " · " +
+                              (allTeams.find((t) => t.key === rule.team_id)
+                                ?.full_name || rule.team_id)
+                            : ""}
+                        </p>
+                      </div>
+                      <div className="df-move">
+                        <button
+                          type="button"
+                          aria-label={`Move ${rule.name} up`}
+                          disabled={busy || i === 0}
+                          onClick={() => moveRule(i, -1)}
+                        >
+                          <ChevronUp size={17} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Move ${rule.name} down`}
+                          disabled={busy || i === d.rules.length - 1}
+                          onClick={() => moveRule(i, 1)}
+                        >
+                          <ChevronDown size={17} />
+                        </button>
+                      </div>
+                      <Button
+                        quiet
+                        aria-label={`Edit ${rule.name}`}
+                        onClick={() => setModal({ type: "rule", rule })}
+                      >
+                        <Pencil size={16} />
+                      </Button>
+                    </div>
+                  ))}
+                </section>
+                <div
+                  className="df-row df-spacer"
+                  style={{ justifyContent: "space-between" }}
+                >
+                  <div className="df-row-copy">
+                    <strong>Favorite teams within each league</strong>
+                    <p>Break ties inside a priority.</p>
+                  </div>
+                  <Button onClick={() => setModal({ type: "teams" })}>
+                    <Users size={16} />
+                    Rank teams
+                  </Button>
+                </div>
+                <div
+                  className="df-row df-spacer"
+                  style={{ justifyContent: "space-between" }}
+                >
+                  <div className="df-row-copy">
+                    <strong>See what your priorities choose</strong>
+                    <p>No playback changes are made.</p>
+                  </div>
+                  <Button
+                    disabled={busy}
+                    onClick={() =>
+                      void mutate(
+                        async () =>
+                          setModal({
+                            type: "simulate",
+                            result: await api<SimulationResult>(
+                              devicePath + "/simulate",
+                              {},
+                            ),
+                          }),
+                        "Selection preview ready.",
+                      )
+                    }
+                  >
+                    <FlaskConical size={16} />
+                    Test priorities
+                  </Button>
+                </div>
+              </>
+            )}
+            {view === "activity" && (
+              <>
+                {heading(
+                  "Every decision explained",
+                  "Activity",
+                  "Selections, switches, manual choices, and recovery.",
+                )}
+                <section className="df-panel">
+                  {data.activity.map((item) => (
+                    <div className="df-activity" key={item.sequence}>
+                      <span className="df-activity-icon">
+                        <Activity size={16} />
+                      </span>
+                      <div className="df-row-copy">
+                        <strong>{item.message}</strong>
+                        <p>{item.detail}</p>
+                      </div>
+                      <time>{time(item.at)}</time>
+                    </div>
+                  ))}
+                </section>
+              </>
+            )}
+            {view === "settings" && (
+              <>
+                {heading(
+                  "Keep the coverage moving",
+                  "Settings",
+                  "Behavior for your living room.",
+                )}
+                <section className="df-panel">
+                  <h2>Automatic switching</h2>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Minimum time on an event</strong>
+                      <p>Manual choices take effect immediately.</p>
+                    </div>
+                    <select
+                      aria-label="Minimum time on an event"
+                      disabled={busy}
+                      value={d.preferences.minimum_viewing_seconds}
+                      onChange={(e) =>
+                        preference({
+                          minimum_viewing_seconds: Number(e.target.value),
+                        })
+                      }
+                    >
+                      {[0, 300, 600, 900].map((n) => (
+                        <option value={n} key={n}>
+                          {n ? `${n / 60} minutes` : "No minimum"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Switch cooldown</strong>
+                      <p>Minimum interval between automatic switches.</p>
+                    </div>
+                    <select
+                      aria-label="Switch cooldown"
+                      disabled={busy}
+                      value={d.preferences.switch_cooldown_seconds}
+                      onChange={(e) =>
+                        preference({
+                          switch_cooldown_seconds: Number(e.target.value),
+                        })
+                      }
+                    >
+                      {[0, 30, 60, 120].map((n) => (
+                        <option value={n} key={n}>
+                          {n} seconds
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Switch within the same priority</strong>
+                      <p>
+                        Allow a preferred team to interrupt the current
+                        automatic event.
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="df-switch"
+                      aria-label="Switch within the same priority"
+                      checked={d.preferences.same_tier_switching}
+                      disabled={busy}
+                      onChange={(e) =>
+                        preference({ same_tier_switching: e.target.checked })
+                      }
+                    />
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Display timezone</strong>
+                      <p>Local display with daylight-saving support.</p>
+                    </div>
+                    <select
+                      aria-label="Display timezone"
+                      value={d.preferences.timezone}
+                      disabled={busy}
+                      onChange={(e) => preference({ timezone: e.target.value })}
+                    >
+                      {[
+                        ...new Set([
+                          d.preferences.timezone,
+                          "America/Vancouver",
+                          "America/Edmonton",
+                          "America/Winnipeg",
+                          "America/Toronto",
+                          "America/Halifax",
+                          "America/St_Johns",
+                          "UTC",
+                        ]),
+                      ].map((t) => (
+                        <option key={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                </section>
+                <section className="df-panel">
+                  <h2>Connections</h2>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Schedule</strong>
+                      <p>
+                        {data.meta.mode === "demo"
+                          ? "Illustrative matchups and timings"
+                          : "Teamarr feed · " +
+                            (data.health.last_success
+                              ? "last read " + time(data.health.last_success)
+                              : "waiting for first snapshot")}
+                      </p>
+                    </div>
+                    <Pill>{data.health.state}</Pill>
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Playback and content status</strong>
+                      <p>Simulated. No Fire TV commands are sent.</p>
+                    </div>
+                    <Pill>Simulator</Pill>
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Watch plan and priorities</strong>
+                      <p>
+                        Saved in the controller database. Available across
+                        browsers and restarts.
+                      </p>
+                    </div>
+                    <CheckCheck size={19} />
+                  </div>
+                </section>
+              </>
+            )}
+            {data.meta.mode === "demo" && (
+              <div className="df-lab">
+                <details>
+                  <summary>Demo scenarios · {time(data.meta.now)}</summary>
+                  <div className="df-lab-controls">
+                    <label className="df-field">
+                      Scenario
+                      <select
+                        disabled={busy}
+                        value={data.meta.scenario || "normal"}
+                        onChange={(e) =>
+                          void mutate(
+                            () =>
+                              api("/simulation", {
+                                action: "scenario",
+                                scenario: e.target.value,
+                              }),
+                            "Demo scenario loaded. Sample watch plan reset.",
+                          )
+                        }
+                      >
+                        <option value="normal">Normal afternoon</option>
+                        <option value="overlap">Manual overlap</option>
+                        <option value="overtime">Canadiens overtime</option>
+                        <option value="delayed">Delayed start</option>
+                        <option value="failure">Playback failure</option>
+                        <option value="stale">Stale status</option>
+                        <option value="empty">No live events</option>
+                      </select>
+                    </label>
+                    <Button
+                      disabled={busy}
+                      onClick={() =>
+                        void mutate(
+                          () =>
+                            api("/simulation", {
+                              action: "advance",
+                              minutes: 15,
+                            }),
+                          "Sample clock advanced.",
+                        )
+                      }
+                    >
+                      <Clock3 size={16} />
+                      +15 min
+                    </Button>
+                  </div>
+                  <p className="df-lab-note">
+                    Illustrative events and viewing routes. Loading a scenario
+                    resets the sample watch plan; priorities remain saved.
+                  </p>
+                </details>
+              </div>
+            )}
+          </main>
+        </div>
+        <nav className="df-mobile-nav" aria-label="Main navigation">
+          {menu(true)}
+        </nav>
+      </div>
+      {modal && (
+        <Dialog
+          title={
+            modal.type === "conflict"
+              ? "Two good games. One TV."
+              : modal.type === "rule"
+                ? "Edit priority"
+                : modal.type === "teams"
+                  ? "Rank your teams"
+                  : modal.type === "simulate"
+                    ? "What your priorities choose"
+                    : modal.type === "playback"
+                      ? "Playback details"
+                      : modalEvent?.title || "Event details"
+          }
+          onClose={close}
+        >
+          {error && (
+            <div className="df-warning" role="alert">
+              {error}
+            </div>
+          )}
+          {modal.type === "conflict" && (
+            <>
+              <p>
+                {modalEvent?.title} overlaps with another manual choice. Both
+                retain their non-overlapping live time.
+              </p>
+              {(["last", "first"] as const).map((p) => (
+                <label className="df-choice" key={p}>
+                  <input
+                    type="radio"
+                    name="priority"
+                    checked={modal.priority === p}
+                    disabled={busy}
+                    onChange={() => changeConflict(p)}
+                  />
+                  <span>
+                    <strong>
+                      {p === "last"
+                        ? "Keep my current watch plan first"
+                        : `Give ${modalEvent?.title} priority`}
+                    </strong>
+                    <small>Displaced events resume while still live.</small>
+                  </span>
+                </label>
+              ))}
+              <Timeline
+                preview={modal.preview}
+                find={find}
+                time={timelineTime}
+              />
+              <div className="df-dialog-actions">
+                <Button onClick={close}>Cancel</Button>
+                <Button
+                  primary
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(
+                      () =>
+                        planCommand({
+                          type: "add",
+                          content_id: modal.id,
+                          priority: modal.priority,
+                        }),
+                      "Watch plan saved.",
+                      true,
+                    )
+                  }
+                >
+                  Save watch plan
+                </Button>
+              </div>
+            </>
+          )}
+          {modal.type === "details" && modalEvent && (
+            <>
+              <p>
+                {leagueName(modalEvent.league)} · {date(modalEvent.start_time)}{" "}
+                · {time(modalEvent.start_time)}
+              </p>
+              <dl className="df-kv">
+                <dt>Event status</dt>
+                <dd>
+                  {modalEvent.lifecycle.state}
+                  {modalEvent.lifecycle.stale ? " · stale" : ""}
+                </dd>
+                <dt>Expected end</dt>
+                <dd>{time(modalEvent.expected_end_time)} · estimate only</dd>
+                <dt>Viewing options</dt>
+                <dd>
+                  {modalEvent.viewing_options.length} valid candidates; chosen
+                  by the playback service
+                </dd>
+                <dt>Availability</dt>
+                <dd>
+                  {modalEvent.availability_reason || "Live-only playback"}
+                </dd>
+              </dl>
+              <div className="df-info df-spacer">
+                Manual protection survives delays and overtime. Other manual
+                entries may take precedence during overlap.
+              </div>
+              <div className="df-dialog-actions">
+                {modalEvent.watch_entry_id ? (
+                  <Button
+                    onClick={() => remove(modalEvent.watch_entry_id!)}
+                    disabled={busy}
+                  >
+                    Remove from plan
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => void add(modalEvent)}
+                    disabled={
+                      busy ||
+                      ["ended", "cancelled"].includes(
+                        modalEvent.lifecycle.state,
+                      )
+                    }
+                  >
+                    Add to plan
+                  </Button>
+                )}
+                {modalEvent.playable && (
+                  <Button
+                    primary
+                    disabled={busy}
+                    onClick={() => play(modalEvent)}
+                  >
+                    <Play size={15} />
+                    Play now
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+          {modal.type === "playback" && (
+            <>
+              <p>The desired target and observed playback are separate.</p>
+              <dl className="df-kv">
+                <dt>Requested</dt>
+                <dd>{desired?.title || "Waiting"}</dd>
+                <dt>Observed</dt>
+                <dd>{observed?.title || "None"}</dd>
+                <dt>State</dt>
+                <dd>{d.playback_state}</dd>
+                <dt>Verified at</dt>
+                <dd>{time(d.observed?.observed_at || null)} · simulated</dd>
+                <dt>Reason</dt>
+                <dd>{d.reason}</dd>
+              </dl>
+            </>
+          )}
+          {modal.type === "rule" && (
+            <RuleForm
+              key={modal.rule.id}
+              rule={modal.rule}
+              teams={allTeams}
+              leagues={leagues}
+              busy={busy}
+              onDelete={
+                d.rules.some((r) => r.id === modal.rule.id)
+                  ? () =>
+                      void mutate(
+                        () =>
+                          saveRules(
+                            d.rules.filter((r) => r.id !== modal.rule.id),
+                          ),
+                        "Rule removed.",
+                        true,
+                      )
+                  : undefined
+              }
+              onSave={(r) => {
+                const existing = d.rules.findIndex((x) => x.id === r.id);
+                const rules = d.rules.slice();
+                if (existing >= 0) rules[existing] = r;
+                else {
+                  const tail = rules.findIndex(
+                    (x) => x.league === "all" && !x.team_id && !x.source,
+                  );
+                  rules.splice(tail < 0 ? rules.length : tail, 0, r);
+                }
+                void mutate(() => saveRules(rules), "Priority saved.", true);
+              }}
+            />
+          )}
+          {modal.type === "teams" && (
+            <>
+              <p>
+                A matchup's highest-ranked team breaks ties within a priority.
+              </p>
+              <label className="df-field df-spacer">
+                League
+                <select
+                  value={teamLeague}
+                  onChange={(e) => setTeamLeague(e.target.value)}
+                >
+                  {leagues.map((l) => (
+                    <option value={l} key={l}>
+                      {leagueName(l)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {rankedTeams.length ? (
+                rankedTeams.map((id, i) => (
+                  <div className="df-rule" key={id}>
+                    <span className="df-order">{i + 1}</span>
+                    <div className="df-row-copy">
+                      <strong>
+                        {allTeams.find((t) => t.key === id)?.full_name || id}
+                      </strong>
+                    </div>
+                    <div className="df-move">
+                      {[-1, 1].map((delta) => (
+                        <button
+                          key={delta}
+                          type="button"
+                          aria-label={`Move ${allTeams.find((t) => t.key === id)?.name} ${delta < 0 ? "up" : "down"}`}
+                          disabled={
+                            busy ||
+                            i + delta < 0 ||
+                            i + delta >= rankedTeams.length
+                          }
+                          onClick={() => {
+                            const ranks = rankedTeams.slice();
+                            [ranks[i], ranks[i + delta]] = [
+                              ranks[i + delta],
+                              ranks[i],
+                            ];
+                            void mutate(
+                              () =>
+                                saveRules(d.rules, {
+                                  ...d.team_ranks,
+                                  [teamLeague]: ranks,
+                                }),
+                              "Team order saved.",
+                            );
+                          }}
+                        >
+                          {delta < 0 ? (
+                            <ChevronUp size={18} />
+                          ) : (
+                            <ChevronDown size={18} />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p>No teams in the current catalog for this competition.</p>
+              )}
+            </>
+          )}
+          {modal.type === "simulate" && (
+            <>
+              <p>This preview does not change playback.</p>
+              <div className="df-info df-spacer">
+                <h3>
+                  {find(modal.result.decision.content_id)?.title ||
+                    "Waiting for live sports"}
+                </h3>
+                <p>{modal.result.decision.reason}</p>
+              </div>
+              {modal.result.alternatives.map((e) => (
+                <div className="df-setting" key={e.content_id}>
+                  <div className="df-row-copy">
+                    <strong>{e.title}</strong>
+                    <p>
+                      {e.eligible
+                        ? "Eligible live event"
+                        : e.reason || "Not live"}
+                    </p>
+                  </div>
+                  <Pill>
+                    {e.priority < 1000000 ? "#" + (e.priority + 1) : "Unranked"}
+                  </Pill>
+                </div>
+              ))}
+            </>
+          )}
+        </Dialog>
+      )}
+    </div>
+  );
+}
+createRoot(document.getElementById("root")!).render(<App />);

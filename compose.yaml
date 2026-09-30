@@ -1,0 +1,16 @@
+services:
+  controller:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8790:8790"
+    environment:
+      CONTROLLER_MODE: ${CONTROLLER_MODE:-demo}
+      TEAMARR_URL: ${TEAMARR_URL:-}
+      TEAMARR_TOKEN: ${TEAMARR_TOKEN:-}
+      FEED_INTERVAL_SECONDS: ${FEED_INTERVAL_SECONDS:-60}
+      CONTROLLER_DATABASE: /data/${CONTROLLER_MODE:-demo}.sqlite3
+    volumes:
+      - controller-data:/data
+volumes:
+  controller-data:

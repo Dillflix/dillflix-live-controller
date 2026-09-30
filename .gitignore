@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+node_modules/
+frontend/dist/
+data/
+.env
+test-results/
+playwright-report/
+*.tsbuildinfo
+.browser-cache/

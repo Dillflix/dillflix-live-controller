@@ -1,0 +1,104 @@
+import json
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+
+
+def encode(value):
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+
+class Database:
+    def __init__(self, path):
+        self.path = path
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with self.transaction() as db:
+            db.executescript("""
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS devices (
+                    id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS contents (
+                    id TEXT PRIMARY KEY, source TEXT NOT NULL, active INTEGER NOT NULL,
+                    seen_at TEXT NOT NULL, snapshot TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY, device_id TEXT NOT NULL, intent INTEGER NOT NULL,
+                    content_id TEXT NOT NULL, state TEXT NOT NULL, ready_at REAL NOT NULL,
+                    payload TEXT NOT NULL, error TEXT);
+                CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(state,device_id);
+                CREATE TABLE IF NOT EXISTS commands (
+                    device_id TEXT NOT NULL, id TEXT NOT NULL, body_hash TEXT NOT NULL,
+                    result TEXT NOT NULL, PRIMARY KEY(device_id,id));
+                CREATE TABLE IF NOT EXISTS activity (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL,
+                    at TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, detail TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS leases (
+                    resource TEXT PRIMARY KEY, owner TEXT NOT NULL, expires REAL NOT NULL);
+                PRAGMA user_version=1;
+            """)
+
+    @contextmanager
+    def transaction(self):
+        db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout=10000")
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @staticmethod
+    def meta(db, key, default=None):
+        row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else default
+
+    @staticmethod
+    def set_meta(db, key, value):
+        db.execute(
+            "INSERT INTO metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, encode(value)),
+        )
+
+    @staticmethod
+    def device(db, device_id="living-room"):
+        row = db.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
+        if row is None:
+            raise KeyError(device_id)
+        return {"id": row["id"], "revision": row["revision"], **json.loads(row["payload"])}
+
+    @staticmethod
+    def save_device(db, device):
+        db.execute(
+            "INSERT INTO devices VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "revision=excluded.revision,payload=excluded.payload",
+            (
+                device["id"],
+                device["revision"],
+                encode({k: v for k, v in device.items() if k not in {"id", "revision"}}),
+            ),
+        )
+
+    @staticmethod
+    def lease(db, resource, owner, now, seconds=15):
+        db.execute(
+            "INSERT INTO leases VALUES (?,?,?) ON CONFLICT(resource) DO UPDATE SET "
+            "owner=excluded.owner,expires=excluded.expires WHERE leases.expires<=? OR leases.owner=?",
+            (resource, owner, now + seconds, now, owner),
+        )
+        return db.execute("SELECT owner FROM leases WHERE resource=?", (resource,)).fetchone()[0] == owner
+
+    @staticmethod
+    def log(db, now, message, detail="", kind="decision", device="living-room"):
+        db.execute(
+            "INSERT INTO activity(device_id,at,kind,message,detail) VALUES (?,?,?,?,?)",
+            (device, now, kind, message, detail),
+        )
+        # Retain the most recent 2,000 decisions without accumulating screenshots.
+        db.execute(
+            "DELETE FROM activity WHERE sequence < (SELECT COALESCE(MAX(sequence),0)-2000 FROM activity)"
+        )
