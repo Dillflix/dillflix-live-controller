@@ -30,6 +30,15 @@ KEYS = {
 }
 
 
+def key_tap(keycode):
+    # Down/up together: never leave a held key behind.
+    return b"".join(struct.pack(">BBiii", 0, action, keycode, 0, 0) for action in (0, 1))
+
+
+# KEYCODE_WAKEUP is safe on an already-awake device; POWER would toggle it off.
+WAKE_PACKET = key_tap(224)
+
+
 class Attach(StrictModel):
     session_id: str = Field(min_length=16, max_length=100)
     owner_token: str = Field(min_length=32, max_length=128)
@@ -43,7 +52,7 @@ class Input(StrictModel):
     def encode(self):
         if self.key in KEYS and self.text is None:
             # One bounded tap: down and up in the same write. Never leave held keys behind.
-            return b"".join(struct.pack(">BBiii", 0, action, KEYS[self.key], 0, 0) for action in (0, 1))
+            return key_tap(KEYS[self.key])
         if self.key is None and self.text and all(32 <= ord(c) <= 126 for c in self.text):
             data = self.text.encode("ascii")
             return b"\x01" + struct.pack(">I", len(data)) + data
@@ -252,10 +261,26 @@ class DeviceInput:
                     task.cancel()
             await asyncio.gather(startup, incoming, return_exceptions=True)
 
+    async def send_locked(self, source, packet, device_id, attach):
+        """Caller holds the manual gate, including for the initial wake command."""
+        self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
+        if not self.connection or self.connection[0] is not asyncio.current_task():
+            raise HTTPException(409, "Input ownership changed.")
+        if self.service.executor:
+            async with self.service.executor.input_lock:
+                self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
+                await source.send(packet)
+        else:
+            await source.send(packet)
+
     async def run(self, websocket, device_id, attach):
         source = self.source_factory(self.service.settings)
         try:
             await self.connect_source(websocket, source)
+            # Startup can outlast ownership/deadline. Recheck at the write boundary,
+            # after the cancellation barrier, before advertising a ready remote.
+            async with self.lock:
+                await self.send_locked(source, WAKE_PACKET, device_id, attach)
             async with asyncio.timeout(2):
                 await websocket.send_json({"type": "ready"})
             last_seq, tokens, checked_at = 0, 10.0, time.monotonic()
@@ -280,12 +305,7 @@ class DeviceInput:
                         raise ValueError("Input rate exceeded. Reconnect and try more slowly.")
                     tokens -= 1
                     last_seq = message.seq
-                    if self.service.executor:
-                        async with self.service.executor.input_lock:
-                            self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
-                            await source.send(packet)
-                    else:
-                        await source.send(packet)
+                    await self.send_locked(source, packet, device_id, attach)
                 async with asyncio.timeout(2):
                     # This acknowledges transport delivery, not the visible effect on the TV.
                     await websocket.send_json({"type": "sent", "seq": message.seq})

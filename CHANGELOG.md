@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Wake the device when the Take control remote connects or reconnects, using a wake-only key before controls become ready. Wake respects session ownership, expiry and the playback cancellation/input gate; screen viewing alone remains passive.
+
 ## 0.9.0 — Integrated Prime Video executor
 
 - Implement Play, status by token, and Cancel in the controller, with an opt-in `prime-video` adapter and service bearer authentication. Preserve the complete Teamarr snapshot and every permitted viewing option. Separate recovery, lifecycle, authority and Stop endpoints remain deferred.

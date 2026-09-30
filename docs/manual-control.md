@@ -2,6 +2,8 @@
 
 Use **Device screen → Take control** to navigate the real Fire TV yourself while the controller suspends event selection. The remote requires the same `SCREEN_ADB_SERIAL`, local ADB installation/authorization and pinned scrcpy server as [screen mirroring](screen-mirroring.md). No extra service or environment setting is needed.
 
+When the remote connects, it sends a wake-only command before enabling the controls. This also happens when reconnecting an active session. It does not toggle power or navigate away from the current app. Wake waits for playback cancellation and valid session ownership; a failed send leaves the remote disconnected so you can retry. Opening the screen preview alone does not wake the device.
+
 Choose **Control for** before starting: 5, 15 or 30 minutes; or 1, 2, **4**, 8, 12 or 24 hours. For an unsupported event, choose four hours, take control, then open its app using the remote. Automation stays suspended even if you close the browser. This is a wall-clock deadline; the controller does not know when that manually opened event finishes. Choose enough time for overruns.
 
 The countdown states what happens at expiry. If automation was active before takeover, it resumes selection then. If it was paused, it stays paused. During control:

@@ -17,6 +17,7 @@ from controller.service import Controller
 
 PATH = "/api/v1/devices/living-room/control"
 ORIGIN = {"origin": "http://testserver"}
+WAKE = struct.pack(">BBiiiBBiii", 0, 0, 224, 0, 0, 0, 1, 224, 0, 0)
 
 
 class FakeInput:
@@ -76,6 +77,54 @@ def take(client, **kwargs):
 def attach(ws, body):
     ws.send_json({key: body[key] for key in ("session_id", "owner_token")})
     assert ws.receive_json() == {"type": "ready"}
+
+
+def test_remote_wakes_before_ready_and_again_on_reconnect(remote):
+    client, _, source = remote
+    body = take(client)
+    for count in (1, 2):
+        with client.websocket_connect(PATH + "/input", headers=ORIGIN) as ws:
+            attach(ws, body)
+            assert source.packets == [WAKE] * count
+
+
+def test_failed_wake_does_not_advertise_ready_or_replay(remote):
+    client, _, source = remote
+    body = take(client)
+    source.fail = True
+    with client.websocket_connect(PATH + "/input", headers=ORIGIN) as ws:
+        ws.send_json({key: body[key] for key in ("session_id", "owner_token")})
+        assert ws.receive_json()["type"] == "error"
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+    assert source.packets == [WAKE] and source.stopped == 1
+    assert state(client)["manual_control"] is not None
+    assert state(client)["automation"] == "paused"
+
+
+@pytest.mark.parametrize("invalidated", ["expired", "handoff"])
+def test_wake_rechecks_authority_after_adb_startup(remote, monkeypatch, invalidated):
+    client, service, source = remote
+    body = take(client)
+
+    async def invalidate_on_start(self):
+        self.started += 1
+        with service.db.transaction() as db:
+            device = service.db.device(db)
+            if invalidated == "expired":
+                device["manual_control"]["expires_at"] = (
+                    datetime.now(UTC) - timedelta(seconds=1)
+                ).isoformat()
+            else:
+                device["manual_control"]["input_ready"] = False
+            service.db.save_device(db, device)
+        return self
+
+    monkeypatch.setattr(FakeInput, "__aenter__", invalidate_on_start)
+    with client.websocket_connect(PATH + "/input", headers=ORIGIN) as ws:
+        ws.send_json({key: body[key] for key in ("session_id", "owner_token")})
+        assert ws.receive_json()["type"] == "error"
+    assert source.packets == [] and source.stopped == 1
 
 
 def test_take_fences_playback_keeps_plan_and_uses_real_four_hour_deadline(remote):
@@ -139,8 +188,9 @@ def test_input_serialized_no_replay_and_no_text_storage(remote):
         assert ws.receive_json()["seq"] == 2
         ws.send_json({"seq": 2, "text": "private search"})
         assert ws.receive_json()["type"] == "error"
-    assert len(source.packets) == 2
-    assert source.packets[0] == struct.pack(">BBiiiBBiii", 0, 0, 19, 0, 0, 0, 1, 19, 0, 0)
+    assert len(source.packets) == 3
+    assert source.packets[0] == WAKE
+    assert source.packets[1] == struct.pack(">BBiiiBBiii", 0, 0, 19, 0, 0, 0, 1, 19, 0, 0)
     assert source.stopped == 1
     with service.db.transaction() as db:
         assert "private search" not in "\n".join(db.iterdump())
@@ -230,7 +280,7 @@ def test_extend_conflicts_secret_validation_and_input_failure(remote):
         source.fail = True
         ws.send_json({"seq": 1, "key": "home"})
         assert ws.receive_json()["type"] == "error"
-    assert len(source.packets) == 1 and state(client)["automation"] == "paused"
+    assert len(source.packets) == 2 and state(client)["automation"] == "paused"
 
 
 @pytest.mark.parametrize(
@@ -251,7 +301,7 @@ def test_invalid_input_never_reaches_device(remote, packet):
         attach(ws, body)
         ws.send_json(packet)
         assert ws.receive_json()["type"] == "error"
-    assert source.packets == []
+    assert source.packets == [WAKE]
 
 
 def test_origin_and_session_token_required(remote):
@@ -384,7 +434,7 @@ def test_active_socket_is_revoked_at_deadline(remote):
         with pytest.raises(WebSocketDisconnect):
             while True:
                 ws.receive_json()
-    assert source.stopped == 1 and source.packets == []
+    assert source.stopped == 1 and source.packets == [WAKE]
     assert state(client)["manual_control"] is None
 
 
@@ -454,7 +504,7 @@ async def test_real_http_and_websocket_input_then_release(tmp_path):
                     assert result.status_code == 200
                     with pytest.raises(ConnectionClosed):
                         await ws.recv()
-                assert source.stopped == 1 and len(source.packets) == 1
+                assert source.stopped == 1 and source.packets == [WAKE, Input(seq=1, key="back").encode()]
     finally:
         server.should_exit = True
         await asyncio.wait_for(task, 5)
