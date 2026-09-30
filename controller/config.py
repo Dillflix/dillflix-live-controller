@@ -13,6 +13,8 @@ class Settings:
     status_ttl: int = 120
     worker_interval: float = 1.0
     simulation_delay: float = 1.0
+    navigation_timeout: float = 120.0
+    observation_ttl: int = 15
     team_directory_interval: int = 3600
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
@@ -30,4 +32,5 @@ class Settings:
             teamarr_url=url,
             teamarr_token=os.getenv("TEAMARR_TOKEN", ""),
             feed_interval=max(10, int(os.getenv("FEED_INTERVAL_SECONDS", "60"))),
+            navigation_timeout=max(5, float(os.getenv("NAVIGATION_TIMEOUT_SECONDS", "120"))),
         )

@@ -2,7 +2,7 @@
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
-**Version 0.2: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses.
+**Version 0.3: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): exercise controller recovery before connecting a real executor.
 
 ## What works
 
@@ -15,7 +15,9 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 - Minimum viewing time, automatic-switch cooldown, same-priority switching, and timezone settings.
 - Separate desired and observed playback, pause/resume, decision history, and side-effect-free selection/conflict previews.
 - Versioned SQLite migrations, optimistic concurrency, command idempotency, a durable request queue, and a coordinator lease.
-- Demo scenarios for overlaps, overtime, delays, route failures, stale status, and an empty live schedule.
+- A separate persistent playback simulator with idempotent delivery, restart reconciliation, cancellation retries, and navigation deadlines. Acknowledgement alone does not verify playback.
+- Validation of observed content, request, device, intent, permitted option, live presentation, and freshness. Expired evidence becomes unverified without completing the event.
+- Demo scenarios for overlaps, overtime, delays, route failures, navigation timeout, rejected replay results, stale status, and an empty live schedule.
 - Teamarr pagination, expired-cursor recovery, atomic catalog replacement, and retention of the previous complete catalog when an HTTP refresh fails.
 
 The controller never offers replay or start-over. An expected end time is only a planning estimate. It never completes a manual commitment because an estimate elapsed, an entry disappeared from the feed, or playback temporarily failed.
@@ -50,11 +52,19 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Keep your existing `.env` and `controller-data` volume. Version 0.2 automatically migrates the version-1 database and retains settings, watch-plan entries, catalog snapshots, pending requests, and command receipts. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
+Keep your existing `.env` and `controller-data` volume. Version 0.3 automatically migrates schema-1 and schema-2 databases to schema 3, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. Existing simulated playback is adopted by the separate simulator. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
 
 Configuration export under **Settings → Configuration backup** saves priorities, preferred teams, and switching/display preferences. Import shows a review before replacing those fields; it preserves the watch plan and automation mode. It is a configuration transfer, not a complete database backup, and contains no Teamarr credentials. Unresolved team IDs are retained with a warning so preferences survive temporary directory gaps.
 
 **Undo last edit** restores the latest saved plan or configuration edit. It is shared across browsers for the device, survives restarts, and retains up to 50 recent edits. It does not rewind live playback or restore an earlier pause/resume state. Repeated undo walks backwards through available edits. Loading a demo scenario clears that sample history.
+
+## Exercise playback recovery
+
+In demo mode, load **Navigation timeout** or **Replay result rejected** from the scenario controls. The controller records the failed attempt, preserves the watch plan, and selects another eligible live event. The timeout scenario uses a three-second deadline so the transition is easy to observe. Normal requests use `NAVIGATION_TIMEOUT_SECONDS`, which defaults to 120 and has a minimum of 5.
+
+The playback details show request progress, delivery attempts, the pending deadline, and the latest request error. Activity retains earlier failure reasons after a fallback starts. Request acceptance and navigation are distinct from verified live playback. A playback observation expires after at most 15 seconds without fresh simulator evidence; the interface then shows **Last observed**. No new content-status conclusion is inferred from that outage.
+
+The simulator stores executor state separately from controller jobs. On restart or an uncertain delivery outcome, the controller inspects the original request before resending the same ID. Cancellation is durable and retried; it ends pending navigation without stopping a newer target. These guarantees are exercised locally, with real executor transport still deferred.
 
 ## Connect the Teamarr catalog
 
@@ -135,10 +145,10 @@ npm run test:browser
 
 The browser runner builds the interface, starts a temporary demo API/database, checks desktop and phone workflows, and stops the API. Set `CONTROLLER_TEST_PYTHON` if Python is not on the active path. Linux x64 uses the npm-packaged Chromium; other platforms require `npx playwright install chromium`. `TEST_BASE_URL` can target a separate **disposable demo instance**: the tests deliberately reset its sample watch plan.
 
-Coverage includes database upgrades, persistent undo, configuration round trips, stale previews across browsers, team-directory failures and provider IDs, API persistence, idempotent delivery, manual overlaps, overtime, failed playback fallback, unknown status, pending-request recovery, original payload preservation, and pagination failures. Desktop, 390 px phone, and 320 px phone layouts are checked for horizontal overflow. These browser tests use Chromium viewport emulation, not physical phone or Safari testing.
+Coverage includes database upgrades, persistent undo, configuration round trips, stale previews across browsers, team-directory failures and provider IDs, API persistence, manual overlaps, overtime, failed playback fallback, unknown status, original payload preservation, and pagination failures. Playback tests cover lost acknowledgements, restart reconciliation, cancellation retry, intent fencing, late results, deadlines, rejected replay/wrong-content observations, and observation expiry/recovery. Desktop, 390 px phone, and 320 px phone layouts are checked for horizontal overflow. These browser tests use Chromium viewport emulation, not physical phone or Safari testing.
 
 ## Next integrations
 
-See [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Continue reviewing real event data and selection behavior against your Teamarr deployment. An authoritative content-status adapter and a playback executor can then replace the simulations without changing the user's watch-plan commands.
+See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Next, complete content-status freshness and pinned-event recovery using simulated contracts. Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
 
 Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillflix/dillflix-live-controller). This application is versioned and deployed independently of Teamarr.

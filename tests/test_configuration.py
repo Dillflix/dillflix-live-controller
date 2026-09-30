@@ -185,7 +185,7 @@ def test_v1_upgrade_retains_configuration_catalog_jobs_and_receipts(rig):
     assert c.get("/api/v1/devices/living-room/jobs").json() == jobs
     assert upgraded.overview()["teams"]
     with upgraded.db.transaction() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
         assert db.execute("SELECT COUNT(*) FROM commands").fetchone()[0] == receipts
         assert list(db.execute("SELECT id,snapshot FROM contents")) == snapshots
 

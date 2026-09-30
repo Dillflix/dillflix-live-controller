@@ -31,7 +31,7 @@ def create_app(settings=None, *, start_workers=True):
         yield
         await service.stop()
 
-    app = FastAPI(title="Dillflix Controller", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.3.0", lifespan=lifespan)
     app.state.controller = service
 
     @app.exception_handler(KeyError)

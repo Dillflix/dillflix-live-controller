@@ -139,6 +139,8 @@ def fixtures(scenario="normal"):
         "failure": 800,
         "stale": 800,
         "empty": 1100,
+        "timeout": 800,
+        "replay": 800,
     }[scenario]
     if scenario == "overtime":
         next(x for x in entries if x["id"] == "demo:canadiens")["_simulation"]["actual_end_time"] = instant(
@@ -150,6 +152,9 @@ def fixtures(scenario="normal"):
         next(x for x in entries if x["id"] == "demo:redzone")["_simulation"]["override"] = "unknown"
     if scenario == "failure":
         next(x for x in entries if x["id"] == "demo:redzone")["_simulation"]["fail_playback"] = True
+    if scenario in {"timeout", "replay"}:
+        flag = "stall_navigation" if scenario == "timeout" else "replay_result"
+        next(x for x in entries if x["id"] == "demo:redzone")["_simulation"][flag] = True
     return entries, instant(now)
 
 

@@ -8,20 +8,23 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 
+from .coordinator import PlaybackCoordinator
 from .database import Database, encode
 from .fixtures import default_device, fixtures, make_team
-from .planner import choose, content_view, parse_time, preview_plan, priority, team_key
+from .planner import content_view, parse_time, preview_plan, priority, team_key
+from .playback import PlaybackAdapter, SimulatedPlaybackAdapter
 from .teamarr import TeamarrClient
 
 log = logging.getLogger(__name__)
 
 
-class Controller:
+class Controller(PlaybackCoordinator):
     CONFIG_FIELDS = ("rules", "team_ranks", "preferences")
 
-    def __init__(self, settings):
+    def __init__(self, settings, playback: PlaybackAdapter | None = None):
         self.settings = settings
         self.db = Database(settings.database)
+        self.playback = playback or SimulatedPlaybackAdapter(self.db, settings.observation_ttl)
         self.owner = str(uuid.uuid4())
         self.client = TeamarrClient(settings.teamarr_url, settings.teamarr_token)
         self.tasks = []
@@ -130,8 +133,13 @@ class Controller:
                     "SELECT * FROM activity WHERE device_id=? ORDER BY sequence DESC LIMIT 100", (device_id,)
                 )
             ]
+            latest_job = db.execute(
+                "SELECT id,content_id,state,progress,deadline_at,delivery_attempts,error FROM jobs WHERE device_id=? ORDER BY rowid DESC LIMIT 1",
+                (device_id,),
+            ).fetchone()
             return {
                 "device": device,
+                "playback_job": dict(latest_job) if latest_job else None,
                 "teams": self.db.teams(db),
                 "team_directory_health": self.db.meta(
                     db,
@@ -391,7 +399,10 @@ class Controller:
                     "UPDATE jobs SET state='cancelled' WHERE device_id=? AND state='pending'", (device_id,)
                 )
                 d["desired"] = (d.get("observed") or {}).get("content_id")
-                d["playback_state"] = "verified" if d.get("observed") else "waiting"
+                observed = d.get("observed")
+                d["playback_state"] = (
+                    ("verified" if observed.get("verified") else "unverified") if observed else "waiting"
+                )
             self.db.log(
                 db,
                 self.now(db).isoformat(),
@@ -500,121 +511,6 @@ class Controller:
                 f"{health['count']} known teams · {health['state']}",
                 "directory",
             )
-
-    def tick(self):
-        real = datetime.now(UTC)
-        with self.db.transaction() as db:
-            if not self.db.lease(db, "device:living-room", self.owner, time.time()):
-                return
-            d = self.db.device(db)
-            if d["automation"] == "paused":
-                return
-            items = self.items(db)
-            indexed = {i["content_id"]: i for i in items}
-            now = self.now(db)
-            # Reevaluate before accepting a pending observation so schedule/user changes fence it.
-            decision = choose(d, items, now, real)
-            d["force_switch"] = False
-            target = decision["content_id"]
-            d["reason"] = decision["reason"]
-            d["next_candidate"] = decision.get("next_candidate")
-            if target != d.get("desired") or (target and d["playback_state"] in {"waiting", "failed"}):
-                d["intent_version"] += 1
-                d["desired"] = target
-                db.execute(
-                    "UPDATE jobs SET state='superseded' WHERE device_id=? AND state='pending'", (d["id"],)
-                )
-                if target:
-                    item = indexed[target]
-                    request_id = str(uuid.uuid4())
-                    payload = {
-                        "schema_version": 1,
-                        "request_id": request_id,
-                        "device_id": d["id"],
-                        "intent_version": d["intent_version"],
-                        "content_id": target,
-                        "mode": "live",
-                        "content_snapshot_schema_version": 1,
-                        "content_snapshot": item["snapshot"],
-                        "allowed_viewing_options": item["viewing_options"],
-                    }
-                    db.execute(
-                        "INSERT INTO jobs VALUES (?,?,?,?,?,?,?,NULL)",
-                        (
-                            request_id,
-                            d["id"],
-                            d["intent_version"],
-                            target,
-                            "pending",
-                            time.time() + self.settings.simulation_delay,
-                            encode(payload),
-                        ),
-                    )
-                    d["playback_state"] = "navigating"
-                    self.db.log(
-                        db, now.isoformat(), f"Opening {item['title']}", decision["reason"], "navigation"
-                    )
-                else:
-                    d["playback_state"] = "waiting"
-                    d["observed"] = None
-                    self.db.log(db, now.isoformat(), "Waiting for live sports", decision["reason"])
-            for job in db.execute(
-                "SELECT * FROM jobs WHERE device_id=? AND state='pending' AND ready_at<=?",
-                (d["id"], time.time()),
-            ).fetchall():
-                if job["intent"] != d["intent_version"] or job["content_id"] != d["desired"]:
-                    db.execute("UPDATE jobs SET state='superseded' WHERE id=?", (job["id"],))
-                    continue
-                payload = json.loads(job["payload"])
-                item = indexed[job["content_id"]]
-                if item["snapshot"].get("_simulation", {}).get("fail_playback"):
-                    prior = d["failures"].get(job["content_id"], {})
-                    attempts = prior.get("attempts", 0) + 1
-                    wait = 5 if attempts == 1 else 15 if attempts == 2 else 300
-                    d["failures"][job["content_id"]] = {
-                        "attempts": attempts,
-                        "retry_after": (real + timedelta(seconds=wait)).isoformat(),
-                        "reason": "Simulated route failure",
-                    }
-                    db.execute(
-                        "UPDATE jobs SET state='failed',error=? WHERE id=?",
-                        ("All simulated routes failed", job["id"]),
-                    )
-                    d["playback_state"] = "failed"
-                    self.db.log(
-                        db,
-                        now.isoformat(),
-                        f"Playback failed · {item['title']}",
-                        f"Manual commitment retained. Retry after {wait} seconds.",
-                        "failure",
-                    )
-                else:
-                    # This adapter never performs Fire TV I/O. Unknown observations are not real verification.
-                    d["observed"] = {
-                        "content_id": job["content_id"],
-                        "presentation": "live",
-                        "verified": True,
-                        "simulated": True,
-                        "observed_at": real.isoformat(),
-                        "viewing_option_id": payload["allowed_viewing_options"][0]["id"],
-                        "request_id": job["id"],
-                        "intent_version": job["intent"],
-                    }
-                    d["playback_state"] = "verified"
-                    d["started_at"] = now.isoformat()
-                    d["last_switch_at"] = real.isoformat()
-                    d["failures"].pop(job["content_id"], None)
-                    db.execute("UPDATE jobs SET state='verified' WHERE id=?", (job["id"],))
-                    self.db.log(
-                        db,
-                        now.isoformat(),
-                        f"Simulated live playback · {item['title']}",
-                        "Requested content matched the simulated observation",
-                        "verified",
-                    )
-            if d.get("observed") and d["playback_state"] == "verified":
-                d["observed"]["observed_at"] = real.isoformat()
-            self.db.save_device(db, d)
 
     async def run_worker(self):
         while True:

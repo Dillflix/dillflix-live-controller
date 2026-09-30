@@ -1,6 +1,6 @@
 # Controller API and executor contract
 
-All examples use the initial device ID `living-room`. Timestamps include a UTC offset. Content IDs and entry IDs are opaque; clients must not parse or substitute them.
+All examples use the initial device ID `living-room`. Event and observation timestamps include a UTC offset; internal job `ready_at`/`deadline_at` values are Unix seconds. Content IDs and entry IDs are opaque; clients must not parse or substitute them.
 
 ## Watch-plan commands
 
@@ -43,7 +43,11 @@ The watch plan contains `{id, content_id, created_at}` entries in priority order
 
 The card is a projection. The original Teamarr object is retained privately in the catalog and passed intact in playback jobs. Scores, logos, team names, and dates are not derived from title parsing.
 
-`GET /api/v1/overview` adds the complete device state, plan preview, recent activity, feed health, metadata, `teams`, `team_directory_health`, and `undo`. Metadata distinguishes demo/Teamarr catalog mode, simulation status, sample/current time, and wall-clock server time. Feed health distinguishes starting, ok, and degraded, with the last successful fetch and count when known.
+`GET /api/v1/overview` adds the complete device state, plan preview, recent activity, feed health, metadata, `teams`, `team_directory_health`, `undo`, and `playback_job`. Metadata distinguishes demo/Teamarr catalog mode, simulation status, sample/current time, and wall-clock server time. Feed health distinguishes starting, ok, and degraded, with the last successful fetch and count when known.
+
+`playback_job` is null before any request, otherwise the latest request's `{id, content_id, state, progress, deadline_at, delivery_attempts, error}`. Job states are `pending`, `verified`, `failed`, `timed_out`, `rejected`, `cancelled`, or `superseded`. Progress distinguishes `queued`, `accepted`, `navigating`, `retrying`, `playing_verified`, and failure reasons/states; the job state remains authoritative after cancellation or supersession. `delivery_attempts` counts submission attempts, not inspection calls. The jobs endpoint also exposes the original payload, intent, executor job ID, ready time, and `cancel_sent` acknowledgement flag.
+
+Observed playback is separate from desired content. `device.observed` includes content/request/device/intent identity, `viewing_option_id`, `presentation`, `verified`, `simulated`, `health`, `observed_at`, and `valid_until`. Expired evidence makes `verified` false while retaining the last identity. `device.playback_state` can be `waiting`, `navigating`, `verified`, `unverified`, or `failed`; pending navigation/failure may coexist with a last observation of the previous event.
 
 `GET /api/v1/teams` returns `{items, health}`; the optional `league=nhl` query filters items. Each team has a stable `key` (`provider:league:id`), provider `id`, `provider`, `league`, `full_name`, and available `short_name`, `name`, `city`, `abbreviation`, and `logo_url` fields. City/nickname can be null; neither is inferred by splitting a display name. Teamarr cache entries map `provider_team_id` to `id`, not their local cache-row `id`. Event metadata can supply richer names. Teams are retained beyond the discovery window and through empty or failed refreshes.
 
@@ -124,8 +128,41 @@ Excluded options, explicit replay/highlight presentations, and partial/multi-eve
 
 The simulator chooses the first permitted option only to exercise the observation workflow. This is a simulator implementation detail, not a product preference or the future executor's route-selection policy.
 
+## Playback adapter implemented today
+
+`controller/playback.py` defines this internal boundary. It is implemented by the persistent simulator, not HTTP routes:
+
+| Operation | Result and semantics |
+| --- | --- |
+| `submit(request)` | Report for an idempotent request; the same ID with a different payload is rejected |
+| `inspect(request_id)` | Current request report, or null if unknown; used before resubmission and after restart |
+| `cancel(request_id)` | Return only after cancellation is acknowledged; raise on uncertainty so it can be retried |
+| `observe(device_id)` | Current device observation, or null when unavailable |
+
+A report has `request_id`, `executor_job_id`, `device_id`, `intent_version`, `content_id`, `state`, `observation`, and optional `reason`. The simulator reports `accepted`, `navigating`, `playing_verified`, `failed`, `cancelled`, or `superseded`. Acceptance alone never sets observed playback. A verified report contains an observation such as:
+
+```json
+{
+  "device_id": "living-room",
+  "request_id": "unique-request-id",
+  "intent_version": 23,
+  "content_id": "opaque-Teamarr-feed-entry-id",
+  "viewing_option_id": "original-permitted-option-id",
+  "presentation": "live",
+  "verified": true,
+  "simulated": true,
+  "health": "healthy",
+  "observed_at": "2026-09-30T12:00:00+00:00",
+  "valid_until": "2026-09-30T12:00:15+00:00"
+}
+```
+
+All identity fields must match the staged request. The option must belong to the original permitted set. Missing verification, replay/unknown presentation, unhealthy playback, expired evidence, and timestamps over five seconds in the future are rejected. Evidence is usable for at most 15 seconds from observation, or until its earlier expiry. The controller rechecks its lease, active intent, automation mode, current selection, and deadline before accepting a result. Successful job history alone cannot substitute for current device evidence.
+
+Cancellation targets a request, not a global stop command. The simulator keeps cancellation tombstones and rejects lower device intents. It must not let cancellation of an old request stop newer playback. Failed cancellation delivery remains queued across restarts. The simulator chooses an option only to exercise this contract; its observations are not evidence of real TV playback.
+
 ## Future external adapters
 
 No outbound playback HTTP endpoint or callback endpoint is connected yet. The future executor should accept the staged payload idempotently by `request_id`, apply monotonic intent fencing per device, and report request progress separately from observations. A successful acknowledgement must not count as live verification.
 
-An observation will need request/device/content identity, applied intent version, observation time, actual viewing option, presentation (`live` versus other/unknown), and evidence confidence/freshness. A separate content-status lookup should accept `content_id` plus the snapshot/provider identifiers and return an explicit lifecycle observation with its source and expiry. Exact transport, authentication between services, status tokens, and cancellation semantics will be finalized when those services are selected.
+The real executor must supply device evidence for the observation contract above, with transport timeouts and cancellation behavior appropriate to its navigation engine. A separate content-status lookup should accept `content_id` plus the snapshot/provider identifiers and return an explicit lifecycle observation with its source and expiry. Exact transport, authentication between services, status tokens, and real device recovery behavior will be finalized when those services are selected.

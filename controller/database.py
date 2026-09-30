@@ -9,7 +9,7 @@ def encode(value):
 
 
 class Database:
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, path):
         self.path = path
@@ -56,6 +56,46 @@ class Database:
                     command_id TEXT NOT NULL, description TEXT NOT NULL, created_at TEXT NOT NULL,
                     before_payload TEXT NOT NULL, after_payload TEXT NOT NULL, undone_by TEXT)""")
                 db.execute("CREATE INDEX IF NOT EXISTS history_device ON edit_history(device_id,id)")
+            if version < 3:
+                # Column checks also tolerate a version-1 recovery database with later additive columns.
+                columns = {r[1] for r in db.execute("PRAGMA table_info(jobs)")}
+                for name, sql_type in {
+                    "deadline_at": "REAL",
+                    "executor_job_id": "TEXT",
+                    "progress": "TEXT",
+                    "cancel_sent": "INTEGER NOT NULL DEFAULT 0",
+                    "delivery_attempts": "INTEGER NOT NULL DEFAULT 0",
+                }.items():
+                    if name not in columns:
+                        db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {sql_type}")
+                db.execute("""CREATE TABLE IF NOT EXISTS simulated_jobs (
+                    id TEXT PRIMARY KEY, device_id TEXT NOT NULL, intent INTEGER NOT NULL,
+                    payload TEXT NOT NULL, state TEXT NOT NULL, submitted_at REAL NOT NULL,
+                    observation TEXT, error TEXT)""")
+                db.execute("""CREATE TABLE IF NOT EXISTS simulated_devices (
+                    device_id TEXT PRIMARY KEY, intent INTEGER NOT NULL, observation TEXT)""")
+                db.execute("CREATE TABLE IF NOT EXISTS simulated_cancellations (id TEXT PRIMARY KEY)")
+                # The old inline simulator already recorded verified playback. Adopt that
+                # simulator state without changing the user's device/configuration records.
+                for device_id, payload in db.execute("SELECT id,payload FROM devices").fetchall():
+                    device = json.loads(payload)
+                    observation = device.get("observed")
+                    if not observation or not observation.get("simulated"):
+                        continue
+                    job = db.execute(
+                        "SELECT id,intent,payload FROM jobs WHERE id=?", (observation.get("request_id"),)
+                    ).fetchone()
+                    if job is None:
+                        continue
+                    observation = {**observation, "device_id": device_id, "health": "healthy"}
+                    db.execute(
+                        "INSERT OR IGNORE INTO simulated_jobs(id,device_id,intent,payload,state,submitted_at,observation) VALUES (?,?,?,?,'playing_verified',0,?)",
+                        (job[0], device_id, job[1], job[2], encode(observation)),
+                    )
+                    db.execute(
+                        "INSERT OR IGNORE INTO simulated_devices VALUES (?,?,?)",
+                        (device_id, device["intent_version"], encode(observation)),
+                    )
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:

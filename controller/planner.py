@@ -174,7 +174,9 @@ def choose(device, items, now, real_now):
                 "rule_id": None,
                 "reason": "Status is stale; retaining existing verified playback",
             }
-    if device.get("force_switch"):
+    # Dwell/cooldown decides whether to start a switch. Once navigation is approved,
+    # the previous event's timer must not reverse it while we await verification.
+    if device.get("force_switch") or device.get("playback_state") == "navigating":
         return result
     if current and current_id in ids and not result["manual"] and result["content_id"] != current_id:
         prefs = device["preferences"]

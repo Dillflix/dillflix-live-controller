@@ -8,7 +8,9 @@ The first milestone implements the web application and persistent controller ind
 | --- | --- |
 | `controller/teamarr.py` | Fetch a complete paginated Teamarr catalog and cached team rosters; validate provider identities |
 | `controller/planner.py` | Project catalog cards, qualify viewing options, rank live candidates, and preview estimated manual windows |
-| `controller/service.py` | Apply revisioned commands, retain commitments, reconcile desired playback, stage requests, and consume simulated observations |
+| `controller/service.py` | Apply revisioned commands, retain commitments, expose read models, and refresh the catalog/team directory |
+| `controller/coordinator.py` | Stage playback intent, deliver/inspect requests, validate results, enforce deadlines, retry cancellation, and reconcile observations |
+| `controller/playback.py` | Playback adapter protocol and a separate persistent simulator; no device I/O |
 | `controller/database.py` | Versioned SQLite migrations, records, edit history, activity, command receipts, and leases |
 | `controller/fixtures.py` | Explicit sample lifecycle transitions, independent of estimated end times |
 | `controller/api.py` | Same-origin HTTP API, update notifications, and built frontend |
@@ -33,11 +35,19 @@ The device record separates configuration revision, manual plan, desired content
 
 Command receipts are persisted with a payload hash. Repeating the exact command returns its previous receipt even after the configuration revision changes. Reusing an ID with different content is rejected. A transaction saves desired intent and a pending job together. Before accepting a simulator result, the worker reevaluates selection and checks that the intent and content still match. Superseded requests cannot become observed playback.
 
-The SQLite lease prevents a second coordinator from acting on the same device. Pending requests survive restart; the next owner can resume them after graceful lease release or expiry. This is tested for the simulator. Exactly-once external device effects are **not** established: the future executor must support idempotent request IDs, cancellation/fencing, and observation reconciliation.
+The SQLite lease prevents a second coordinator from acting on the same device. Pending requests survive restart; the next owner can resume them after graceful lease release or expiry. The coordinator calls the playback adapter outside database transactions, inspects each request before delivery, and uses the original request ID and payload for uncertain retries. The simulator has its own durable jobs and per-device intent watermark, so a lost acknowledgement or a process exit between executor success and controller persistence can be reconciled. A current device observation is required to adopt an old success report.
+
+Request acceptance and navigation are progress, not playback verification. Results must match request/device/content/intent identity; verified observations must also identify an allowed viewing option, healthy live presentation, and valid observation/expiry timestamps. The controller requires evidence younger than 15 seconds and honors an earlier reported expiry. It never updates observation timestamps itself. An observation outage retains the last identity as unverified and does not imply event completion. Fresh matching evidence can recover verification without opening a new request. Pausing does not turn expired evidence into verification.
+
+Navigation has a persisted wall-clock deadline, normally 120 seconds from staging. Transport/inspection failures retry with the same request ID and bounded backoff without resetting that deadline. Expiry records a timed-out attempt, queues cancellation, and enables live fallback. The explicit demo timeout scenario uses three seconds. Pending schema-2 jobs receive a deadline on their first delivery check after upgrade.
+
+Cancellation is a durable obligation until the adapter acknowledges it. The simulator remembers cancellation even if it precedes submission; old intent cannot replace newer intent. Cancelling old navigation does not stop already-playing or newer content. An approved switch is not reversed by the previous event's dwell timer while awaiting verification, but current eligibility and manual order are still reevaluated before accepting results.
+
+These guarantees are tested against the local simulator. Exactly-once external device effects are **not** established. A real executor still needs transport timeouts, idempotent request IDs, cancellation/intent fencing, and device evidence. Current adapter calls are synchronous local operations; the coordinator deadline does not interrupt a blocked external call.
 
 Failure simulation has a short retry burst at 5 and 15 seconds, followed by 5-minute probes, while allowing another live event to fill the gap. A failed manual target remains reserved. Pause cancels pending simulated jobs and retains the plan and current observation; it pauses automation, not the TV itself.
 
-Schema version 2 adds a team directory and edit history in a transaction. It preserves every version-1 record and rejects a newer, unsupported schema version. Undo stores scoped before/after snapshots with the originating command in the same transaction, retaining the latest 50 edits per device. It restores only the plan or configuration, never observed playback, automation mode, time, or job state. Current live eligibility is reevaluated normally. The request names the latest available edit and the current revision; a different edit or stale revision is rejected. Undo itself remains idempotent. A demo scenario reset clears that device's edit history.
+Schema version 2 adds a team directory and edit history; schema 3 adds job progress/deadlines/cancellation state and separate simulator tables. Migrations run in a transaction, preserve earlier records, and reject a newer unsupported schema version. Existing simulated observations and their requests are adopted on upgrade. Undo stores scoped before/after snapshots with the originating command in the same transaction, retaining the latest 50 edits per device. It restores only the plan or configuration, never observed playback, automation mode, time, or job state. Current live eligibility is reevaluated normally. The request names the latest available edit and the current revision; a different edit or stale revision is rejected. Undo itself remains idempotent. A demo scenario reset clears that device's edit history.
 
 Configuration transfer has its own version-1 document format, separate from database and feed schema versions. Import validates the complete document, previews changes and unresolved team IDs, then replaces rules, team rankings, and preferences in one undoable command. Plan and automation records are outside its scope. Export excludes connection credentials and playback state. Unknown team identities are retained to support imports before a directory has populated.
 
@@ -62,10 +72,10 @@ Open rule drafts, overlap reviews, and import previews retain the revision they 
 ## Production work remaining
 
 - Continue validating the actual household catalog, coverage routes, images, timezones, and proxy behavior after successful initial Teamarr testing.
-- Extract authoritative content-status and playback executor adapters from the simulator boundary in `service.py`. Add request deadlines, live-edge and content verification, cancellation acknowledgement, periodic observations, and recovery after process/device outages.
+- Complete a separate content-status adapter contract, with independent refresh of pinned events, authoritative observation expiry, and recovery scenarios. The playback adapter boundary is implemented; its real transport and device evidence are still future work.
 - Define executor option handoff when one broadcast window ends and another valid route for the same event begins. Route changes must not manufacture event completion.
-- Bound the grace period for stale observed playback once a real heartbeat source exists. The simulator currently keeps an existing unknown-status observation until a better manual choice or fresh lifecycle information arrives.
-- Add independent refresh of pinned content and richer tournament/session/major filters.
+- Define recovery policy for prolonged device/observation outages and verify it with a real heartbeat source. Playback evidence now expires, separately from event lifecycle freshness.
+- Add richer tournament/session/major filters.
 - Add completed-plan cleanup, job and command retention, complete database backup/restore tooling, and longer soak testing before unattended operation.
 - Implement multiple devices and explicit per-device executor ownership later. Natural-language actions can eventually translate into the same previewable API commands.
 - Build and exercise the Docker image on the target host; test Safari, physical touch devices, and deployment restart behavior.

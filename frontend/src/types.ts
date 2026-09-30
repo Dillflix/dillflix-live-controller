@@ -81,6 +81,8 @@ export interface Device {
     verified: boolean;
     simulated: boolean;
     observed_at: string;
+    valid_until?: string;
+    health?: string;
     viewing_option_id: string;
     presentation: string;
   } | null;
@@ -104,6 +106,15 @@ export interface Preview {
 }
 export interface Overview {
   device: Device;
+  playback_job: {
+    id: string;
+    content_id: string;
+    state: string;
+    progress: string | null;
+    deadline_at: number | null;
+    delivery_attempts: number;
+    error: string | null;
+  } | null;
   teams: Team[];
   undo: { id: number; description: string; created_at: string } | null;
   team_directory_health: {

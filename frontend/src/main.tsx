@@ -804,7 +804,9 @@ function App() {
                       ? "Automation paused"
                       : d.playback_state === "navigating"
                         ? "Switching live coverage"
-                        : "Now playing"}
+                        : d.playback_state === "unverified"
+                          ? "Last observed"
+                          : "Now playing"}
                   </span>
                   <Pill>
                     {d.playback_state === "verified"
@@ -822,6 +824,18 @@ function App() {
                     ? "Your watch plan is saved. Resume when ready."
                     : d.reason}
                 </div>
+                {data.playback_job?.state === "pending" && (
+                  <div className="df-playing-detail" aria-live="polite">
+                    Request {data.playback_job.progress || "queued"} · waiting
+                    for live verification
+                  </div>
+                )}
+                {d.playback_state === "unverified" && (
+                  <div className="df-playing-detail" aria-live="polite">
+                    Playback observation expired. Rechecking without assuming
+                    the event ended.
+                  </div>
+                )}
               </div>
               <div className="df-playing-controls">
                 <Button onClick={togglePause} disabled={busy}>
@@ -1426,6 +1440,8 @@ function App() {
                         <option value="overtime">Canadiens overtime</option>
                         <option value="delayed">Delayed start</option>
                         <option value="failure">Playback failure</option>
+                        <option value="timeout">Navigation timeout</option>
+                        <option value="replay">Replay result rejected</option>
                         <option value="stale">Stale status</option>
                         <option value="empty">No live events</option>
                       </select>
@@ -1622,6 +1638,37 @@ function App() {
                 <dd>{time(d.observed?.observed_at || null)} · simulated</dd>
                 <dt>Reason</dt>
                 <dd>{d.reason}</dd>
+                {data.playback_job && (
+                  <>
+                    <dt>Last request progress</dt>
+                    <dd>
+                      {(
+                        data.playback_job.progress || data.playback_job.state
+                      ).replaceAll("_", " ")}
+                    </dd>
+                    <dt>Delivery attempts</dt>
+                    <dd>{data.playback_job.delivery_attempts}</dd>
+                    {data.playback_job.state === "pending" &&
+                      data.playback_job.deadline_at && (
+                        <>
+                          <dt>Navigation deadline</dt>
+                          <dd>
+                            {time(
+                              new Date(
+                                data.playback_job.deadline_at * 1000,
+                              ).toISOString(),
+                            )}
+                          </dd>
+                        </>
+                      )}
+                    {data.playback_job.error && (
+                      <>
+                        <dt>Last request error</dt>
+                        <dd>{data.playback_job.error}</dd>
+                      </>
+                    )}
+                  </>
+                )}
               </dl>
             </>
           )}

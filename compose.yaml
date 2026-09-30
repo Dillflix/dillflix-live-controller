@@ -9,6 +9,7 @@ services:
       TEAMARR_URL: ${TEAMARR_URL:-}
       TEAMARR_TOKEN: ${TEAMARR_TOKEN:-}
       FEED_INTERVAL_SECONDS: ${FEED_INTERVAL_SECONDS:-60}
+      NAVIGATION_TIMEOUT_SECONDS: ${NAVIGATION_TIMEOUT_SECONDS:-120}
       CONTROLLER_DATABASE: /data/${CONTROLLER_MODE:-demo}.sqlite3
     volumes:
       - controller-data:/data
