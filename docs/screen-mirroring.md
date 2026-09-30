@@ -1,6 +1,6 @@
 # Live device screen
 
-Version 0.7 adds a real, optional screen feed above the events and watch-plan pages. It works in demo or Teamarr mode. **The screen can show the real TV while the controller's playback adapter is still simulated.** Viewing it does not verify the selected event or connect the autonomous navigation service.
+Version 0.7 added a real, optional screen feed above the events and watch-plan pages. It works in demo or Teamarr mode. **Screen viewing is independent of the selected playback adapter.** Viewing it alone does not verify the selected event. Version 0.9 adds opt-in autonomous Prime navigation through [executor setup](executor-setup.md).
 
 The implementation follows the approach evaluated in [NetrisTV/ws-scrcpy](https://github.com/NetrisTV/ws-scrcpy): on-device scrcpy encoding, ADB transport, and H.264 playback in a browser. It uses a separate pinned **Genymobile scrcpy 3.3.4** server and **JMuxer 2.1.4**, rather than requiring the ws-scrcpy application. The server version is intentionally pinned because scrcpy's internal wire protocol changes between versions. An existing ws-scrcpy installation may remain available separately; capture sessions have unique socket names and temporary files.
 

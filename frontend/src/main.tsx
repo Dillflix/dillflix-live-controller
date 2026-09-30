@@ -800,7 +800,9 @@ function App() {
             <span className="df-preview">
               {data.meta.mode === "demo"
                 ? "Demo · simulated"
-                : "Teamarr · simulated playback"}
+                : data.meta.playback_adapter === "simulator"
+                  ? "Teamarr · simulated playback"
+                  : "Teamarr · Prime Video"}
             </span>
           </div>
         </header>
@@ -812,7 +814,7 @@ function App() {
                 <Tv size={17} />
                 {d.name}
               </div>
-              <span>Playback simulator</span>
+              <span>{data.meta.playback_adapter === "simulator" ? "Playback simulator" : "Prime Video playback"}</span>
             </div>
           </aside>
           <main className="df-main">
@@ -898,6 +900,7 @@ function App() {
               deviceName={d.name}
               device={d}
               serverTime={data.meta.server_time}
+              simulated={data.meta.playback_adapter === "simulator"}
               onChange={load}
             />
             {!connected && (
@@ -1468,7 +1471,9 @@ function App() {
                         events checked.
                         {data.meta.mode === "demo"
                           ? " Independent simulated lookups."
-                          : " Cached Teamarr status. An independent live status source is not connected."}
+                          : data.meta.playback_adapter === "simulator"
+                            ? " Cached Teamarr status. An independent live status source is not connected."
+                            : " Teamarr lifecycle and verified playback completion observations."}
                       </p>
                       {data.status_health.error_count > 0 && (
                         <p>
@@ -1793,7 +1798,7 @@ function App() {
                 <dd>
                   {playbackOffline
                     ? "Unavailable; reconnecting automatically"
-                    : "Connected · simulator"}
+                    : data.meta.playback_adapter === "simulator" ? "Connected · simulator" : "Connected · Prime Video"}
                 </dd>
                 {d.executor_health?.last_contact_at && (
                   <>
@@ -1812,7 +1817,7 @@ function App() {
                   </>
                 )}
                 <dt>Verified at</dt>
-                <dd>{time(d.observed?.observed_at || null)} · simulated</dd>
+                <dd>{time(d.observed?.observed_at || null)}{d.observed?.simulated ? " · simulated" : ""}</dd>
                 <dt>Reason</dt>
                 <dd>{d.reason}</dd>
                 {data.playback_job && (

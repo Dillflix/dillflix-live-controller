@@ -16,3 +16,5 @@ backups/
 *.sqlite3-wal
 *.sqlite3-shm
 *.sqlite3.lock
+*.executor.lock
+*.egg-info/

@@ -91,6 +91,10 @@ class PlaybackCoordinator(PlaybackRecovery):
                 db.execute(
                     "UPDATE jobs SET state='superseded' WHERE device_id=? AND state='pending'", (d["id"],)
                 )
+                if self.executor and not target and previous_job:
+                    db.execute(
+                        "UPDATE jobs SET state='cancelled',cancel_sent=0 WHERE id=?", (previous_job["id"],)
+                    )
                 if target:
                     item = indexed[target]
                     request_id = str(uuid.uuid4())
@@ -287,7 +291,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                     self.db.log(
                         db,
                         self.now(db).isoformat(),
-                        "Simulated live playback verified",
+                        "Live playback verified" if self.executor else "Simulated live playback verified",
                         "Requested content and live presentation matched the observation",
                         "verified",
                         d["id"],

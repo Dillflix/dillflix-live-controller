@@ -1,6 +1,6 @@
 # Backup, restore, and unattended operation
 
-Version 0.6 adds complete SQLite snapshots and automatic history retention for the Ubuntu/Linux deployment. Playback and authoritative content-status services remain simulated.
+The Ubuntu/Linux deployment supports complete SQLite snapshots and automatic history retention. Version 0.9 adds durable real executor jobs, tokens, input journals and cancellation fences. Simulator mode remains the default; real mode is configured in [executor setup](executor-setup.md).
 
 ## Back up a running installation
 
@@ -25,7 +25,7 @@ python -m controller.ops verify backups/controller.sqlite3
 
 SQLite's online backup API includes committed data still in WAL and produces one standalone file. The command verifies integrity, schema, JSON records, mode, and watch-plan references, then publishes atomically with owner-only permissions. Snapshot creation has a 60-second limit. Failure does not publish a partial file. Its JSON result includes path, schema, mode, table counts, bytes, and SHA-256.
 
-Snapshots include the complete database: watch plan, configuration, catalog/team snapshots, undo history, command receipts, request history, status evidence, and simulator state. Keep `.env`, nginx configuration, application images, and external-service backups separately. Configuration export in the web interface remains a preference-transfer feature, not a full database backup.
+Snapshots include the complete database: watch plan, configuration, catalog/team snapshots, undo history, command receipts, request history, status evidence, simulator state, and real executor requests/tokens/input journals/fences. Keep `.env`, nginx configuration, application images, and external-service backups separately. Configuration export in the web interface remains a preference-transfer feature, not a full database backup.
 
 ## Restore offline
 
@@ -55,7 +55,7 @@ Before replacement, restore saves a complete rollback snapshot next to the targe
 Saved user data and history are preserved, with these runtime changes:
 
 - Automation starts **paused**. Refresh the browser, review the watch plan, then select **Resume**.
-- Pending requests become cancelled. Desired/observed playback and simulator observations are cleared.
+- Pending requests become cancelled. Desired/observed playback and simulator observations are cleared. Real executor records newer than the backup are retained from the readable target; owned playback is queued for stop, and the input-handoff barrier stays until acknowledgment.
 - Revision and playback intent advance beyond both the backup and readable target's saved values. Existing command receipts remain historical receipts and are not executed again.
 - Old leases are cleared, content-status checks become due, and simulated outages reset. Stored lifecycle facts retain their original timestamps.
 
@@ -77,7 +77,7 @@ Defaults apply to existing `.env` files. After editing these values, recreate th
 
 Safety references can exceed history limits. Cleanup preserves pending work, unacknowledged cancellation, current controller/simulator observations, the latest request, highest simulator intent evidence, and undo references. Every manual commitment remains, even after completion; removing it is a user action. Active catalog entries and the team directory remain too. Old inactive entries survive while referenced by a watch plan, undo snapshot, current playback, or outstanding work. Cleanup never manufactures event completion.
 
-Simulator request/cancellation history is removed only after a strictly higher persisted intent permanently fences old work. Cancellation records with no provable device intent stay retained. A future external executor needs its own equivalent retention/fencing contract.
+Simulator request/cancellation history is removed only after a strictly higher persisted intent permanently fences old work. Cancellation records with no provable device intent stay retained. Real executor full payloads/reports retire seven days after cancellation acknowledgment. Compact request-ID/hash/token/intent tombstones remain; unresolved stop obligations never expire.
 
 Command idempotency is guaranteed for retained receipts. After an older receipt is pruned, retrying its original body returns stale-revision **409** without applying it again. Refresh state and use a new ID for a new action. IDs are not reserved forever after leaving retention. Undo-associated receipts remain with their edit history.
 
@@ -118,4 +118,4 @@ curl -fsS http://127.0.0.1:8790/api/v1/maintenance
 docker compose logs --tail=100 controller
 ```
 
-Confirm watch-plan/priority persistence across a container restart, nginx/SSE behavior through the real proxy, timezone display, and physical mobile controls. Exercise the simulator with the household feed for an extended period and monitor memory, database size, refresh failures, and decision history. These deployment checks remain separate from connecting authoritative status and Fire TV services.
+Confirm watch-plan/priority persistence across a container restart, nginx/SSE behavior through the real proxy, timezone display, and physical mobile controls. Exercise the simulator with the household feed for an extended period and monitor memory, database size, refresh failures, and decision history. These deployment checks remain separate from validating the actual TV/model integration using the executor setup guide.

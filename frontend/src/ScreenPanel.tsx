@@ -18,12 +18,14 @@ export function ScreenPanel({
   deviceName,
   device,
   serverTime,
+  simulated,
   onChange,
 }: {
   deviceId: string;
   deviceName: string;
   device: Device;
   serverTime: string;
+  simulated: boolean;
   onChange: () => Promise<void>;
 }) {
   const [config, setConfig] = useState<ScreenConfig | null>(null);
@@ -232,6 +234,7 @@ export function ScreenPanel({
       <RemoteControls
         device={device}
         serverTime={serverTime}
+        simulated={simulated}
         enabled={!!config?.enabled}
         onChange={onChange}
       />

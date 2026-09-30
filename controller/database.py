@@ -11,7 +11,7 @@ def encode(value):
 
 
 class Database:
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     def __init__(self, path):
         self.path = path
@@ -108,6 +108,23 @@ class Database:
                     observation TEXT, last_attempt TEXT, last_success TEXT,
                     error TEXT, failures INTEGER NOT NULL DEFAULT 0,
                     next_check REAL NOT NULL DEFAULT 0)""")
+            if version < 6:
+                db.execute("""CREATE TABLE IF NOT EXISTS executor_jobs (
+                    token TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE,
+                    device_id TEXT NOT NULL, intent INTEGER NOT NULL, content_id TEXT NOT NULL,
+                    request TEXT, request_hash TEXT NOT NULL, report TEXT NOT NULL,
+                    state TEXT NOT NULL, cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    touched_device INTEGER NOT NULL DEFAULT 0, retired_at REAL,
+                    next_check REAL NOT NULL DEFAULT 0, completion_candidate TEXT,
+                    UNIQUE(device_id,intent))""")
+                db.execute("""CREATE TABLE IF NOT EXISTS executor_devices (
+                    device_id TEXT PRIMARY KEY, highest_intent INTEGER NOT NULL DEFAULT -1,
+                    cancelled_through INTEGER NOT NULL DEFAULT -1, current_token TEXT)""")
+                db.execute("""CREATE TABLE IF NOT EXISTS executor_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL,
+                    at TEXT NOT NULL, action TEXT NOT NULL, state TEXT NOT NULL,
+                    evidence_id TEXT, error TEXT)""")
+                db.execute("CREATE INDEX IF NOT EXISTS executor_actions_token ON executor_actions(token,id)")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:

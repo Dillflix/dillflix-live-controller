@@ -1,6 +1,8 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from .executor.config import ExecutorConfig
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,7 @@ class Settings:
     screen_max_size: int = 1280
     screen_max_fps: int = 30
     screen_bit_rate: int = 2000000
+    executor: ExecutorConfig = field(default_factory=ExecutorConfig)
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
     @classmethod
@@ -58,4 +61,5 @@ class Settings:
             screen_max_size=min(1920, max(320, int(os.getenv("SCREEN_MAX_SIZE", "1280")))),
             screen_max_fps=min(60, max(5, int(os.getenv("SCREEN_MAX_FPS", "30")))),
             screen_bit_rate=min(12000000, max(250000, int(os.getenv("SCREEN_BIT_RATE", "2000000")))),
+            executor=ExecutorConfig.from_env(),
         )

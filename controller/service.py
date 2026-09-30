@@ -34,6 +34,17 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         self._database_guard.__enter__()
         try:
             self.db = Database(settings.database)
+            self.executor = None
+            settings.executor.validate()
+            if settings.executor.mode != "simulator":
+                if settings.mode != "teamarr":
+                    raise ValueError("Real playback requires Teamarr mode; demo fixtures cannot control a TV")
+                from .executor.integration import ExecutorContentStatusAdapter, IntegratedPlaybackAdapter
+                from .executor.runtime import PlaybackExecutor
+
+                self.executor = PlaybackExecutor(self.db, settings)
+                playback = playback or IntegratedPlaybackAdapter(self.executor)
+                status = status or ExecutorContentStatusAdapter(self.executor)
             self.playback = playback or SimulatedPlaybackAdapter(self.db, settings.observation_ttl)
             self.status_adapter = status or SimulatedContentStatusAdapter(settings.mode, settings.status_ttl)
             self.owner = str(uuid.uuid4())
@@ -61,7 +72,43 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                     self.db.set_meta(db, "scenario", "normal")
                     device["plan"] = [self.entry("demo:canadiens")]
                 self.db.save_device(db, device)
-                self.db.log(db, self.now(db).isoformat(), "Controller started", "Playback adapter: simulator")
+                self.db.log(
+                    db,
+                    self.now(db).isoformat(),
+                    "Controller started",
+                    f"Playback adapter: {self.settings.executor.mode}",
+                )
+            previous_adapter = self.db.meta(db, "playback_adapter", "simulator")
+            if previous_adapter != self.settings.executor.mode:
+                if (
+                    self.settings.executor.mode == "simulator"
+                    and db.execute(
+                        "SELECT 1 FROM executor_jobs WHERE cancel_requested!=2 AND retired_at IS NULL LIMIT 1"
+                    ).fetchone()
+                ):
+                    raise ValueError("Cancel real playback before switching to the simulator")
+                device = self.db.device(db)
+                device.update(
+                    desired=None,
+                    observed=None,
+                    playback_state="waiting",
+                    started_at=None,
+                    last_switch_at=None,
+                    recovery=None,
+                    executor_health={"state": "starting"},
+                    force_switch=True,
+                )
+                device["intent_version"] += 1
+                db.execute("UPDATE jobs SET state='cancelled',cancel_sent=1 WHERE state='pending'")
+                db.execute("DELETE FROM content_status")
+                self.db.save_device(db, device)
+            self.db.set_meta(db, "playback_adapter", self.settings.executor.mode)
+            if self.executor:
+                device = self.db.device(db)
+                if device.get("observed"):
+                    device["observed"]["verified"] = False
+                    device["playback_state"] = "unverified"
+                    self.db.save_device(db, device)
             # Populate the new directory when upgrading an existing version-1 database.
             for row in db.execute("SELECT snapshot,seen_at FROM contents").fetchall():
                 self.remember_teams(db, json.loads(row["snapshot"]), row["seen_at"])
@@ -171,8 +218,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 "health": self.db.meta(db, "feed_health", {"state": "starting"}),
                 "meta": {
                     "mode": self.settings.mode,
-                    "playback_adapter": "simulator",
-                    "status_simulated": True,
+                    "playback_adapter": self.settings.executor.mode,
+                    "status_simulated": self.executor is None,
                     "now": self.now(db).isoformat(),
                     "server_time": datetime.now(UTC).isoformat(),
                     "scenario": self.db.meta(db, "scenario"),
@@ -658,6 +705,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         try:
+            if self.executor:
+                await self.executor.close()
             with self.db.transaction() as db:
                 db.execute("DELETE FROM leases WHERE owner=?", (self.owner,))
         finally:

@@ -110,9 +110,20 @@ def validate_report(request, report, now, ttl):
         not isinstance(observation.get("source"), str)
         or not observation["source"].strip()
         or type(observation.get("simulated")) is not bool
-        or observation.get("timestamp_basis") not in {"provider", "fixture", "feed_received"}
+        or observation.get("timestamp_basis")
+        not in {"provider", "fixture", "feed_received", "device_observed"}
     ):
         raise InvalidStatus("Status observation is missing its source or timestamp basis")
+    if observation["timestamp_basis"] == "device_observed":
+        evidence = observation.get("evidence") or {}
+        if (
+            observation["simulated"]
+            or not evidence.get("evidence_id")
+            or evidence.get("method") != "device_observation"
+        ):
+            raise InvalidStatus("Device status requires real acquired evidence")
+        if observation["state"] in TERMINAL and evidence.get("decision") != "confirmed":
+            raise InvalidStatus("Device completion requires explicitly confirmed evidence")
     if observation["timestamp_basis"] == "feed_received":
         if observation.get("observed_at") is not None:
             raise InvalidStatus("Feed receipt time must not be claimed as provider observation time")
@@ -186,6 +197,8 @@ class ContentStatusCoordinator:
                 )
             except Exception:
                 observation = None
+            if observation and getattr(self, "executor", None):
+                observation.update(source="teamarr_feed", simulated=False)
         return {**lifecycle_view(observation, check, real, self.settings.status_ttl), "tracked": pinned}
 
     def status_health(self, db, items):
@@ -210,8 +223,12 @@ class ContentStatusCoordinator:
             "unknown_count": unknown,
             "last_attempt": max((item["refresh"]["last_attempt"] or "" for item in lifecycles), default="")
             or None,
-            "adapter": "fixture_simulator" if self.settings.mode == "demo" else "feed_status_simulator",
-            "simulated": True,
+            "adapter": "executor_and_teamarr"
+            if getattr(self, "executor", None)
+            else "fixture_simulator"
+            if self.settings.mode == "demo"
+            else "feed_status_simulator",
+            "simulated": not bool(getattr(self, "executor", None)),
         }
 
     def accept_status_report(self, request, report, error=None):

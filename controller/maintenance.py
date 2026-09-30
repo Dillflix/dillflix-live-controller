@@ -17,6 +17,9 @@ TABLES = (
     "content_status",
     "simulated_jobs",
     "simulated_cancellations",
+    "executor_jobs",
+    "executor_actions",
+    "executor_devices",
 )
 
 
@@ -55,6 +58,9 @@ def prune(database, settings, owner):
             observed = json.loads(row[0])
             requests.add(observed.get("request_id"))
             contents.add(observed.get("content_id"))
+        for row in db.execute("SELECT request_id,content_id FROM executor_jobs WHERE request IS NOT NULL"):
+            requests.add(row["request_id"])
+            contents.add(row["content_id"])
         # A last request remains useful to the UI even after completion.
         requests.update(
             row[0]

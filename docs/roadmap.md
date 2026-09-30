@@ -50,11 +50,13 @@ The requested screen view is available before autonomous navigation: an independ
 
 ## Manual device control — implemented in 0.8
 
-Take control suspends automation for a chosen duration, including four-hour events and up to 24 hours. It provides a mobile remote, focused keyboard shortcuts, text entry, explicit browser takeover, extension, and resume/stay-paused actions. Ownership and deadlines survive restarts; expiry and input are fenced on the server. Input uses a separate control-only scrcpy connection; capture stays shared. Actual Fire TV input compatibility, nginx, and physical mobile behavior need host validation. The autonomous executor remains deferred and must join the same ownership gate.
+Take control suspends automation for a chosen duration, including four-hour events and up to 24 hours. It provides a mobile remote, focused keyboard shortcuts, text entry, explicit browser takeover, extension, and resume/stay-paused actions. Ownership and deadlines survive restarts; expiry and input are fenced on the server. Input uses a separate control-only scrcpy connection; capture stays shared. Actual Fire TV input compatibility, nginx, and physical mobile behavior need host validation. Version 0.9 joins the real executor to the same physical input gate.
 
-## 4. Connect real status and playback services — deferred
+## 4. Integrated Prime Video executor — implemented in 0.9, host validation pending
 
-Choose the authoritative content-status service and executor transport. Implement real request timeouts, request inspection, cancellation/fencing, and device observations behind the tested boundaries. Verify the requested event and live presentation on the device, exercise process/device/network recovery, and run unattended trials before relying on continuous coverage.
+The authorized integration is in this repository: Play, status by token and Cancel, durable records/fences, async model/ADB calls, Prime launch/search, JSON or TVTheseus navigation, independent visual verification and scoped completion, active stop, and shared manual ownership. No additional public lifecycle, authority, recovery or Stop API is required. See [setup](executor-setup.md) and [implementation](executor-api-handoff.md).
+
+Automated tests use controlled device/model boundaries and validate controller integration, concurrency, cancellation and restore. Actual TV/account/inference accuracy, protected-video visibility, Docker/nginx and unattended endurance require the target-host validation procedure. Other apps and a provider for unplayed/out-of-window sports results remain future integrations; unknown evidence never completes a commitment.
 
 ## Later iterations
 

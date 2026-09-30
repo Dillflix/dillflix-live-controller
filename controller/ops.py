@@ -29,6 +29,7 @@ JSON_COLUMNS = {
     "content_status": ("observation",),
     "simulated_jobs": ("payload", "observation"),
     "simulated_devices": ("observation",),
+    "executor_jobs": ("request", "report", "completion_candidate"),
 }
 
 
@@ -138,7 +139,14 @@ def fence_values(path):
             highest = db.execute(
                 "SELECT intent FROM simulated_devices WHERE device_id=?", (d["id"],)
             ).fetchone()
-            values[d["id"]] = (d["revision"], max(d["intent_version"], highest[0] if highest else -1))
+            real = db.execute(
+                "SELECT MAX(highest_intent,cancelled_through) FROM executor_devices WHERE device_id=?",
+                (d["id"],),
+            ).fetchone()
+            values[d["id"]] = (
+                d["revision"],
+                max(d["intent_version"], highest[0] if highest else -1, real[0] if real else -1),
+            )
     return values
 
 
@@ -152,9 +160,18 @@ def prepare_restore(path, prior):
             saved_highest = db.execute(
                 "SELECT intent FROM simulated_devices WHERE device_id=?", (d["id"],)
             ).fetchone()
+            real = db.execute(
+                "SELECT MAX(highest_intent,cancelled_through) FROM executor_devices WHERE device_id=?",
+                (d["id"],),
+            ).fetchone()
             d.update(
                 revision=max(d["revision"], revision) + 1,
-                intent_version=max(d["intent_version"], intent, saved_highest[0] if saved_highest else -1)
+                intent_version=max(
+                    d["intent_version"],
+                    intent,
+                    saved_highest[0] if saved_highest else -1,
+                    real[0] if real else -1,
+                )
                 + 1,
                 automation="paused",
                 manual_control=None,
@@ -172,7 +189,16 @@ def prepare_restore(path, prior):
                 failures={},
             )
             Database.set_meta(db, f"manual-owner:{d['id']}", None)
+            d["input_handoff"] = (
+                {"through_intent_version": d["intent_version"]}
+                if Database.meta(db, "playback_adapter") == "prime-video"
+                else None
+            )
             Database.save_device(db, d)
+            db.execute(
+                "UPDATE executor_devices SET highest_intent=MAX(highest_intent,?),cancelled_through=MAX(cancelled_through,?) WHERE device_id=?",
+                (d["intent_version"], d["intent_version"], d["id"]),
+            )
             db.execute(
                 "INSERT INTO simulated_devices VALUES (?,?,NULL) ON CONFLICT(device_id) DO UPDATE SET intent=excluded.intent,observation=NULL",
                 (d["id"], d["intent_version"]),
@@ -187,6 +213,9 @@ def prepare_restore(path, prior):
             )
         db.execute("UPDATE jobs SET state='cancelled' WHERE state='pending'")
         db.execute("UPDATE simulated_jobs SET state='cancelled' WHERE state IN ('accepted','navigating')")
+        db.execute(
+            "UPDATE executor_jobs SET cancel_requested=1,next_check=0 WHERE request IS NOT NULL AND cancel_requested!=2"
+        )
         db.execute("DELETE FROM leases")
         db.execute("UPDATE content_status SET request_id=?,next_check=0", (str(uuid.uuid4()),))
         Database.set_meta(db, "simulated_executor_outage", False)
@@ -194,6 +223,34 @@ def prepare_restore(path, prior):
         Database.set_meta(db, "maintenance_health", {"state": "starting"})
         Database.set_meta(db, "last_restore", {"at": datetime.now(UTC).isoformat(), "automation": "paused"})
         db.commit()
+
+
+def retain_executor_history(stage, current):
+    """A user-data restore must not roll back tokens, tombstones, or TV ownership.
+
+    The current database is stopped and guarded by restore(). Its newer executor
+    records are needed to stop playback even when the backup predates that token.
+    """
+    with closing(readonly(current)) as src, closing(sqlite3.connect(stage)) as dst:
+        for table in ("executor_jobs", "executor_devices"):
+            rows = src.execute(f"SELECT * FROM {table}").fetchall()
+            for row in rows:
+                columns = ",".join(row.keys())
+                placeholders = ",".join("?" for _ in row.keys())
+                dst.execute(f"INSERT OR REPLACE INTO {table}({columns}) VALUES ({placeholders})", tuple(row))
+        for job in src.execute("SELECT token FROM executor_jobs"):
+            dst.execute("DELETE FROM executor_actions WHERE token=?", (job[0],))
+            for action in src.execute("SELECT * FROM executor_actions WHERE token=? ORDER BY id", (job[0],)):
+                columns = [column for column in action.keys() if column != "id"]
+                dst.execute(
+                    "INSERT INTO executor_actions("
+                    + ",".join(columns)
+                    + ") VALUES ("
+                    + ",".join("?" for _ in columns)
+                    + ")",
+                    [action[column] for column in columns],
+                )
+        dst.commit()
 
 
 def restore(source, target, *, replace=False, expected_mode=None):
@@ -224,6 +281,8 @@ def restore(source, target, *, replace=False, expected_mode=None):
             staged_info = snapshot(source, stage)
             if staged_info["mode"] != info["mode"]:
                 raise ValueError("Source mode changed during restore; retry from a stable backup")
+            if target.exists():
+                retain_executor_history(stage, target)
             prepare_restore(stage, prior)
             verify(stage)
             sync_file(stage)

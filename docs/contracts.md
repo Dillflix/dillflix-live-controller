@@ -117,7 +117,7 @@ This transfer excludes the watch plan, automation mode, playback state, database
 
 ## Content-status adapter implemented today
 
-`ContentStatusAdapter.lookup(request)` is an asynchronous internal boundary, implemented by the simulator. It is not an outbound HTTP API configuration. The worker sends:
+`ContentStatusAdapter.lookup(request)` is an asynchronous internal boundary, implemented by simulator and integrated executor adapters. It is an internal boundary, not another public lifecycle API. The worker sends:
 
 ```json
 {
@@ -151,7 +151,7 @@ This transfer excludes the watch plan, automation mode, playback state, database
 }
 ```
 
-Timestamp basis is `provider`, `fixture`, or `feed_received`. Provider/fixture observations require an aware `observed_at`; cached feed evidence requires a null `observed_at` and an aware original `received_at`. All observations require source, a boolean simulation flag, a supported state, and expiry after the evidence timestamp. Evidence must be unexpired when accepted, no more than five seconds in the future, and within the controller's 120-second content-status age limit. Source expiry is preserved; `effective_valid_until` is the earlier of that expiry and the controller age limit.
+Timestamp basis is `provider`, `fixture`, `feed_received`, or `device_observed`. Real device observations require acquisition time and device-observation evidence; terminal visual states require `evidence.decision=confirmed`. Provider/fixture observations require an aware `observed_at`; cached feed evidence requires a null `observed_at` and an aware original `received_at`. All observations require source, a boolean simulation flag, a supported state, and expiry after the evidence timestamp. Evidence must be unexpired when accepted, no more than five seconds in the future, and within the controller's 120-second content-status age limit. Source expiry is preserved; `effective_valid_until` is the earlier of that expiry and the controller age limit.
 
 Request/content identity and current lease/request ID must match. Older or conflicting same-time evidence from a comparable source is rejected. Failure/timeout/null retains the previous accepted observation until it expires. An explicit fresh unknown observation makes nonterminal lifecycle unknown immediately. Previously confirmed ended/cancelled evidence survives unknown/error/expiry; a newer explicit state can correct it. None of these operations removes a manual commitment or fabricates a playback observation.
 
@@ -179,9 +179,9 @@ The internal durable job contains this payload:
 
 `content_id` is **the feed entry's `id`**, not `event.event_id`. The snapshot includes all original event, team, session, broadcast, identity, timing, artwork, option, and unknown extension fields. Every valid option is passed; there is no controller-selected app. Teamarr's `preferred_option_id` remains in the untouched snapshot but does not authorize the executor to ignore other allowed options.
 
-Excluded options, explicit replay/highlight presentations, and partial/multi-event coverage that cannot satisfy a specific event/session are filtered out. An uncertainty such as an unknown end time is retained with its review reasons. RedZone is eligible as its own broadcast; it cannot be used to claim a full individual NFL game is playing. The future executor must resolve remaining review uncertainty and verify live presentation.
+Excluded options, explicit replay/highlight presentations, and partial/multi-event coverage that cannot satisfy a specific event/session are filtered out. An uncertainty such as an unknown end time is retained with its review reasons. RedZone is eligible as its own broadcast; it cannot be used to claim a full individual NFL game is playing. The executor must resolve remaining review uncertainty and verify live presentation.
 
-The simulator chooses the first permitted option only to exercise the observation workflow. This is a simulator implementation detail, not a product preference or the future executor's route-selection policy.
+The simulator chooses the first permitted option only to exercise the observation workflow. This is a simulator implementation detail, not a product preference or the real executor's route-selection policy.
 
 `purpose` and `previous_request_id` are additive version-0.5 fields. Purpose is `selection`, `route_handoff`, or `recovery`; previous request is the last observed request ID or JSON null. They explain the request but do not relax live verification or monotonic intent fencing. Older persisted payloads remain valid and are retried unchanged.
 
@@ -189,7 +189,7 @@ Withdrawing the observed route or changing its playback locator stages a new int
 
 ## Playback adapter implemented today
 
-`controller/playback.py` defines this internal boundary. It is implemented by the persistent simulator, not HTTP routes:
+`controller/playback.py` defines this internal boundary. It is implemented by the simulator and by `IntegratedPlaybackAdapter`. The latter projects the same durable records used by the executor HTTP routes:
 
 | Operation | Result and semantics |
 | --- | --- |
@@ -225,17 +225,15 @@ Cancellation includes active playback attributable to its request or device-inte
 
 `GET /api/v1/maintenance` reports `state` (`starting`, `ok`, `error`), `policy`, and, after a successful pass, `last_run`, `removed`, and `counts`. Policy contains `jobs_per_device`, `receipts_per_device`, `inactive_catalog_days`, and `interval_seconds`. Counts are per table as of the last pass, not a live counter. An error adds sanitized `error` and preserves the previous successful pass. There is no HTTP restore endpoint.
 
-Maintenance preserves pending/cancellation obligations, current observations, intent fences, manual commitments, and undo references even if these exceed history limits. Old inactive catalog entries are removed only when unreferenced; cleanup never asserts event completion. The simulator retains enough intent evidence to reject replayed requests after old payloads are removed. A real executor must define its own compatible receipt-retention policy.
+Maintenance preserves pending/cancellation obligations, current observations, intent fences, manual commitments, and undo references even if these exceed history limits. Old inactive catalog entries are removed only when unreferenced; cleanup never asserts event completion. The simulator retains enough intent evidence to reject replayed requests after old payloads are removed. Real executor full records retire seven days after acknowledged cancellation; compact id/hash/token/intent tombstones remain permanently to reject old retries.
 
-Full database snapshots and offline restore use `python -m controller.ops`; see [operations.md](operations.md). Restore preserves saved user data/history but pauses automation, clears runtime playback claims, cancels pending work, and advances revision/intent beyond the backup and readable target. Clients should reload before issuing new commands. Database schema is 5; configuration-transfer schema remains 1.
+Full database snapshots and offline restore use `python -m controller.ops`; see [operations.md](operations.md). Restore preserves saved user data/history but pauses automation, clears runtime playback claims, cancels pending work, and advances revision/intent beyond the backup and readable target. Clients should reload before issuing new commands. Database schema is 6; configuration-transfer schema remains 1.
 
-## Future external adapters
+## Integrated executor API
 
-The [engineer handoff](executor-api-handoff.md) and [OpenAPI draft](executor-api.openapi.yaml) propose three external operations: Play, token status including lifecycle, and Cancel including active stop and a device-scoped manual handoff barrier. Separate request recovery, device observation, content-ID lifecycle lookup, and authority APIs are deferred. Those HTTP routes are not implemented by this controller release.
+Version 0.9 implements the [three-operation API](executor-api-handoff.md): Play, status by token including lifecycle, and Cancel including active stop and device-intent fencing. The [OpenAPI contract](executor-api.openapi.yaml) and `/docs` describe real routes. Enable them using [executor setup](executor-setup.md). External callers use a service bearer credential; embedded controller adapters access the same durable records directly.
 
-No outbound playback HTTP endpoint or callback endpoint is connected yet. The future executor should accept the staged payload idempotently by `request_id`, apply monotonic intent fencing per device, and report request progress separately from observations. A successful acknowledgement must not count as live verification.
-
-The real adapter can implement internal inspect/observe/content-status methods through the token getter and locally persisted token associations. Unplayed content continues using fresh Teamarr evidence; unplayed out-of-window lifecycle may remain unknown. No independent public lookup is required. Real evidence ingestion, token persistence, HTTP timeouts, authentication, and physical executor cancellation remain integration work specified in the handoff.
+Full request snapshots and allowed options remain unchanged. Token associations persist independently of controller report acceptance. Model HTTP and ADB use bounded async I/O. Shared physical input ownership and confirmed cancellation protect manual handoff. Real playback observations carry `simulated=false`, acquired timestamps and evidence metadata. Device-scoped completion ingestion is implemented; fresh cached Teamarr evidence covers unplayed content. Unknown out-of-window lifecycle remains unknown without inventing another API.
 
 ## Screen viewing API
 

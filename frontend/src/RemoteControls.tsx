@@ -40,11 +40,13 @@ export function RemoteControls({
   device,
   serverTime,
   enabled,
+  simulated,
   onChange,
 }: {
   device: Device;
   serverTime: string;
   enabled: boolean;
+  simulated: boolean;
   onChange: () => Promise<void>;
 }) {
   const storage = `dillflix-remote-${device.id}`;
@@ -501,9 +503,12 @@ export function RemoteControls({
             </button>
           </div>
           <p className="df-remote-help">
-            Your watch plan is saved. Automated event playback remains
-            simulated; these remote inputs control the real TV.
+            Your watch plan is saved. These remote inputs control the TV.
+            {simulated ? " Automated event playback remains simulated." : ""}
           </p>
+          {device.manual_control?.input_ready === false && (
+            <p role="status">Waiting for playback to stop before enabling the remote.</p>
+          )}
         </>
       )}
     </div>

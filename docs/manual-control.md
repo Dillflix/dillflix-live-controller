@@ -36,6 +36,6 @@ Preserve `$http_host` for both HTTP and WebSocket requests, including nonstandar
 
 ## Current limits
 
-Manual remote inputs affect the real device. Automatic event playback and verification remain simulated. Resuming automation currently resumes that simulator; it does not navigate the TV. Future autonomous navigation must honor the same ownership gate. Physical remotes and other ADB/ws-scrcpy clients cannot be locked out by this application.
+Manual remote inputs affect the real device. With `PLAYBACK_ADAPTER=simulator`, Resume restores simulated automation. With `prime-video`, it enables actual navigation after manual transport drains. The executor shares the physical input gate; Take control waits for confirmed active stop. Physical remotes and unrelated ADB/ws-scrcpy clients remain outside this gate.
 
 Local tests exercise scrcpy framing through a real subprocess/TCP test double and remote UI flows in Chromium. Real Fire TV input handling, simultaneous capture/control compatibility, Docker/nginx and physical Safari still need testing on your host. If video works but input does not, confirm the input WebSocket proxy route, ADB authorization and Fire OS input-injection support. A `sent` response only acknowledges transport delivery; look at the screen to confirm the app's response.

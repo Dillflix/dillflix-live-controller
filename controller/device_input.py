@@ -193,7 +193,9 @@ class DeviceInput:
                 except HTTPException:
                     raise
                 except Exception as error:
-                    raise HTTPException(503, "Playback cancellation is unconfirmed. Reconnect to retry.") from error
+                    raise HTTPException(
+                        503, "Playback cancellation is unconfirmed. Reconnect to retry."
+                    ) from error
                 self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
                 if self.connection:
                     raise HTTPException(
@@ -278,7 +280,12 @@ class DeviceInput:
                         raise ValueError("Input rate exceeded. Reconnect and try more slowly.")
                     tokens -= 1
                     last_seq = message.seq
-                    await source.send(packet)
+                    if self.service.executor:
+                        async with self.service.executor.input_lock:
+                            self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
+                            await source.send(packet)
+                    else:
+                        await source.send(packet)
                 async with asyncio.timeout(2):
                     # This acknowledges transport delivery, not the visible effect on the TV.
                     await websocket.send_json({"type": "sent", "seq": message.seq})

@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
 from .device_input import DeviceInput, same_origin
+from .executor.api import install_executor_api
 from .models import (
     AutomationUpdate,
     Command,
@@ -31,20 +32,23 @@ def create_app(settings=None, *, start_workers=True):
 
     @asynccontextmanager
     async def lifespan(app):
-        control.start()
-        if start_workers:
-            service.start()
         try:
+            if service.executor:
+                await service.executor.start()
+            control.start()
+            if start_workers:
+                service.start()
             yield
         finally:
             await control.stop()
             await screen.stop()
             await service.stop()
 
-    app = FastAPI(title="Dillflix Controller", version="0.8.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.9.0", lifespan=lifespan)
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
+    install_executor_api(app, service)
 
     @app.post("/api/v1/devices/{device_id}/control")
     async def manual_control(device_id: str, command: ManualControlCommand, request: Request):
@@ -76,7 +80,14 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/health")
     def health():
-        return {"ok": True, "mode": settings.mode, "playback": "simulator"}
+        return {
+            "ok": True,
+            "mode": settings.mode,
+            "playback": settings.executor.mode,
+            "executor_running": bool(
+                service.executor and service.executor.worker and not service.executor.worker.done()
+            ),
+        }
 
     @app.get("/api/v1/overview")
     def overview():

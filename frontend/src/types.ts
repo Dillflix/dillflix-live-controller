@@ -92,6 +92,7 @@ export interface Device {
     started_at: string;
     expires_at: string;
     return_mode: "active" | "paused";
+    input_ready?: boolean;
   } | null;
   intent_version: number;
   desired: string | null;

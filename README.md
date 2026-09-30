@@ -2,9 +2,11 @@
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
-**Version 0.8 adds temporary manual device control alongside live ADB screen mirroring. Event playback/navigation and content-status verification remain simulated.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): complete unattended-operation checks before connecting real status and playback services. Screen capture stays view-only; manual inputs use an exclusive session.
+**Version 0.9 adds an integrated Prime Video executor: Play, status by token, and Cancel, with durable jobs, LLM-powered navigation, playback/completion evidence, and the same input gate as manual control.** The default remains simulated; real playback is opt-in with `PLAYBACK_ADAPTER=prime-video`. Start with [executor setup](docs/executor-setup.md) and the [implemented API guide](docs/executor-api-handoff.md). Automated tests use controlled ADB/model boundaries; actual Fire TV, account, inference-service, Docker/nginx and mobile compatibility require target-host validation.
 
 ## What works
+
+- Opt-in Prime Video playback with package-scoped ADB search, configurable JSON/TVTheseus actor, independent vision observer, durable tokens, active cancellation, completion checks and read-only diagnostics.
 
 - **Take control** with a selectable duration (including 4 hours, up to 24 hours), mobile D-pad, focused keyboard shortcuts, and text entry. Extend the session, resume automation, or finish with automation paused. Sessions survive restarts; other browsers must explicitly take over. See [manual control](docs/manual-control.md).
 - An optional live device-screen panel with inline phone video, fullscreen, automatic reconnect, shared capture across viewers, and cleanup when the panel or tab is hidden. See [screen setup](docs/screen-mirroring.md).
@@ -42,9 +44,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open **http://localhost:8790**. The demo clock starts at an illustrative Sunday afternoon; advance it with the controls at the bottom of the page. Sample events are intentionally fictional, including playoff matchups on the sample date.
+Open **http://CONTROLLER_HOST_IP:8790** from your PC, or **http://localhost:8790** on the server itself. The demo clock starts at an illustrative Sunday afternoon; sample events are fictional.
 
-The Compose service binds to loopback for use behind your existing nginx authentication. See [docs/nginx.conf.example](docs/nginx.conf.example). For a containerized nginx, attach both services to your chosen shared network and proxy to the controller service instead of loopback.
+Compose binds `0.0.0.0:8790` by default for LAN access. Set `CONTROLLER_BIND_ADDRESS=127.0.0.1` for a host-local authenticated nginx deployment, or another host address/`CONTROLLER_PORT` as needed. The UI uses your existing proxy authentication; direct access is intended for a trusted LAN. See [nginx configuration](docs/nginx.conf.example). For containerized nginx, attach both services to your chosen shared network and proxy to the controller service.
 
 State is stored in the `controller-data` volume. Rebuilding the container preserves it. Demo and Teamarr modes use separate database files. Pause is also retained across restarts.
 
@@ -59,7 +61,7 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Keep your existing `.env` and `controller-data` volume. Version 0.8 upgrades the database to schema 5 to protect manual-session ownership from older controller versions, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. No new environment changes are required if screen mirroring is configured. Update the nginx WebSocket location to include `/control/input` as shown in the example. Add `SCREEN_ADB_SERIAL=your-fire-tv-ip:5555` and the WebSocket location from [the nginx example](docs/nginx.conf.example) to enable it; see [screen setup](docs/screen-mirroring.md). Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
+Keep your existing `.env` and `controller-data` volume. Version 0.9 upgrades to schema 6, retaining plans, settings, catalog, receipts, history and manual sessions while adding executor records and durable input fences. Real navigation stays off until configured using [executor setup](docs/executor-setup.md). The Compose bind default now permits access from another PC; use `CONTROLLER_BIND_ADDRESS=127.0.0.1` if access should go exclusively through host-local nginx. Refresh the browser after updating. Newer database schemas are rejected by older releases. See [CHANGELOG.md](CHANGELOG.md).
 
 Configuration export under **Settings → Configuration backup** saves priorities, preferred teams, and switching/display preferences. Import shows a review before replacing those fields; it preserves the watch plan and automation mode. It is a configuration transfer, not a complete database backup, and contains no Teamarr credentials. Unresolved team IDs are retained with a warning so preferences survive temporary directory gaps.
 
@@ -73,7 +75,7 @@ See [docs/operations.md](docs/operations.md) for complete Docker/local backup an
 
 In demo mode, load **Navigation timeout** or **Replay result rejected** from the scenario controls. The controller records the failed attempt, preserves the watch plan, and selects another eligible live event. The timeout scenario uses a three-second deadline so the transition is easy to observe. Normal requests use `NAVIGATION_TIMEOUT_SECONDS`, which defaults to 120 and has a minimum of 5.
 
-The playback details show request purpose, observed coverage, service contact, progress, delivery attempts, the pending deadline, and the latest request error. Activity retains earlier failure reasons after a fallback starts. Request acceptance and navigation are distinct from verified live playback. A playback observation expires after at most 15 seconds without fresh simulator evidence; the interface then shows **Last observed**. No new content-status conclusion is inferred from that outage.
+The playback details show request purpose, observed coverage, service contact, progress, delivery attempts, the pending deadline, and the latest request error. Activity retains earlier failure reasons after a fallback starts. Request acceptance and navigation are distinct from verified live playback. A playback observation expires after at most 15 seconds without fresh playback evidence; the interface then shows **Last observed**. No new content-status conclusion is inferred from that outage.
 
 Load **Same-event coverage change**, wait for golf to be verified, then use **+15 min**. The fixture explicitly withdraws its TSN option. The controller requests the same golf event with the remaining valid option, preserving its manual protection and original viewing timers. An estimated coverage end alone never triggers a handoff or completes an event; the source must withdraw the option or change its playback locator.
 
@@ -81,7 +83,7 @@ Load **Playback service outage** to disconnect the simulator after initial playb
 
 When the service responds but playback evidence is missing, the controller first waits for recovery. The initial grace is `PLAYBACK_RECOVERY_GRACE_SECONDS` (default 60, minimum 5). Repeated losses after recovery attempts increase the wait, up to 300 seconds; 30 seconds of healthy observations reset that budget. After grace, selection can reopen a confirmed live target, choose a confirmed live fallback, or wait. Unknown event status never authorizes a new playback request. Fresh verified playback can continue through a status outage. A higher live manual choice takes precedence, and **Play now** can explicitly retry an unverified live target without waiting for grace.
 
-The simulator stores executor state separately from controller jobs. On restart or an uncertain delivery outcome, the controller inspects the original request before resending the same ID. Cancellation is durable and retried; it ends pending navigation and matching active playback without stopping a newer target. Manual input waits for an acknowledged device cancellation barrier. Playback calls run in a drained worker thread so slow adapter calls do not block the HTTP event loop. These guarantees are exercised locally, with real executor transport still deferred.
+The simulator stores executor state separately from controller jobs. On restart or an uncertain delivery outcome, the controller inspects the original request before resending the same ID. Cancellation is durable and retried; it ends pending navigation and matching active playback without stopping a newer target. Manual input waits for an acknowledged device cancellation barrier. Playback calls run in a drained worker thread so slow adapter calls do not block the HTTP event loop. In real mode the embedded adapters use durable token records; model HTTP and ADB run asynchronously with finite deadlines, and physical input shares the manual-control gate.
 
 ## Exercise independent content status
 
@@ -89,9 +91,9 @@ Load **Reserved event outside feed** in demo mode. The Canadiens game is absent 
 
 Settings shows content-status health independently of schedule and team-directory health. Event details show the status source, observation time, effective expiry, lookup error, and whether the entry is outside the current feed. Missing or failed lookups retain still-valid evidence; expired nonterminal evidence becomes unknown. Already-confirmed terminal evidence survives outages, and a newer explicit observation can correct it.
 
-`STATUS_INTERVAL_SECONDS` defaults to 15 (minimum 5). Lookups have a five-second timeout and bounded retry backoff. They continue while automation is paused. The internal lookup contract carries `content_id` and the complete original Teamarr entry, preserving identifiers for a future real service. No real status-service endpoint is configured yet.
+`STATUS_INTERVAL_SECONDS` defaults to 15 (minimum 5). Lookups have a five-second timeout and bounded retry backoff. They continue while automation is paused. The internal lookup contract carries `content_id` and the complete original Teamarr entry, preserving identifiers for a future real service. Real mode uses acquired Prime Video completion evidence plus unchanged Teamarr feed facts through the same internal boundary.
 
-**In Teamarr mode, the status adapter currently rereads cached Teamarr evidence.** It cannot obtain fresh out-of-window event status on its own. Rechecking that snapshot never extends its original freshness window. Teamarr's feed does not supply a provider observation timestamp: `lifecycle.observed_at` is null, `received_at` records the feed read, and `timestamp_basis` is `feed_received`. An independent authoritative service is still required for live completion verification outside the feed window.
+**Teamarr evidence retains its original freshness.** The default simulator rereads cached feed status; real mode additionally monitors the requested Prime Video content for scoped completion. Neither mode independently fetches sports-results facts for every unplayed/out-of-window reservation. Without fresh evidence those events stay unknown. Teamarr supplies no provider observation timestamp: `observed_at` is null, `received_at` is the feed read, and `timestamp_basis` is `feed_received`. Visual completion uses `device_observed` acquisition times. See [evidence policy](docs/executor-api-handoff.md#verification-and-completion).
 
 ## Connect the Teamarr catalog
 
@@ -113,7 +115,7 @@ The adapter reads `GET /api/v1/events/feed`, covering the current time through t
 
 The team directory reads `GET /api/v1/cache/leagues/{league}/teams` on startup and hourly, independently of feed ingestion. It requests NFL, NHL, MLB, and NBA, plus up to 16 additional leagues already known from team data. It also remembers teams encountered in events. These are Teamarr's cached rosters; an unpopulated cache can return no teams. Failed or empty refreshes never delete known teams or preferences. Settings shows directory health separately from schedule health. Provider team IDs are used for matching; Teamarr's local cache row IDs are not.
 
-Playback remains simulated in Teamarr mode. Provider-reported event status can drive the status simulator, but unknown broadcast status remains unknown: a RedZone or golf schedule window alone cannot prove that playback is live. A failed refresh retains the last catalog; the UI shows degraded feed health. Teamarr upstream fetch errors that appear as a successful empty result remain an upstream limitation.
+Teamarr mode defaults to simulated playback. To control the TV, follow [Prime Video executor setup](docs/executor-setup.md). Unknown broadcast status remains unknown: a RedZone or golf schedule window alone cannot prove live eligibility. Failed feed refreshes retain the previous catalog and show degraded health; upstream fetch errors represented by Teamarr as successful empty feeds remain an upstream limitation.
 
 ## Develop locally
 
@@ -127,7 +129,7 @@ cd frontend
 npm ci
 npm run build
 cd ..
-python -m uvicorn controller.api:create_app --factory --host 127.0.0.1 --port 8790
+python -m uvicorn controller.api:create_app --factory --host 0.0.0.0 --port 8790
 ```
 
 For hot reload, run the API with `--reload`, and run `npm run dev` from `frontend` in a second terminal. Vite proxies API calls to port 8790. The Python server does not automatically load `.env`; export variables in your shell when running outside Compose.
@@ -140,7 +142,10 @@ Interactive request schemas are available at `/docs`; the generated OpenAPI docu
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/health` | Process health and explicit simulation mode |
+| `POST /v1/playbacks` | Accept real playback and return a durable token |
+| `GET /v1/playbacks/{token}` | Launch progress, playback evidence and event completion |
+| `POST /v1/playbacks/cancel` | Cancel navigation/active playback or fence a device intent |
+| `GET /api/health` | Process health, adapter mode and executor worker state |
 | `GET /api/v1/maintenance` | Retention policy and last maintenance outcome |
 | `GET /api/v1/overview` | One consistent snapshot for the web interface |
 | `GET /api/v1/events` | Catalog cards, lifecycle observations, options, and metadata |
@@ -162,7 +167,7 @@ Interactive request schemas are available at `/docs`; the generated OpenAPI docu
 | `POST /api/v1/devices/{id}/automation` | Pause or resume automation |
 | `POST /api/v1/devices/{id}/simulate` | Explain a selection without changing playback |
 | `GET /api/v1/devices/{id}/activity` | Recent decisions and actions |
-| `GET /api/v1/devices/{id}/jobs` | Recent simulator requests, including original Teamarr payloads |
+| `GET /api/v1/devices/{id}/jobs` | Recent playback requests, including original Teamarr payloads |
 | `GET /api/v1/updates` | SSE invalidation notifications; clients fetch current state |
 | `POST /api/v1/simulation` | Demo clock/scenario controls; unavailable in Teamarr mode |
 
@@ -179,10 +184,10 @@ The browser runner builds the interface, starts a temporary demo API/database, c
 
 Coverage includes database upgrades, persistent undo, configuration round trips, stale previews across browsers, team-directory failures and provider IDs, API persistence, manual overlaps, overtime, failed playback fallback, unknown status, original payload preservation, and pagination failures. Playback tests cover lost acknowledgements, restart reconciliation, cancellation retry, intent fencing, late results, deadlines, rejected replay/wrong-content observations, and observation expiry/recovery. Status tests cover out-of-window commitments, timestamp preservation, failed/missing/unknown lookups, bounded timeouts, late/invalid results, lease loss, restart persistence, and explicit terminal corrections. Desktop, 390 px phone, and 320 px phone layouts are checked for horizontal overflow. These browser tests use Chromium viewport emulation, not physical phone or Safari testing.
 
-## Next integrations
+## Real playback and remaining validation
 
-For the engineer implementing real playback and event-completion APIs, start with the [playback API handoff](docs/executor-api-handoff.md) and its [OpenAPI draft](docs/executor-api.openapi.yaml). The v1 proposal has three operations: Play, token status (including lifecycle), and Cancel (including active stop and manual handoff). Separate recovery, device-observation, lifecycle lookup, and authority APIs are deferred. The guide distinguishes implemented controller preparation from the real HTTP integration still required.
+The [API implementation guide](docs/executor-api-handoff.md), [OpenAPI contract](docs/executor-api.openapi.yaml), and [setup/diagnostics guide](docs/executor-setup.md) document the completed three-operation integration. Play, token status (including lifecycle), and Cancel (including active stop/manual handoff) share the same durable worker and store. No separate recovery, device-observation, lifecycle lookup or authority API is required.
 
-See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Local retention, backup/restore, and accelerated multi-day recovery checks are implemented. Next are Docker/restore trials, real-time observation, and proxy/mobile checks on the deployment host; see [the operations guide](docs/operations.md). Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
+See [the roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) for boundaries and remaining host validation. Run the target-TV procedure before relying on unattended navigation. Real model accuracy, Prime account availability, protected video visibility, physical mobile browsers, Docker/nginx and live endurance have not been validated in this development environment. Other streaming app adapters and independent sports-results providers remain future integrations.
 
 Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillflix/dillflix-live-controller). This application is versioned and deployed independently of Teamarr.

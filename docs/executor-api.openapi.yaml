@@ -1,14 +1,13 @@
 openapi: 3.1.0
 info:
-  title: Dillflix Executor API — three-operation v1 proposal
-  version: 1.0.0-draft.2
-  description: Proposed external service, not implemented controller routes. POST Play returns a durable token;
-    GET token returns playback and lifecycle; POST Cancel stops active/pending playback and provides the manual-input
-    barrier. Separate request recovery, device observation, content-ID lookup, authority leases, and Stop are out
-    of scope. See executor-api-handoff.md. Defaults and evidence policy require implementation validation.
+  title: Dillflix Playback Executor API
+  version: 1.0.0
+  description: 'Implemented in dillflix-live-controller 0.9.0. Three operations: asynchronous Play, token status
+    including lifecycle, and Cancel including active stop and device intent fencing. Configure PLAYBACK_ADAPTER=prime-video
+    and EXECUTOR_API_TOKEN. See executor-api-handoff.md and executor-setup.md.'
 servers:
-- url: https://executor.example.invalid
-  description: Replace with a server-side configured, controller-reachable executor address.
+- url: /
+  description: Same origin as the configured controller deployment
 security:
 - ServiceBearer: []
 paths:
@@ -53,11 +52,7 @@ paths:
               examples:
                 Verified:
                   $ref: '#/components/examples/Verified'
-        '400':
-          $ref: '#/components/responses/Problem'
         '401':
-          $ref: '#/components/responses/Problem'
-        '403':
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
@@ -68,8 +63,6 @@ paths:
         '413':
           $ref: '#/components/responses/Problem'
         '422':
-          $ref: '#/components/responses/Problem'
-        '429':
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
@@ -102,13 +95,9 @@ paths:
                   $ref: '#/components/examples/Ended'
         '401':
           $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
         '410':
-          $ref: '#/components/responses/Problem'
-        '429':
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
@@ -143,11 +132,7 @@ paths:
                   $ref: '#/components/examples/CancelledToken'
                 ManualReady:
                   $ref: '#/components/examples/ManualReady'
-        '400':
-          $ref: '#/components/responses/Problem'
         '401':
-          $ref: '#/components/responses/Problem'
-        '403':
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
@@ -155,9 +140,9 @@ paths:
           $ref: '#/components/responses/Problem'
         '422':
           $ref: '#/components/responses/Problem'
-        '429':
-          $ref: '#/components/responses/Problem'
         '503':
+          $ref: '#/components/responses/Problem'
+        '413':
           $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
@@ -166,226 +151,280 @@ components:
       scheme: bearer
       description: Server-side scoped service credential, separate from playback tokens and browser owner_token.
   schemas:
-    ErrorDetail:
+    CancelRequest:
+      properties:
+        device_id:
+          type: string
+          const: living-room
+          title: Device Id
+        token:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Token
+        through_intent_version:
+          anyOf:
+          - type: integer
+            maximum: 9007199254740991.0
+            minimum: 0.0
+          - type: 'null'
+          title: Through Intent Version
+      additionalProperties: false
       type: object
+      required:
+      - device_id
+      title: CancelRequest
+    CancelResult:
+      properties:
+        device_id:
+          type: string
+          const: living-room
+          title: Device Id
+        token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+        through_intent_version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Through Intent Version
+        input_quiescent:
+          type: boolean
+          const: true
+          title: Input Quiescent
+        active_playback:
+          type: string
+          enum:
+          - stopped
+          - already_inactive
+          title: Active Playback
+        acknowledged_at:
+          type: string
+          format: date-time
+          title: Acknowledged At
+      additionalProperties: false
+      type: object
+      required:
+      - device_id
+      - token
+      - through_intent_version
+      - input_quiescent
+      - active_playback
+      - acknowledged_at
+      title: CancelResult
+    Cancellation:
+      properties:
+        state:
+          type: string
+          enum:
+          - none
+          - requested
+          - acknowledged
+          title: State
+        input_quiescent:
+          type: boolean
+          title: Input Quiescent
+      additionalProperties: false
+      type: object
+      required:
+      - state
+      - input_quiescent
+      title: Cancellation
+    ContentStatus:
+      properties:
+        content_id:
+          type: string
+          title: Content Id
+        lookup_state:
+          type: string
+          enum:
+          - ok
+          - unavailable
+          title: Lookup State
+        effective_state:
+          type: string
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          - delayed
+          - suspended
+          - postponed
+          - unknown
+          title: Effective State
+        stale:
+          type: boolean
+          title: Stale
+        observation:
+          anyOf:
+          - $ref: '#/components/schemas/LifecycleObservation'
+          - type: 'null'
+        checked_at:
+          type: string
+          format: date-time
+          title: Checked At
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorDetail'
+          - type: 'null'
+      additionalProperties: false
+      type: object
+      required:
+      - content_id
+      - lookup_state
+      - effective_state
+      - stale
+      - observation
+      - checked_at
+      - error
+      title: ContentStatus
+    ErrorDetail:
       properties:
         code:
           type: string
-          minLength: 1
-          maxLength: 200
+          title: Code
         message:
           type: string
-          maxLength: 1000
+          title: Message
         retryable:
           type: boolean
-        retry_after_seconds:
-          type: integer
-          minimum: 0
+          title: Retryable
+      additionalProperties: false
+      type: object
       required:
       - code
       - message
       - retryable
-      additionalProperties: false
-    Problem:
-      type: object
-      properties:
-        type:
-          type: string
-          format: uri-reference
-        title:
-          type: string
-        status:
-          type: integer
-          minimum: 400
-          maximum: 599
-        detail:
-          type: string
-        code:
-          type: string
-          minLength: 1
-          maxLength: 200
-        retryable:
-          type: boolean
-        instance:
-          type: string
-          format: uri-reference
-      required:
-      - type
-      - title
-      - status
-      - detail
-      - code
-      - retryable
-      additionalProperties: true
+      title: ErrorDetail
     Evidence:
-      type: object
       properties:
         method:
           type: string
-          enum:
-          - provider_status
-          - device_observation
-          - video_inference
-          - operator
+          const: device_observation
+          title: Method
         evidence_id:
           type: string
-          minLength: 1
-          maxLength: 200
+          title: Evidence Id
         summary:
           type: string
-          maxLength: 1000
+          title: Summary
         confidence:
           anyOf:
           - type: number
-            minimum: 0
-            maximum: 1
           - type: 'null'
-        decision:
-          type: string
-          enum:
-          - none
-          - candidate
-          - confirmed
+          title: Confidence
         captured_at:
           type: string
           format: date-time
-        model_version:
-          type: string
-        policy_version:
-          type: string
+          title: Captured At
+        decision:
+          anyOf:
+          - type: string
+            const: confirmed
+          - type: 'null'
+          title: Decision
+      additionalProperties: false
+      type: object
       required:
       - method
       - evidence_id
       - summary
       - confidence
-      additionalProperties: false
-      description: Evidence metadata, not embedded screenshots. Confidence is not itself a verification or completion
-        policy. Decision confirmed is required for ended/cancelled lifecycle observations.
-    ContentSnapshot:
-      type: object
+      - captured_at
+      title: Evidence
+    LifecycleObservation:
       properties:
-        id:
-          type: string
-          minLength: 1
-          maxLength: 1024
-      required:
-      - id
-      additionalProperties: true
-      description: Complete unchanged original Teamarr feed entry. Only id is constrained here; preserve every original
-        event/team/session/broadcast/option/extension field. This is not a reduced DTO.
-    ViewingOption:
-      type: object
-      properties:
-        id:
-          type: string
-          minLength: 1
-          maxLength: 1024
-      required:
-      - id
-      additionalProperties: true
-      description: Complete unchanged original allowed option, including review reasons and unknown fields. Additional
-        properties are deliberately preserved.
-    PlaybackRequest:
-      type: object
-      properties:
-        schema_version:
-          const: 1
-          type: integer
-        request_id:
-          type: string
-          minLength: 1
-          maxLength: 200
-        device_id:
-          type: string
-          minLength: 1
-          maxLength: 200
-        intent_version:
-          type: integer
-          minimum: 0
-          maximum: 9007199254740991
         content_id:
           type: string
-          minLength: 1
-          maxLength: 1024
-        mode:
-          const: live
-          type: string
-        purpose:
+          title: Content Id
+        state:
           type: string
           enum:
-          - selection
-          - route_handoff
-          - recovery
-        previous_request_id:
-          anyOf:
-          - type: string
-            minLength: 1
-            maxLength: 1024
-          - type: 'null'
-        content_snapshot_schema_version:
-          const: 1
-          type: integer
-        content_snapshot:
-          $ref: '#/components/schemas/ContentSnapshot'
-        allowed_viewing_options:
-          type: array
-          items:
-            $ref: '#/components/schemas/ViewingOption'
-          minItems: 1
-        deadline_at:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          - delayed
+          - suspended
+          - postponed
+          - unknown
+          title: State
+        source:
           type: string
-          format: date-time
-          description: Absolute navigation deadline; stable across delivery retries. Does not end an event or limit
-            successful playback duration.
-      required:
-      - schema_version
-      - request_id
-      - device_id
-      - intent_version
-      - content_id
-      - mode
-      - content_snapshot_schema_version
-      - content_snapshot
-      - allowed_viewing_options
-      - deadline_at
-      additionalProperties: false
-      description: Full controller request plus fixed navigation deadline. request_id deduplicates identical POST
-        retries; content_id must equal content_snapshot.id. New work requires an intent above the device cancellation
-        fence. Preserve every original allowed option.
-    RouteAttempt:
-      type: object
-      properties:
-        attempt:
-          type: integer
-          minimum: 1
-        viewing_option_id:
+          enum:
+          - teamarr_feed
+          - prime_video_visual
+          title: Source
+        simulated:
+          type: boolean
+          const: false
+          title: Simulated
+        timestamp_basis:
           type: string
-          minLength: 1
-          maxLength: 1024
-        phase:
-          type: string
-        started_at:
-          type: string
-          format: date-time
-        finished_at:
+          enum:
+          - feed_received
+          - device_observed
+          title: Timestamp Basis
+        observed_at:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
+          title: Observed At
+        received_at:
+          type: string
+          format: date-time
+          title: Received At
+        valid_until:
+          type: string
+          format: date-time
+          title: Valid Until
+        evidence:
+          anyOf:
+          - $ref: '#/components/schemas/Evidence'
+          - type: 'null'
+      additionalProperties: false
+      type: object
+      required:
+      - content_id
+      - state
+      - source
+      - simulated
+      - timestamp_basis
+      - observed_at
+      - received_at
+      - valid_until
+      title: LifecycleObservation
+    ObservationStatus:
+      properties:
+        state:
+          type: string
+          enum:
+          - fresh
+          - stale
+          - unavailable
+          title: State
+        checked_at:
+          type: string
+          format: date-time
+          title: Checked At
         error:
           anyOf:
           - $ref: '#/components/schemas/ErrorDetail'
           - type: 'null'
-      required:
-      - attempt
-      - viewing_option_id
-      - phase
-      - started_at
-      - finished_at
-      - error
       additionalProperties: false
-    Operation:
       type: object
+      required:
+      - state
+      - checked_at
+      - error
+      title: ObservationStatus
+    Operation:
       properties:
         state:
           type: string
@@ -397,30 +436,39 @@ components:
           - cancelled
           - superseded
           - timed_out
+          title: State
         phase:
           type: string
+          title: Phase
         created_at:
           type: string
           format: date-time
+          title: Created At
         updated_at:
           type: string
           format: date-time
+          title: Updated At
         finished_at:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
+          title: Finished At
         deadline_at:
           type: string
           format: date-time
+          title: Deadline At
         error:
           anyOf:
           - $ref: '#/components/schemas/ErrorDetail'
           - type: 'null'
         attempts:
-          type: array
           items:
             $ref: '#/components/schemas/RouteAttempt'
+          type: array
+          title: Attempts
+      additionalProperties: false
+      type: object
       required:
       - state
       - phase
@@ -430,68 +478,52 @@ components:
       - deadline_at
       - error
       - attempts
-      additionalProperties: false
-      description: State of this navigation job. playing_verified is historical launch success, not proof of ongoing
-        playback. finished_at never means event completion.
+      title: Operation
     PlaybackObservation:
-      type: object
       properties:
         device_id:
           type: string
-          minLength: 1
-          maxLength: 200
+          const: living-room
+          title: Device Id
         request_id:
-          anyOf:
-          - type: string
-            minLength: 1
-            maxLength: 1024
-          - type: 'null'
+          type: string
+          title: Request Id
         intent_version:
-          anyOf:
-          - type: integer
-            minimum: 0
-            maximum: 9007199254740991
-          - type: 'null'
+          type: integer
+          title: Intent Version
         content_id:
-          anyOf:
-          - type: string
-            minLength: 1
-            maxLength: 1024
-          - type: 'null'
+          type: string
+          title: Content Id
         viewing_option_id:
-          anyOf:
-          - type: string
-            minLength: 1
-            maxLength: 1024
-          - type: 'null'
+          type: string
+          title: Viewing Option Id
         presentation:
           type: string
-          enum:
-          - live
-          - replay
-          - unknown
+          const: live
+          title: Presentation
         verified:
           type: boolean
+          title: Verified
         simulated:
-          const: false
           type: boolean
+          const: false
+          title: Simulated
         health:
           type: string
-          enum:
-          - healthy
-          - buffering
-          - paused
-          - menu
-          - offline
-          - unknown
+          const: healthy
+          title: Health
         observed_at:
           type: string
           format: date-time
+          title: Observed At
         valid_until:
           type: string
           format: date-time
+          title: Valid Until
         evidence:
           $ref: '#/components/schemas/Evidence'
+      additionalProperties: false
+      type: object
       required:
       - device_id
       - request_id
@@ -505,257 +537,32 @@ components:
       - observed_at
       - valid_until
       - evidence
-      additionalProperties: false
-      description: Evidence for this token only. verified=true requires matching device/request/intent/content,
-        a permitted route, live presentation, healthy playback and acquisition within 15 seconds. Never refresh
-        timestamps by polling cached data. After stop, switch or manual takeover, return null or verified=false;
-        never substitute another token.
-      allOf:
-      - if:
-          properties:
-            verified:
-              const: true
-          required:
-          - verified
-        then:
-          properties:
-            request_id:
-              type: string
-              minLength: 1
-              maxLength: 200
-            intent_version:
-              type: integer
-              minimum: 0
-              maximum: 9007199254740991
-            content_id:
-              type: string
-              minLength: 1
-              maxLength: 1024
-            viewing_option_id:
-              type: string
-              minLength: 1
-              maxLength: 1024
-            presentation:
-              const: live
-            health:
-              const: healthy
-    ObservationStatus:
-      type: object
-      properties:
-        state:
-          type: string
-          enum:
-          - fresh
-          - stale
-          - unavailable
-        checked_at:
-          type: string
-          format: date-time
-        error:
-          anyOf:
-          - $ref: '#/components/schemas/ErrorDetail'
-          - type: 'null'
-      required:
-      - state
-      - checked_at
-      - error
-      additionalProperties: false
-      description: Freshness is evaluated at response time. A stale observation cannot retain verified=true. A successful
-        endpoint does not imply healthy playback.
-    LifecycleObservation:
-      type: object
-      properties:
-        content_id:
-          type: string
-          minLength: 1
-          maxLength: 1024
-        state:
-          type: string
-          enum:
-          - scheduled
-          - live
-          - ended
-          - cancelled
-          - delayed
-          - suspended
-          - postponed
-          - unknown
-        source:
-          type: string
-          minLength: 1
-        simulated:
-          const: false
-          type: boolean
-        timestamp_basis:
-          type: string
-          enum:
-          - provider
-          - device_observed
-        observed_at:
-          type: string
-          format: date-time
-        received_at:
-          type: string
-          format: date-time
-        valid_until:
-          type: string
-          format: date-time
-        phase:
-          anyOf:
-          - type: string
-          - type: 'null'
-        actual_end_time:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-        updated_start_time:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-        evidence:
-          $ref: '#/components/schemas/Evidence'
-      required:
-      - content_id
-      - state
-      - source
-      - simulated
-      - timestamp_basis
-      - observed_at
-      - received_at
-      - valid_until
-      - evidence
-      additionalProperties: false
-      description: Real lifecycle evidence. device_observed is a proposed extension to the current controller validator.
-        Ended/cancelled must be confirmed for this content scope. Candidate video results cannot set ended. Preserve
-        source acquisition times.
-      allOf:
-      - if:
-          properties:
-            state:
-              enum:
-              - ended
-              - cancelled
-          required:
-          - state
-        then:
-          properties:
-            evidence:
-              properties:
-                decision:
-                  const: confirmed
-              required:
-              - decision
-    ContentStatus:
-      type: object
-      properties:
-        content_id:
-          type: string
-          minLength: 1
-          maxLength: 1024
-        lookup_state:
-          type: string
-          enum:
-          - ok
-          - unavailable
-          - not_found
-          - unsupported
-        effective_state:
-          type: string
-          enum:
-          - scheduled
-          - live
-          - ended
-          - cancelled
-          - delayed
-          - suspended
-          - postponed
-          - unknown
-        stale:
-          type: boolean
-        observation:
-          anyOf:
-          - $ref: '#/components/schemas/LifecycleObservation'
-          - type: 'null'
-        checked_at:
-          type: string
-          format: date-time
-        error:
-          anyOf:
-          - $ref: '#/components/schemas/ErrorDetail'
-          - type: 'null'
-      required:
-      - content_id
-      - lookup_state
-      - effective_state
-      - stale
-      - observation
-      - checked_at
-      - error
-      additionalProperties: false
-      description: A lookup failure can coexist with previous evidence. Expired nonterminal evidence projects to
-        unknown; previously confirmed terminal facts may persist with stale=true. Missing source support is not
-        event completion. checked_at is not observed_at.
-    CancellationState:
-      type: object
-      properties:
-        state:
-          type: string
-          enum:
-          - none
-          - requested
-          - acknowledged
-        input_quiescent:
-          type: boolean
-      required:
-      - state
-      - input_quiescent
-      additionalProperties: false
-      description: Acknowledged means pending input has drained, active playback attributable to this token has
-        stopped (or was already inactive), and this token can never issue further input. Cancellation is not event
-        completion.
-      allOf:
-      - if:
-          properties:
-            state:
-              const: acknowledged
-          required:
-          - state
-        then:
-          properties:
-            input_quiescent:
-              const: true
+      title: PlaybackObservation
     PlaybackReport:
-      type: object
       properties:
         schema_version:
-          const: 1
           type: integer
+          const: 1
+          title: Schema Version
         token:
           type: string
-          minLength: 1
-          maxLength: 200
+          title: Token
         request_id:
           type: string
-          minLength: 1
-          maxLength: 200
+          title: Request Id
         device_id:
           type: string
-          minLength: 1
-          maxLength: 200
+          const: living-room
+          title: Device Id
         content_id:
           type: string
-          minLength: 1
-          maxLength: 1024
+          title: Content Id
         intent_version:
           type: integer
-          minimum: 0
-          maximum: 9007199254740991
+          title: Intent Version
         revision:
           type: integer
-          minimum: 0
-          maximum: 9007199254740991
+          title: Revision
         operation:
           $ref: '#/components/schemas/Operation'
         observation:
@@ -767,12 +574,15 @@ components:
         content_status:
           $ref: '#/components/schemas/ContentStatus'
         cancellation:
-          $ref: '#/components/schemas/CancellationState'
+          $ref: '#/components/schemas/Cancellation'
         retained_until:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
+          title: Retained Until
+      additionalProperties: false
+      type: object
       required:
       - schema_version
       - token
@@ -787,120 +597,150 @@ components:
       - content_status
       - cancellation
       - retained_until
-      additionalProperties: false
-      description: One token getter returns navigation history, fresh playback evidence, and content lifecycle.
-        No device-observation or content-ID lookup endpoint is required. revision increases monotonically per token.
-        retained_until=null while active; retain inactive token records for at least seven days.
-      allOf:
-      - if:
-          properties:
-            observation_status:
-              properties:
-                state:
-                  enum:
-                  - stale
-                  - unavailable
-        then:
-          properties:
-            observation:
-              anyOf:
-              - type: 'null'
-              - properties:
-                  verified:
-                    const: false
-    CancelByToken:
-      type: object
+      title: PlaybackReport
+    PlaybackRequest:
       properties:
-        device_id:
-          type: string
-          minLength: 1
-          maxLength: 200
-        token:
-          type: string
-          minLength: 1
-          maxLength: 200
-      required:
-      - device_id
-      - token
-      additionalProperties: false
-      description: Stop this token, including active playback. Never stop or inject input into newer playback.
-    CancelThroughIntent:
-      type: object
-      properties:
-        device_id:
-          type: string
-          minLength: 1
-          maxLength: 200
-        through_intent_version:
+        schema_version:
           type: integer
-          minimum: 0
-          maximum: 9007199254740991
-      required:
-      - device_id
-      - through_intent_version
-      additionalProperties: false
-      description: Manual takeover barrier. Persist a monotonic cancellation fence, cancel/stop all work through
-        this intent, reject late arrivals at or below it, and drain owned input before acknowledgement. Higher intents
-        are unaffected.
-    CancelRequest:
-      oneOf:
-      - $ref: '#/components/schemas/CancelByToken'
-      - $ref: '#/components/schemas/CancelThroughIntent'
-    CancelResult:
-      type: object
-      properties:
+          const: 1
+          title: Schema Version
+          default: 1
+        request_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Request Id
         device_id:
           type: string
+          const: living-room
+          title: Device Id
+        intent_version:
+          type: integer
+          maximum: 9007199254740991.0
+          minimum: 0.0
+          title: Intent Version
+        content_id:
+          type: string
+          maxLength: 1024
           minLength: 1
-          maxLength: 200
-        token:
-          anyOf:
-          - type: string
-            minLength: 1
-            maxLength: 200
-          - type: 'null'
-        through_intent_version:
-          anyOf:
-          - type: integer
-            minimum: 0
-            maximum: 9007199254740991
-          - type: 'null'
-        input_quiescent:
-          type: boolean
-          const: true
-        active_playback:
+          title: Content Id
+        mode:
+          type: string
+          const: live
+          title: Mode
+        purpose:
           type: string
           enum:
-          - stopped
-          - already_inactive
-        acknowledged_at:
+          - selection
+          - route_handoff
+          - recovery
+          title: Purpose
+          default: selection
+        previous_request_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Previous Request Id
+        content_snapshot_schema_version:
+          type: integer
+          const: 1
+          title: Content Snapshot Schema Version
+          default: 1
+        content_snapshot:
+          additionalProperties: true
+          type: object
+          title: Content Snapshot
+        allowed_viewing_options:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          maxItems: 100
+          minItems: 1
+          title: Allowed Viewing Options
+        deadline_at:
           type: string
           format: date-time
-      required:
-      - device_id
-      - token
-      - through_intent_version
-      - input_quiescent
-      - active_playback
-      - acknowledged_at
+          title: Deadline At
       additionalProperties: false
-      description: Only return 200 after cancellation and stop are confirmed for the requested scope. Exactly one
-        of token or through_intent_version is non-null. already_inactive sends no stop input to a newer/manual target.
-      oneOf:
-      - properties:
-          token:
-            type: string
-            minLength: 1
-            maxLength: 200
-          through_intent_version:
-            type: 'null'
-      - properties:
-          token:
-            type: 'null'
-          through_intent_version:
-            type: integer
-            minimum: 0
-            maximum: 9007199254740991
+      type: object
+      required:
+      - request_id
+      - device_id
+      - intent_version
+      - content_id
+      - mode
+      - content_snapshot
+      - allowed_viewing_options
+      - deadline_at
+      title: PlaybackRequest
+    RouteAttempt:
+      properties:
+        attempt:
+          type: integer
+          title: Attempt
+        viewing_option_id:
+          type: string
+          title: Viewing Option Id
+        phase:
+          type: string
+          title: Phase
+        started_at:
+          type: string
+          format: date-time
+          title: Started At
+        finished_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Finished At
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorDetail'
+          - type: 'null'
+      additionalProperties: false
+      type: object
+      required:
+      - attempt
+      - viewing_option_id
+      - phase
+      - started_at
+      - finished_at
+      - error
+      title: RouteAttempt
+    Problem:
+      additionalProperties: false
+      properties:
+        type:
+          title: Type
+          type: string
+        title:
+          title: Title
+          type: string
+        status:
+          title: Status
+          type: integer
+        detail:
+          title: Detail
+          type: string
+        code:
+          title: Code
+          type: string
+        retryable:
+          title: Retryable
+          type: boolean
+      required:
+      - type
+      - title
+      - status
+      - detail
+      - code
+      - retryable
+      title: Problem
+      type: object
   examples:
     StartPlayback:
       summary: Synthetic full snapshot; substitute the untouched real Teamarr entry and options
@@ -1051,6 +891,7 @@ components:
             evidence_id: obs-example-042
             summary: Synthetic example of matched content identity and live presentation
             confidence: null
+            captured_at: '2026-09-30T20:00:10Z'
         observation_status:
           state: fresh
           checked_at: '2026-09-30T20:00:10Z'
@@ -1107,6 +948,7 @@ components:
             evidence_id: obs-example-042
             summary: Synthetic example of matched content identity and live presentation
             confidence: null
+            captured_at: '2026-09-30T20:00:10Z'
         observation_status:
           state: stale
           checked_at: '2026-09-30T22:05:01Z'
@@ -1119,20 +961,19 @@ components:
           observation:
             content_id: example-content-001
             state: ended
-            source: example_authoritative_provider
+            source: prime_video_visual
             simulated: false
-            timestamp_basis: provider
+            timestamp_basis: device_observed
             observed_at: '2026-09-30T22:05:00Z'
             received_at: '2026-09-30T22:05:01Z'
             valid_until: '2026-09-30T22:07:00Z'
-            phase: final
-            actual_end_time: '2026-09-30T22:04:00Z'
             evidence:
-              method: provider_status
+              method: device_observation
               evidence_id: final-example-001
-              summary: Synthetic confirmed final status for this content
+              summary: 'Synthetic example: two readings at least 15 seconds apart show FINAL for this exact game'
               confidence: null
               decision: confirmed
+              captured_at: '2026-09-30T22:05:00Z'
           checked_at: '2026-09-30T22:05:01Z'
           error: null
         cancellation:

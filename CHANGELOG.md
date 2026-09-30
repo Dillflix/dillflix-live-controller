@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased — Executor handoff preparation
+## 0.9.0 — Integrated Prime Video executor
+
+- Implement Play, status by token, and Cancel in the controller, with an opt-in `prime-video` adapter and service bearer authentication. Preserve the complete Teamarr snapshot and every permitted viewing option. Separate recovery, lifecycle, authority and Stop endpoints remain deferred.
+- Persist tokens, request hashes, intent fences, cancellation and input journals in schema 6. Identical retries reuse tokens; uncertain keys are never replayed. Successful playback is re-observed on restart. Restore retains newer target-database executor history before fencing and cleanup.
+- Add bounded asynchronous ADB/model transports, package-scoped Prime launch/search, structured team-pair queries, configurable JSON/TVTheseus actors, and independent goal-blind visual observation. Native prompt provenance and Apache license are retained.
+- Require matching live content and advancing sampled playback position for verification. Confirm scoped visual completion with two readings; preserve Teamarr feed receipt timestamps and unknown status when evidence is absent. No schedule-based completion inference.
+- Serialize physical input with manual control. Cancel drains input, stops owned active Prime playback and confirms inactivity before granting manual input. Old cancellation cannot stop a newer token. Pause leaves verified playback running.
+- Add configuration/live-screen/saved-image diagnostics, implemented OpenAPI schemas/examples, deployment guide and updated architecture/contracts. UI labels reflect the selected adapter.
+- Bind Compose to configurable `0.0.0.0:8790` by default for access from another PC; host-local nginx deployments can explicitly select loopback.
+
+Validation: **207 backend tests and 27 Chromium browser tests pass**; frontend build and changed Python lint pass. OpenAPI and all nine examples validate against implemented models. All 100 supplied archive PNGs were processed: 97 usable and three rejected as blank/protected. These are controlled boundary and image-processing checks, not model-accuracy measurements. Real Fire TV/account/inference behavior, Docker/nginx, protected video, physical mobile browsers and unattended endurance still require target-host validation.
+
+## Executor handoff preparation — before 0.9 integration
 
 - Simplify the external API proposal to Play, token status including lifecycle, and Cancel including active stop. Defer separate token recovery, device observation, content-ID lookup, and authority endpoints.
 - Run synchronous playback work in a serialized worker thread; drain in-flight work before shutdown relinquishes database ownership. Real adapters must impose finite HTTP timeouts.
