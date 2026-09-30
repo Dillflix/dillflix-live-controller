@@ -230,6 +230,8 @@ Full database snapshots and offline restore use `python -m controller.ops`; see 
 
 ## Future external adapters
 
+The [engineer handoff](executor-api-handoff.md) and [OpenAPI draft](executor-api.openapi.yaml) propose the external transport, token lifecycle, independent lifecycle lookup, and shared input authority. They identify required controller changes and acceptance scenarios. Those routes are not implemented by this controller release.
+
 No outbound playback HTTP endpoint or callback endpoint is connected yet. The future executor should accept the staged payload idempotently by `request_id`, apply monotonic intent fencing per device, and report request progress separately from observations. A successful acknowledgement must not count as live verification.
 
 The real executor must supply device evidence for the playback observation contract above, with transport timeouts and cancellation behavior appropriate to its navigation engine. A real content-status adapter must implement the lookup contract using authoritative event observations rather than discovery receipt times. Exact transport, authentication between services, status tokens, and real device recovery behavior will be finalized when those services are selected.

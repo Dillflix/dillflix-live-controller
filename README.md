@@ -181,6 +181,8 @@ Coverage includes database upgrades, persistent undo, configuration round trips,
 
 ## Next integrations
 
+For the engineer implementing real playback and event-completion APIs, start with the [playback and content status API handoff](docs/executor-api-handoff.md) and its [OpenAPI draft](docs/executor-api.openapi.yaml). They cover durable tokens, independent observations, cancellation, manual-control ownership, adapter changes, and acceptance scenarios. The proposed external endpoints are not yet connected.
+
 See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Local retention, backup/restore, and accelerated multi-day recovery checks are implemented. Next are Docker/restore trials, real-time observation, and proxy/mobile checks on the deployment host; see [the operations guide](docs/operations.md). Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
 
 Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillflix/dillflix-live-controller). This application is versioned and deployed independently of Teamarr.
