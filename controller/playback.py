@@ -15,14 +15,17 @@ class PlaybackAdapter(Protocol):
 
     def cancel(self, request_id: str) -> None: ...
 
+    def cancel_device(self, device_id: str, through_intent_version: int) -> None: ...
+
     def observe(self, device_id: str) -> dict | None: ...
 
 
 class SimulatedPlaybackAdapter:
     """Independent durable executor state lets delivery/reconciliation survive a restart.
 
-    Repeated submit uses the original request ID. Cancellation ends navigation,
-    not an already playing or newer target. Intent watermarks reject obsolete work.
+    Repeated submit uses the original request ID. Cancellation ends navigation
+    and matching active playback, never a newer target. Device cancellation is
+    an acknowledged input barrier, including for requests not received yet.
     """
 
     def __init__(self, database, observation_ttl=15):
@@ -65,6 +68,10 @@ class SimulatedPlaybackAdapter:
             ).fetchone()
             highest = device["intent"] if device else -1
             state = "superseded" if request["intent_version"] < highest else "accepted"
+            if request["intent_version"] <= self.db.meta(
+                db, f"simulated_cancelled_through:{request['device_id']}", -1
+            ):
+                state = "cancelled"
             if db.execute(
                 "SELECT 1 FROM simulated_cancellations WHERE id=?", (request["request_id"],)
             ).fetchone():
@@ -157,9 +164,32 @@ class SimulatedPlaybackAdapter:
             # Remember cancellation even if it arrives before an uncertain submit.
             db.execute("INSERT OR IGNORE INTO simulated_cancellations VALUES (?)", (request_id,))
             db.execute(
-                "UPDATE simulated_jobs SET state='cancelled' WHERE id=? AND state IN ('accepted','navigating')",
+                "UPDATE simulated_jobs SET state='cancelled',observation=NULL WHERE id=? "
+                "AND state IN ('accepted','navigating','playing_verified')",
                 (request_id,),
             )
+            for device in db.execute("SELECT * FROM simulated_devices WHERE observation IS NOT NULL"):
+                if json.loads(device["observation"])["request_id"] == request_id:
+                    db.execute(
+                        "UPDATE simulated_devices SET observation=NULL WHERE device_id=?", (device["device_id"],)
+                    )
+
+    def cancel_device(self, device_id, through_intent_version):
+        with self.db.transaction() as db:
+            self.check_online(db)
+            key = f"simulated_cancelled_through:{device_id}"
+            fence = max(through_intent_version, self.db.meta(db, key, -1))
+            self.db.set_meta(db, key, fence)
+            db.execute(
+                "UPDATE simulated_jobs SET state='cancelled',observation=NULL WHERE device_id=? AND intent<=? "
+                "AND state IN ('accepted','navigating','playing_verified')",
+                (device_id, fence),
+            )
+            row = db.execute(
+                "SELECT observation FROM simulated_devices WHERE device_id=?", (device_id,)
+            ).fetchone()
+            if row and row[0] and json.loads(row[0])["intent_version"] <= fence:
+                db.execute("UPDATE simulated_devices SET observation=NULL WHERE device_id=?", (device_id,))
 
     def observe(self, device_id):
         with self.db.transaction() as db:

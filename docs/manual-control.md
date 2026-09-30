@@ -14,6 +14,8 @@ The countdown states what happens at expiry. If automation was active before tak
 
 Your watch plan and priorities remain editable and saved. **Play now** is unavailable until manual control ends, preventing an accidental navigation interruption. Manual navigation clears the controller's prior playback identity; it never claims that the previously selected event is still playing.
 
+The remote waits for playback cancellation to be acknowledged before accepting input. If cancellation is unavailable, automation remains paused and the session is retained; **Reconnect remote** retries the handoff. Release and expiry finish manual input cleanup before automation can resume.
+
 Other browsers can watch the screen but cannot send inputs. **Take over → Confirm takeover** transfers ownership and disconnects the previous remote. A reload in the owning tab retains ownership when session storage is available. Closing the tab may lose its credential; reopen the controller and explicitly take over if necessary. One tab can attach to a session at a time.
 
 Hiding the screen only releases video; the remote remains usable. Backgrounding the tab disconnects both active transports while leaving the manual session running. Returning reconnects with fresh input state. A failed input connection offers **Reconnect remote**. If delivery was uncertain, inspect the TV before sending again: the controller never automatically replays inputs. Key taps always include release events; long press, pointer/touch injection, clipboard sync, power and arbitrary ADB commands are not offered.

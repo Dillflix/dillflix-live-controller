@@ -23,7 +23,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             if not self.db.lease(db, "device:living-room", self.owner, time.time()):
                 return False
             d = self.db.device(db)
-            if d.get("manual_control") or d["automation"] == "paused":
+            if d.get("manual_control") or d.get("input_handoff") or d["automation"] == "paused":
                 return True
             if d.get("executor_health", {}).get("state") == "offline":
                 d["reason"] = "Playback service unavailable; waiting for recovery. Watch plan retained."
@@ -224,6 +224,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)
             if (
                 d.get("manual_control")
+                or d.get("input_handoff")
                 or d["automation"] == "paused"
                 or job["intent"] != d["intent_version"]
                 or job["content_id"] != d["desired"]
@@ -316,6 +317,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 d = self.db.device(db, job["device_id"])
                 if (
                     d.get("manual_control")
+                    or d.get("input_handoff")
                     or d["automation"] == "paused"
                     or job["intent"] != d["intent_version"]
                 ):
@@ -384,9 +386,14 @@ class PlaybackCoordinator(PlaybackRecovery):
                 db.execute("UPDATE jobs SET cancel_sent=1 WHERE id=?", (job["id"],))
 
     def tick(self):
+        with self.playback_lock:
+            self._tick()
+
+    def _tick(self):
         with self.db.transaction() as db:
             if not self.db.lease(db, "device:living-room", self.owner, time.time()):
                 return
+        self.reconcile_input_handoff()
         self.refresh_playback_observation()
         if not self.stage_playback():
             return

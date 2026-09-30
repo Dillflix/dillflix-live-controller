@@ -124,9 +124,10 @@ class DeviceInput:
 
     async def expire(self):
         async with self.lock:
-            expired = self.service.expire_manual()
-            task = self.revoke_locked() if expired else None
-        await self.drain(task)
+            if self.service.manual_expired():
+                # Keep automation paused until all manual writes and cleanup end.
+                await self.drain(self.revoke_locked())
+                self.service.expire_manual()
 
     async def watch_expiry(self):
         while True:
@@ -138,6 +139,10 @@ class DeviceInput:
 
     async def command(self, device_id, command):
         async with self.lock:
+            if command.action == "release" and self.connection:
+                _, attached = self.connection
+                if (attached.session_id, attached.owner_token) == (command.session_id, command.owner_token):
+                    await self.drain(self.revoke_locked())
             result = self.service.manual_command(device_id, command)
             task = None
             if self.connection:
@@ -146,7 +151,27 @@ class DeviceInput:
                     self.service.manual_authorized(device_id, attached.session_id, attached.owner_token)
                 except HTTPException:
                     task = self.revoke_locked()
-        await self.drain(task)
+            await self.drain(task)
+            if command.action == "take":
+                # Replaying an old command receipt must not seize a newer session.
+                with self.service.db.transaction() as db:
+                    session = self.service.db.device(db, device_id).get("manual_control")
+                if session and session["session_id"] == command.session_id:
+                    try:
+                        await self.service.playback_work(
+                            self.service.prepare_manual_input,
+                            device_id,
+                            command.session_id,
+                            command.owner_token,
+                        )
+                    except HTTPException:
+                        raise
+                    except Exception as error:
+                        raise HTTPException(
+                            503,
+                            "Automation paused; playback cancellation is unconfirmed. "
+                            "Reconnect the remote to retry.",
+                        ) from error
         return result
 
     async def serve(self, websocket: WebSocket, device_id):
@@ -158,6 +183,17 @@ class DeviceInput:
         try:
             attach = Attach.model_validate(await receive_json(websocket, 5))
             async with self.lock:
+                try:
+                    await self.service.playback_work(
+                        self.service.prepare_manual_input,
+                        device_id,
+                        attach.session_id,
+                        attach.owner_token,
+                    )
+                except HTTPException:
+                    raise
+                except Exception as error:
+                    raise HTTPException(503, "Playback cancellation is unconfirmed. Reconnect to retry.") from error
                 self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
                 if self.connection:
                     raise HTTPException(

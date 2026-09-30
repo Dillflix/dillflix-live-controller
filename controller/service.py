@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -38,6 +39,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             self.owner = str(uuid.uuid4())
             self.client = TeamarrClient(settings.teamarr_url, settings.teamarr_token)
             self.tasks = []
+            # Serialize playback calls with manual handoff, never on the event loop.
+            self.playback_lock = threading.RLock()
             self.initialize()
         except BaseException:
             self._database_guard.__exit__(None, None, None)
@@ -571,10 +574,23 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
     async def run_worker(self):
         while True:
             try:
-                self.tick()
+                await self.playback_work(self.tick)
             except Exception:
                 log.exception("Controller tick failed; will retry")
             await asyncio.sleep(self.settings.worker_interval)
+
+    async def playback_work(self, function, *args):
+        """Drain synchronous adapter work before cancellation releases our DB guard.
+
+        Adapters must impose finite network timeouts; cancelling to_thread cannot
+        terminate the underlying call. One worker awaits each tick before the next.
+        """
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await asyncio.gather(task, return_exceptions=True)
+            raise
 
     async def run_maintenance(self):
         while True:

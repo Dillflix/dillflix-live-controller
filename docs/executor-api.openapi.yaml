@@ -1,45 +1,37 @@
 openapi: 3.1.0
 info:
-  title: Dillflix proposed playback and content status service
-  version: 1.0.0-draft.1
-  description: Implementation proposal reviewed against controller v0.8.0 a81763c. These external routes are NOT
-    implemented by the controller today. Read executor-api-handoff.md for invariants, current adapter changes, ownership
-    handoff, evidence semantics, and acceptance scenarios. All examples are synthetic and do not establish real
-    device observations.
+  title: Dillflix Executor API — three-operation v1 proposal
+  version: 1.0.0-draft.2
+  description: Proposed external service, not implemented controller routes. POST Play returns a durable token;
+    GET token returns playback and lifecycle; POST Cancel stops active/pending playback and provides the manual-input
+    barrier. Separate request recovery, device observation, content-ID lookup, authority leases, and Stop are out
+    of scope. See executor-api-handoff.md. Defaults and evidence policy require implementation validation.
 servers:
 - url: https://executor.example.invalid
-  description: Placeholder; replace with the actual protected service endpoint.
+  description: Replace with a server-side configured, controller-reachable executor address.
 security:
 - ServiceBearer: []
-tags:
-- name: Playback
-- name: Observation
-- name: Content status
-- name: Authority
-- name: Operations
 paths:
   /v1/playbacks:
     post:
       operationId: initiatePlayback
-      tags:
-      - Playback
-      summary: Accept one live playback request and return its durable token
-      description: 'Persist request/token before any input. Same request ID and identical immutable envelope returns
-        200 with the same token and latest report; changed body returns 409. Higher intents supersede lower pending
-        work. A transport timeout is an unknown outcome: recover by request ID, then retry identical data if still
-        eligible. No route outside allowed_viewing_options is permitted.'
+      summary: Durably accept live playback and return its token
+      description: 'Identical request_id and body retries return the same token without relaunching. Changed body
+        is 409. A transport timeout is an unknown outcome: retry this same POST while current intent remains eligible.
+        No separate request-ID recovery endpoint. Higher intents stop older input before navigation starts. Check
+        the durable device cancellation fence before issuing any input.'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PlaybackCommand'
+              $ref: '#/components/schemas/PlaybackRequest'
             examples:
               StartPlayback:
                 $ref: '#/components/examples/StartPlayback'
       responses:
         '202':
-          description: Durably accepted, not yet verified.
+          description: Accepted; navigation runs asynchronously. Acceptance does not verify playback.
           content:
             application/json:
               schema:
@@ -49,19 +41,11 @@ paths:
                   $ref: '#/components/examples/Accepted'
           headers:
             Location:
-              description: Relative token status URL.
               schema:
                 type: string
-                format: uri-reference
-              example: /v1/playbacks/pb-example-001
-            Retry-After: &id002
-              description: Seconds before transport retry or the next poll. Does not authorize replay of uncertain
-                input.
-              schema:
-                type: integer
-                minimum: 0
+              description: Relative token status URL, e.g. /v1/playbacks/pb-example-001.
         '200':
-          description: Identical request already exists; no duplicate navigation.
+          description: Identical retry; same token and current report, no duplicate navigation.
           content:
             application/json:
               schema:
@@ -69,12 +53,6 @@ paths:
               examples:
                 Verified:
                   $ref: '#/components/examples/Verified'
-          headers:
-            Cache-Control: &id001
-              description: Always no-store for status resources.
-              schema:
-                type: string
-              example: no-store
         '400':
           $ref: '#/components/responses/Problem'
         '401':
@@ -96,24 +74,23 @@ paths:
         '503':
           $ref: '#/components/responses/Problem'
   /v1/playbacks/{token}:
-    parameters:
-    - name: token
-      in: path
-      required: true
-      schema: &id003
-        type: string
-        minLength: 1
-        maxLength: 200
     get:
       operationId: getPlaybackStatus
-      tags:
-      - Playback
-      summary: Read independent operation, playback and content status by token
-      description: Read only. Historical job success never refreshes device evidence. Return lifecycle-source errors
-        inside the report so they do not hide device progress. Does not navigate or automatically repair playback.
+      summary: Read playback progress, current evidence and event completion by token
+      description: 'Read-only, bounded and Cache-Control: no-store. Never navigate, resume, or stop from this getter.
+        A successful status read can report unavailable playback/lifecycle evidence. A historical playing_verified
+        result is not proof of current playback. Ended requires explicit evidence for the requested content scope.'
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 200
       responses:
         '200':
-          description: Current report for this immutable token.
+          description: Complete status envelope; independent evidence may be unknown.
           content:
             application/json:
               schema:
@@ -123,9 +100,6 @@ paths:
                   $ref: '#/components/examples/Verified'
                 Ended:
                   $ref: '#/components/examples/Ended'
-          headers:
-            Cache-Control: *id001
-            Retry-After: *id002
         '401':
           $ref: '#/components/responses/Problem'
         '403':
@@ -138,59 +112,14 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
-  /v1/playback-requests/{request_id}:
-    parameters:
-    - name: request_id
-      in: path
-      required: true
-      schema: *id003
-    get:
-      operationId: recoverPlaybackByRequest
-      tags:
-      - Playback
-      summary: Recover token and report after lost acknowledgement or restart
-      description: Same report as token lookup. Return 404 only for genuinely unknown identity, 410 for known retired
-        data, and 503 for unavailable storage; errors must not be mapped to absence.
-      responses:
-        '200':
-          description: Same token bound to the original request.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PlaybackReport'
-              examples:
-                Accepted:
-                  $ref: '#/components/examples/Accepted'
-                Verified:
-                  $ref: '#/components/examples/Verified'
-          headers:
-            Cache-Control: *id001
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-        '410':
-          $ref: '#/components/responses/Problem'
-        '429':
-          $ref: '#/components/responses/Problem'
-        '503':
-          $ref: '#/components/responses/Problem'
-  /v1/playback-requests/{request_id}/cancel:
-    parameters:
-    - name: request_id
-      in: path
-      required: true
-      schema: *id003
+  /v1/playbacks/cancel:
     post:
-      operationId: cancelPlaybackRequest
-      tags:
-      - Playback
-      summary: Fence further input for a request and acknowledge after quiescence
-      description: Persist cancellation even before submission exists. May cancel an old generation for its own
-        request without reviving authority. Never stop newer or already-playing video with a global key. 200 only
-        when input_quiescent=true; 202 remains pending. Same request/identity retry is idempotent.
+      operationId: cancelPlayback
+      summary: Cancel navigation and stop owned active playback, or fence a device for manual control
+      description: 'One Cancel API, two mutually exclusive scopes. Persist cancellation before stopping/draining
+        input. Return 200 only after confirmed quiescence and active stop/already-inactive. Retry is idempotent.
+        On timeout/503 cancellation is unconfirmed: manual input stays disabled and the controller retries. A device
+        fence covers late Play deliveries whose token was never received. No authority or renewal endpoints.'
       requestBody:
         required: true
         content:
@@ -198,189 +127,22 @@ paths:
             schema:
               $ref: '#/components/schemas/CancelRequest'
             examples:
-              Cancel:
-                $ref: '#/components/examples/Cancel'
+              CancelToken:
+                $ref: '#/components/examples/CancelToken'
+              CancelForManual:
+                $ref: '#/components/examples/CancelForManual'
       responses:
         '200':
-          description: Durable request fence and input quiescence acknowledged.
+          description: Durable cancellation acknowledged; no further input in scope.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CancelResult'
               examples:
-                Cancelled:
-                  $ref: '#/components/examples/Cancelled'
-        '202':
-          description: Cancellation persisted; actions still draining.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CancelResult'
-          headers:
-            Retry-After: *id002
-        '400':
-          $ref: '#/components/responses/Problem'
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '409':
-          $ref: '#/components/responses/Problem'
-        '422':
-          $ref: '#/components/responses/Problem'
-        '429':
-          $ref: '#/components/responses/Problem'
-        '503':
-          $ref: '#/components/responses/Problem'
-  /v1/devices/{device_id}/observation:
-    parameters:
-    - name: device_id
-      in: path
-      required: true
-      schema: *id003
-    get:
-      operationId: observeDevice
-      tags:
-      - Observation
-      summary: Observe actual TV state independent of a historical token
-      description: No input side effects. Unknown/manual content has nullable correlation fields. 200 with unavailable
-        evidence establishes service contact only. 503 means the service itself could not complete the read.
-      responses:
-        '200':
-          description: Actual current device evidence or unavailable/stale evidence.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeviceObservationResult'
-              examples:
-                Observe:
-                  $ref: '#/components/examples/Observe'
-          headers:
-            Cache-Control: *id001
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-        '429':
-          $ref: '#/components/responses/Problem'
-        '503':
-          $ref: '#/components/responses/Problem'
-  /v1/content-status/lookup:
-    post:
-      operationId: lookupContentStatus
-      tags:
-      - Content status
-      summary: Resolve lifecycle for reserved or out-of-feed content without playing it
-      description: Never requires a playback token or device navigation. Echo lookup request identity. Unobservable
-        video-only content is unsupported/unknown. Preserve acquisition time; cached data and estimated ends cannot
-        manufacture a final status.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ContentLookupRequest'
-            examples:
-              Lookup:
-                $ref: '#/components/examples/Lookup'
-      responses:
-        '200':
-          description: Lookup result; source absence/failure is explicit inside content_status.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ContentLookupResult'
-              examples:
-                LookupEnded:
-                  $ref: '#/components/examples/LookupEnded'
-          headers:
-            Cache-Control: *id001
-        '400':
-          $ref: '#/components/responses/Problem'
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '413':
-          $ref: '#/components/responses/Problem'
-        '422':
-          $ref: '#/components/responses/Problem'
-        '429':
-          $ref: '#/components/responses/Problem'
-        '503':
-          $ref: '#/components/responses/Problem'
-  /v1/devices/{device_id}/authority:
-    parameters:
-    - name: device_id
-      in: path
-      required: true
-      schema: *id003
-    get:
-      operationId: getDeviceAuthority
-      tags:
-      - Authority
-      summary: Read durable ownership and input capabilities
-      responses:
-        '200':
-          description: Current generation and transition barrier.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Authority'
-              examples:
-                Authority:
-                  $ref: '#/components/examples/Authority'
-          headers:
-            Cache-Control: *id001
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-        '503':
-          $ref: '#/components/responses/Problem'
-    put:
-      operationId: transferDeviceAuthority
-      tags:
-      - Authority
-      summary: Compare and transfer ownership while fencing old input
-      description: Controller orchestration identity only. Serialize with physical input dispatch. Persist command
-        receipt before effects; duplicate command returns its original transition generation without transferring
-        twice. Block new input until previous generations drain. GET reveals the current generation/transition after
-        a lost response. Local in-process deployment may implement this boundary without HTTP, but all input must
-        use one gateway.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AuthorityCommand'
-            examples:
-              GrantAutonomous:
-                $ref: '#/components/examples/GrantAutonomous'
-              GrantManual:
-                $ref: '#/components/examples/GrantManual'
-      responses:
-        '200':
-          description: Transfer committed and previous input quiescent.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Authority'
-              examples:
-                Authority:
-                  $ref: '#/components/examples/Authority'
-        '202':
-          description: New generation committed; drain pending. No new input yet.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Authority'
-          headers:
-            Retry-After: *id002
+                CancelledToken:
+                  $ref: '#/components/examples/CancelledToken'
+                ManualReady:
+                  $ref: '#/components/examples/ManualReady'
         '400':
           $ref: '#/components/responses/Problem'
         '401':
@@ -396,94 +158,6 @@ paths:
         '429':
           $ref: '#/components/responses/Problem'
         '503':
-          $ref: '#/components/responses/Problem'
-  /v1/devices/{device_id}/authority/renew:
-    parameters:
-    - name: device_id
-      in: path
-      required: true
-      schema: *id003
-    post:
-      operationId: renewDeviceAuthority
-      tags:
-      - Authority
-      summary: Renew an unexpired autonomous lease without changing generation
-      description: Only the current valid autonomous lease may be renewed. Retry with identical command_id returns
-        the same renewal receipt without extending twice. Expired leases require a fresh transfer; device observation
-        does not renew input authority.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AuthorityRenewal'
-            examples:
-              RenewAuthority:
-                $ref: '#/components/examples/RenewAuthority'
-      responses:
-        '200':
-          description: Current lease renewed once.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Authority'
-              examples:
-                Authority:
-                  $ref: '#/components/examples/Authority'
-        '400':
-          $ref: '#/components/responses/Problem'
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-        '409':
-          $ref: '#/components/responses/Problem'
-        '422':
-          $ref: '#/components/responses/Problem'
-        '429':
-          $ref: '#/components/responses/Problem'
-        '503':
-          $ref: '#/components/responses/Problem'
-  /healthz:
-    get:
-      operationId: liveness
-      tags:
-      - Operations
-      summary: Process liveness with no device interaction
-      security: []
-      responses:
-        '200':
-          description: Process is alive.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Health'
-  /readyz:
-    get:
-      operationId: readiness
-      tags:
-      - Operations
-      summary: Service readiness for durable work
-      description: An individual TV offline does not necessarily make the service unready. Report durable store
-        and gateway readiness.
-      responses:
-        '200':
-          description: Ready to accept durable work.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Readiness'
-        '503':
-          description: Cannot safely accept work.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Readiness'
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
           $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
@@ -495,11 +169,14 @@ components:
     ErrorDetail:
       type: object
       properties:
-        code: *id003
+        code:
+          type: string
+          minLength: 1
+          maxLength: 200
         message:
           type: string
           maxLength: 1000
-        retryable: &id004
+        retryable:
           type: boolean
         retry_after_seconds:
           type: integer
@@ -523,8 +200,12 @@ components:
           maximum: 599
         detail:
           type: string
-        code: *id003
-        retryable: *id004
+        code:
+          type: string
+          minLength: 1
+          maxLength: 200
+        retryable:
+          type: boolean
         instance:
           type: string
           format: uri-reference
@@ -546,7 +227,10 @@ components:
           - device_observation
           - video_inference
           - operator
-        evidence_id: *id003
+        evidence_id:
+          type: string
+          minLength: 1
+          maxLength: 200
         summary:
           type: string
           maxLength: 1000
@@ -562,7 +246,7 @@ components:
           - none
           - candidate
           - confirmed
-        captured_at: &id007
+        captured_at:
           type: string
           format: date-time
         model_version:
@@ -580,7 +264,7 @@ components:
     ContentSnapshot:
       type: object
       properties:
-        id: &id005
+        id:
           type: string
           minLength: 1
           maxLength: 1024
@@ -592,7 +276,10 @@ components:
     ViewingOption:
       type: object
       properties:
-        id: *id005
+        id:
+          type: string
+          minLength: 1
+          maxLength: 1024
       required:
       - id
       additionalProperties: true
@@ -604,13 +291,22 @@ components:
         schema_version:
           const: 1
           type: integer
-        request_id: *id003
-        device_id: *id003
-        intent_version: &id006
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        intent_version:
           type: integer
           minimum: 0
           maximum: 9007199254740991
-        content_id: *id005
+        content_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
         mode:
           const: live
           type: string
@@ -620,9 +316,11 @@ components:
           - selection
           - route_handoff
           - recovery
-        previous_request_id: &id009
+        previous_request_id:
           anyOf:
-          - *id005
+          - type: string
+            minLength: 1
+            maxLength: 1024
           - type: 'null'
         content_snapshot_schema_version:
           const: 1
@@ -634,6 +332,11 @@ components:
           items:
             $ref: '#/components/schemas/ViewingOption'
           minItems: 1
+        deadline_at:
+          type: string
+          format: date-time
+          description: Absolute navigation deadline; stable across delivery retries. Does not end an event or limit
+            successful playback duration.
       required:
       - schema_version
       - request_id
@@ -644,52 +347,30 @@ components:
       - content_snapshot_schema_version
       - content_snapshot
       - allowed_viewing_options
-      additionalProperties: false
-      description: Existing controller staged request. content_id must equal snapshot.id. Every original allowed
-        option is passed. Older persisted requests may omit purpose/previous_request_id. request_id is the idempotency
-        key.
-    ExecutionConstraint:
-      type: object
-      properties:
-        generation: *id006
-        lease_id: *id003
-        issued_at: *id007
-        deadline_at: *id007
-      required:
-      - generation
-      - lease_id
-      - issued_at
       - deadline_at
       additionalProperties: false
-      description: Proposed persisted execution envelope. Bind once before submit; never refresh credentials or
-        deadline on a retry. deadline_at must be later than issued_at and not expired for new work. All physical
-        actions must honor the current generation and unexpired lease.
-    PlaybackCommand:
-      type: object
-      properties:
-        request:
-          $ref: '#/components/schemas/PlaybackRequest'
-        execution:
-          $ref: '#/components/schemas/ExecutionConstraint'
-      required:
-      - request
-      - execution
-      additionalProperties: false
-      description: Immutable idempotent envelope. Validate semantic equality for duplicate request IDs before returning
-        an existing report.
+      description: Full controller request plus fixed navigation deadline. request_id deduplicates identical POST
+        retries; content_id must equal content_snapshot.id. New work requires an intent above the device cancellation
+        fence. Preserve every original allowed option.
     RouteAttempt:
       type: object
       properties:
         attempt:
           type: integer
           minimum: 1
-        viewing_option_id: *id005
+        viewing_option_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
         phase:
           type: string
-        started_at: *id007
-        finished_at: &id008
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
           anyOf:
-          - *id007
+          - type: string
+            format: date-time
           - type: 'null'
         error:
           anyOf:
@@ -718,10 +399,20 @@ components:
           - timed_out
         phase:
           type: string
-        created_at: *id007
-        updated_at: *id007
-        finished_at: *id008
-        deadline_at: *id007
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        finished_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        deadline_at:
+          type: string
+          format: date-time
         error:
           anyOf:
           - $ref: '#/components/schemas/ErrorDetail'
@@ -745,25 +436,42 @@ components:
     PlaybackObservation:
       type: object
       properties:
-        device_id: *id003
-        request_id: *id009
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        request_id:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 1024
+          - type: 'null'
         intent_version:
           anyOf:
-          - *id006
+          - type: integer
+            minimum: 0
+            maximum: 9007199254740991
           - type: 'null'
-        generation:
+        content_id:
           anyOf:
-          - *id006
+          - type: string
+            minLength: 1
+            maxLength: 1024
           - type: 'null'
-        content_id: *id009
-        viewing_option_id: *id009
+        viewing_option_id:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 1024
+          - type: 'null'
         presentation:
           type: string
           enum:
           - live
           - replay
           - unknown
-        verified: *id004
+        verified:
+          type: boolean
         simulated:
           const: false
           type: boolean
@@ -776,15 +484,18 @@ components:
           - menu
           - offline
           - unknown
-        observed_at: *id007
-        valid_until: *id007
+        observed_at:
+          type: string
+          format: date-time
+        valid_until:
+          type: string
+          format: date-time
         evidence:
           $ref: '#/components/schemas/Evidence'
       required:
       - device_id
       - request_id
       - intent_version
-      - generation
       - content_id
       - viewing_option_id
       - presentation
@@ -795,10 +506,10 @@ components:
       - valid_until
       - evidence
       additionalProperties: false
-      description: Actual acquired device evidence. Unknown/manual content may have null request/content correlation.
-        verified=true requires complete matching identity, a permitted route, live presentation, healthy playback
-        and fresh acquisition within 15 seconds. Expiry must follow observation; report generation time cannot refresh
-        it.
+      description: Evidence for this token only. verified=true requires matching device/request/intent/content,
+        a permitted route, live presentation, healthy playback and acquisition within 15 seconds. Never refresh
+        timestamps by polling cached data. After stop, switch or manual takeover, return null or verified=false;
+        never substitute another token.
       allOf:
       - if:
           properties:
@@ -808,11 +519,22 @@ components:
           - verified
         then:
           properties:
-            request_id: *id003
-            intent_version: *id006
-            generation: *id006
-            content_id: *id005
-            viewing_option_id: *id005
+            request_id:
+              type: string
+              minLength: 1
+              maxLength: 200
+            intent_version:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            content_id:
+              type: string
+              minLength: 1
+              maxLength: 1024
+            viewing_option_id:
+              type: string
+              minLength: 1
+              maxLength: 1024
             presentation:
               const: live
             health:
@@ -826,7 +548,9 @@ components:
           - fresh
           - stale
           - unavailable
-        checked_at: *id007
+        checked_at:
+          type: string
+          format: date-time
         error:
           anyOf:
           - $ref: '#/components/schemas/ErrorDetail'
@@ -841,8 +565,11 @@ components:
     LifecycleObservation:
       type: object
       properties:
-        content_id: *id005
-        state: &id010
+        content_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        state:
           type: string
           enum:
           - scheduled
@@ -864,15 +591,29 @@ components:
           enum:
           - provider
           - device_observed
-        observed_at: *id007
-        received_at: *id007
-        valid_until: *id007
+        observed_at:
+          type: string
+          format: date-time
+        received_at:
+          type: string
+          format: date-time
+        valid_until:
+          type: string
+          format: date-time
         phase:
           anyOf:
           - type: string
           - type: 'null'
-        actual_end_time: *id008
-        updated_start_time: *id008
+        actual_end_time:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        updated_start_time:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
         evidence:
           $ref: '#/components/schemas/Evidence'
       required:
@@ -909,7 +650,10 @@ components:
     ContentStatus:
       type: object
       properties:
-        content_id: *id005
+        content_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
         lookup_state:
           type: string
           enum:
@@ -917,13 +661,26 @@ components:
           - unavailable
           - not_found
           - unsupported
-        effective_state: *id010
-        stale: *id004
+        effective_state:
+          type: string
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          - delayed
+          - suspended
+          - postponed
+          - unknown
+        stale:
+          type: boolean
         observation:
           anyOf:
           - $ref: '#/components/schemas/LifecycleObservation'
           - type: 'null'
-        checked_at: *id007
+        checked_at:
+          type: string
+          format: date-time
         error:
           anyOf:
           - $ref: '#/components/schemas/ErrorDetail'
@@ -949,13 +706,15 @@ components:
           - none
           - requested
           - acknowledged
-        input_quiescent: *id004
+        input_quiescent:
+          type: boolean
       required:
       - state
       - input_quiescent
       additionalProperties: false
-      description: Cancellation barrier for this request. acknowledged requires input_quiescent=true. With none,
-        false does not assert that input is currently occurring.
+      description: Acknowledged means pending input has drained, active playback attributable to this token has
+        stopped (or was already inactive), and this token can never issue further input. Cancellation is not event
+        completion.
       allOf:
       - if:
           properties:
@@ -973,13 +732,30 @@ components:
         schema_version:
           const: 1
           type: integer
-        token: *id003
-        request_id: *id003
-        device_id: *id003
-        content_id: *id005
-        intent_version: *id006
-        generation: *id006
-        revision: *id006
+        token:
+          type: string
+          minLength: 1
+          maxLength: 200
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        content_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        intent_version:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        revision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
         operation:
           $ref: '#/components/schemas/Operation'
         observation:
@@ -992,7 +768,11 @@ components:
           $ref: '#/components/schemas/ContentStatus'
         cancellation:
           $ref: '#/components/schemas/CancellationState'
-        retained_until: *id008
+        retained_until:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
       required:
       - schema_version
       - token
@@ -1000,7 +780,6 @@ components:
       - device_id
       - content_id
       - intent_version
-      - generation
       - revision
       - operation
       - observation
@@ -1009,9 +788,9 @@ components:
       - cancellation
       - retained_until
       additionalProperties: false
-      description: Independent operation, matching device evidence, and content lifecycle. Never place a different
-        request's observation here. Token remains bound to one request. null retained_until means still active/no
-        retirement deadline.
+      description: One token getter returns navigation history, fresh playback evidence, and content lifecycle.
+        No device-observation or content-ID lookup endpoint is required. revision increases monotonically per token.
+        retained_until=null while active; retain inactive token records for at least seven days.
       allOf:
       - if:
           properties:
@@ -1029,359 +808,155 @@ components:
               - properties:
                   verified:
                     const: false
-    CancelRequest:
+    CancelByToken:
       type: object
       properties:
-        device_id: *id003
-        generation: *id006
-        intent_version: *id006
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        token:
+          type: string
+          minLength: 1
+          maxLength: 200
       required:
       - device_id
-      - generation
-      - intent_version
+      - token
       additionalProperties: false
-      description: Identity for a durable request tombstone, including unknown submissions. Authenticated cancellation
-        of an older request does not grant its generation new authority.
+      description: Stop this token, including active playback. Never stop or inject input into newer playback.
+    CancelThroughIntent:
+      type: object
+      properties:
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        through_intent_version:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+      required:
+      - device_id
+      - through_intent_version
+      additionalProperties: false
+      description: Manual takeover barrier. Persist a monotonic cancellation fence, cancel/stop all work through
+        this intent, reject late arrivals at or below it, and drain owned input before acknowledgement. Higher intents
+        are unaffected.
+    CancelRequest:
+      oneOf:
+      - $ref: '#/components/schemas/CancelByToken'
+      - $ref: '#/components/schemas/CancelThroughIntent'
     CancelResult:
       type: object
       properties:
-        request_id: *id003
-        device_id: *id003
-        token: *id009
-        state:
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        token:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 200
+          - type: 'null'
+        through_intent_version:
+          anyOf:
+          - type: integer
+            minimum: 0
+            maximum: 9007199254740991
+          - type: 'null'
+        input_quiescent:
+          type: boolean
+          const: true
+        active_playback:
           type: string
           enum:
-          - requested
-          - acknowledged
-        input_quiescent: *id004
+          - stopped
+          - already_inactive
+        acknowledged_at:
+          type: string
+          format: date-time
       required:
-      - request_id
       - device_id
       - token
-      - state
+      - through_intent_version
       - input_quiescent
+      - active_playback
+      - acknowledged_at
       additionalProperties: false
-      description: 200 requires acknowledged and input_quiescent. 202 means still draining. token may be null when
-        cancellation preceded submission.
-      allOf:
-      - if:
-          properties:
-            state:
-              const: acknowledged
-          required:
-          - state
-        then:
-          properties:
-            input_quiescent:
-              const: true
-    DeviceObservationResult:
-      type: object
-      properties:
-        device_id: *id003
-        observation:
-          anyOf:
-          - $ref: '#/components/schemas/PlaybackObservation'
-          - type: 'null'
-        observation_status:
-          $ref: '#/components/schemas/ObservationStatus'
-      required:
-      - device_id
-      - observation
-      - observation_status
-      additionalProperties: false
-      description: Current physical observation, independent of any token. No navigation side effects.
-      allOf:
-      - if:
-          properties:
-            observation_status:
-              properties:
-                state:
-                  enum:
-                  - stale
-                  - unavailable
-        then:
-          properties:
-            observation:
-              anyOf:
-              - type: 'null'
-              - properties:
-                  verified:
-                    const: false
-    ContentLookupRequest:
-      type: object
-      properties:
-        schema_version:
-          const: 1
-          type: integer
-        request_id: *id003
-        content_id: *id005
-        content_snapshot_schema_version:
-          const: 1
-          type: integer
-        content_snapshot:
-          $ref: '#/components/schemas/ContentSnapshot'
-        catalog_seen_at: *id007
-        as_of: *id007
-      required:
-      - schema_version
-      - request_id
-      - content_id
-      - content_snapshot_schema_version
-      - content_snapshot
-      - catalog_seen_at
-      - as_of
-      additionalProperties: false
-      description: Existing independent lookup context. content_id equals snapshot.id. Never navigate just to satisfy
-        this read. as_of is current UTC for production, not a schedule-completion inference.
-    ContentLookupResult:
-      type: object
-      properties:
-        schema_version:
-          const: 1
-          type: integer
-        request_id: *id003
-        content_id: *id005
-        content_status:
-          $ref: '#/components/schemas/ContentStatus'
-      required:
-      - schema_version
-      - request_id
-      - content_id
-      - content_status
-      additionalProperties: false
-    AuthorityCommand:
-      type: object
-      properties:
-        command_id: *id003
-        expected_generation: *id006
-        mode:
-          type: string
-          enum:
-          - autonomous
-          - manual
-          - paused
-        lease_seconds:
-          type: integer
-          minimum: 10
-          maximum: 120
-          default: 30
-        session_id: *id003
-        manual_expires_at: *id007
-      required:
-      - command_id
-      - expected_generation
-      - mode
-      additionalProperties: false
-      description: Compare-and-set ownership transfer. Every new command advances generation and fences/drains older
-        input. Repeated identical command_id returns the same grant/transition without a second transfer. Manual
-        expiry disables input; only the controller chooses whether automation resumes.
-      allOf:
-      - if:
-          properties:
-            mode:
-              const: manual
-          required:
-          - mode
-        then:
-          required:
-          - session_id
-          - manual_expires_at
-      - if:
-          properties:
-            mode:
-              enum:
-              - autonomous
-              - paused
-          required:
-          - mode
-        then:
-          not:
-            anyOf:
-            - required:
-              - session_id
-            - required:
-              - manual_expires_at
-      - if:
-          properties:
-            mode:
-              enum:
-              - manual
-              - paused
-          required:
-          - mode
-        then:
-          not:
-            required:
-            - lease_seconds
-    AuthorityRenewal:
-      type: object
-      properties:
-        command_id: *id003
-        generation: *id006
-        lease_id: *id003
-        lease_seconds:
-          type: integer
-          minimum: 10
-          maximum: 120
-          default: 30
-      required:
-      - command_id
-      - generation
-      - lease_id
-      additionalProperties: false
-      description: Renew only the currently valid autonomous lease. Same command retry does not extend twice. Expired
-        leases require a new authority generation.
-    Authority:
-      type: object
-      properties:
-        device_id: *id003
-        generation: *id006
-        mode:
-          type: string
-          enum:
-          - autonomous
-          - manual
-          - paused
-        state:
-          type: string
-          enum:
-          - ready
-          - transitioning
-          - expired
-        lease_id: *id009
-        lease_expires_at: *id008
-        session_id: *id009
-        manual_expires_at: *id008
-        input_quiescent: *id004
-        transition_command_id: *id009
-        capabilities:
-          type: object
-          properties:
-            shared_input_gate: *id004
-            request_cancellation: *id004
-            live_verification: *id004
-            independent_content_status: *id004
-          required:
-          - shared_input_gate
-          - request_cancellation
-          - live_verification
-          - independent_content_status
-          additionalProperties: false
-      required:
-      - device_id
-      - generation
-      - mode
-      - state
-      - lease_id
-      - lease_expires_at
-      - session_id
-      - manual_expires_at
-      - input_quiescent
-      - transition_command_id
-      - capabilities
-      additionalProperties: false
-      description: Input barrier for previous generations. During transition block all new input. ready plus input_quiescent=true
-        confirms old input drained, not that future current-generation writes cannot occur. Capabilities advertise
-        actual deployment support, not model promises.
-    Health:
-      type: object
-      properties:
-        status:
-          type: string
-          enum:
-          - ok
-        version:
-          type: string
-      required:
-      - status
-      - version
-      additionalProperties: false
-    Readiness:
-      type: object
-      properties:
-        status:
-          type: string
-          enum:
-          - ready
-          - not_ready
-        durable_storage: *id004
-        input_gateway: *id004
-        version:
-          type: string
-      required:
-      - status
-      - durable_storage
-      - input_gateway
-      - version
-      additionalProperties: false
-      description: Service can accept durable work and reach its input authority. Individual TVs may still be offline.
-        No device input or navigation.
+      description: Only return 200 after cancellation and stop are confirmed for the requested scope. Exactly one
+        of token or through_intent_version is non-null. already_inactive sends no stop input to a newer/manual target.
+      oneOf:
+      - properties:
+          token:
+            type: string
+            minLength: 1
+            maxLength: 200
+          through_intent_version:
+            type: 'null'
+      - properties:
+          token:
+            type: 'null'
+          through_intent_version:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
   examples:
     StartPlayback:
-      summary: Complete synthetic request; replace snapshot with the real original Teamarr entry
+      summary: Synthetic full snapshot; substitute the untouched real Teamarr entry and options
       value:
-        request:
-          schema_version: 1
-          request_id: req-example-001
-          device_id: living-room
-          intent_version: 23
-          content_id: example-content-001
-          mode: live
-          purpose: selection
-          previous_request_id: null
-          content_snapshot_schema_version: 1
-          content_snapshot: &id011
-            id: example-content-001
-            kind: event
-            source: games
-            title: Canadiens at Maple Leafs
-            competition: nhl
-            sports:
-            - nhl
-            provider: example
-            start_time: '2026-09-30T19:00:00Z'
-            expected_end_time: '2026-09-30T22:00:00Z'
-            end_time_estimated: true
-            timing_basis: demo_duration
-            status: live
-            event:
-              league: nhl
-              season_type: playoffs
-              away_team_details:
-                id: MTL
-                provider: demo
-                city: Montreal
-                name: Canadiens
-                full_name: Montreal Canadiens
-                short_name: Canadiens
-                abbreviation: MTL
-                logo_url: null
-              home_team_details:
-                id: TOR
-                provider: demo
-                city: Toronto
-                name: Maple Leafs
-                full_name: Toronto Maple Leafs
-                short_name: Maple Leafs
-                abbreviation: TOR
-                logo_url: null
-              event_id: canadiens
+        schema_version: 1
+        request_id: req-example-001
+        device_id: living-room
+        intent_version: 23
+        content_id: example-content-001
+        mode: live
+        purpose: selection
+        previous_request_id: null
+        content_snapshot_schema_version: 1
+        content_snapshot:
+          id: example-content-001
+          kind: event
+          source: games
+          title: Canadiens at Maple Leafs
+          competition: nhl
+          sports:
+          - nhl
+          provider: example
+          start_time: '2026-09-30T19:00:00Z'
+          expected_end_time: '2026-09-30T22:00:00Z'
+          end_time_estimated: true
+          timing_basis: demo_duration
+          status: live
+          event:
+            league: nhl
+            season_type: playoffs
+            away_team_details:
+              id: MTL
               provider: demo
-              home_team: Toronto Maple Leafs
-              away_team: Montreal Canadiens
-            sessions: []
-            broadcast: null
-            related_ids: []
-            viewing_options:
-            - id: example-option-001
-              app: demo_provider
-              decision: eligible
-              reasons: []
-              presentation: live
-              basis: synthetic_contract_example
-              coverage_type: full
-            artwork: {}
-          allowed_viewing_options:
+              city: Montreal
+              name: Canadiens
+              full_name: Montreal Canadiens
+              short_name: Canadiens
+              abbreviation: MTL
+              logo_url: null
+            home_team_details:
+              id: TOR
+              provider: demo
+              city: Toronto
+              name: Maple Leafs
+              full_name: Toronto Maple Leafs
+              short_name: Maple Leafs
+              abbreviation: TOR
+              logo_url: null
+            event_id: canadiens
+            provider: demo
+            home_team: Toronto Maple Leafs
+            away_team: Montreal Canadiens
+          sessions: []
+          broadcast: null
+          related_ids: []
+          viewing_options:
           - id: example-option-001
             app: demo_provider
             decision: eligible
@@ -1389,12 +964,17 @@ components:
             presentation: live
             basis: synthetic_contract_example
             coverage_type: full
-        execution:
-          generation: 12
-          lease_id: lease-example-012
-          issued_at: '2026-09-30T20:00:00Z'
-          deadline_at: '2026-09-30T20:02:00Z'
-      x-schema: PlaybackCommand
+          artwork: {}
+        allowed_viewing_options:
+        - id: example-option-001
+          app: demo_provider
+          decision: eligible
+          reasons: []
+          presentation: live
+          basis: synthetic_contract_example
+          coverage_type: full
+        deadline_at: '2026-09-30T20:02:00Z'
+      x-schema: PlaybackRequest
     Accepted:
       summary: Durably accepted; no playback claim
       value:
@@ -1404,7 +984,6 @@ components:
         device_id: living-room
         content_id: example-content-001
         intent_version: 23
-        generation: 12
         revision: 1
         operation:
           state: accepted
@@ -1445,7 +1024,6 @@ components:
         device_id: living-room
         content_id: example-content-001
         intent_version: 23
-        generation: 12
         revision: 7
         operation:
           state: playing_verified
@@ -1456,11 +1034,10 @@ components:
           deadline_at: '2026-09-30T20:02:00Z'
           error: null
           attempts: []
-        observation: &id013
+        observation:
           device_id: living-room
           request_id: req-example-001
           intent_version: 23
-          generation: 12
           content_id: example-content-001
           viewing_option_id: example-option-001
           presentation: live
@@ -1474,7 +1051,7 @@ components:
             evidence_id: obs-example-042
             summary: Synthetic example of matched content identity and live presentation
             confidence: null
-        observation_status: &id014
+        observation_status:
           state: fresh
           checked_at: '2026-09-30T20:00:10Z'
           error: null
@@ -1503,7 +1080,6 @@ components:
         device_id: living-room
         content_id: example-content-001
         intent_version: 23
-        generation: 12
         revision: 20
         operation:
           state: playing_verified
@@ -1518,7 +1094,6 @@ components:
           device_id: living-room
           request_id: req-example-001
           intent_version: 23
-          generation: 12
           content_id: example-content-001
           viewing_option_id: example-option-001
           presentation: live
@@ -1536,7 +1111,7 @@ components:
           state: stale
           checked_at: '2026-09-30T22:05:01Z'
           error: null
-        content_status: &id012
+        content_status:
           content_id: example-content-001
           lookup_state: ok
           effective_state: ended
@@ -1565,100 +1140,42 @@ components:
           input_quiescent: false
         retained_until: null
       x-schema: PlaybackReport
-    Lookup:
-      summary: Lookup without a playback token or TV navigation
+    CancelToken:
       value:
-        schema_version: 1
-        request_id: lookup-example-001
-        content_id: example-content-001
-        content_snapshot_schema_version: 1
-        content_snapshot: *id011
-        catalog_seen_at: '2026-09-30T19:59:00Z'
-        as_of: '2026-09-30T22:05:00Z'
-      x-schema: ContentLookupRequest
-    LookupEnded:
-      summary: Fresh provider completion result
-      value:
-        schema_version: 1
-        request_id: lookup-example-001
-        content_id: example-content-001
-        content_status: *id012
-      x-schema: ContentLookupResult
-    Observe:
-      summary: Current matched device observation
-      value:
-        device_id: living-room
-        observation: *id013
-        observation_status: *id014
-      x-schema: DeviceObservationResult
-    Cancel:
-      summary: Cancel even when the original token is unknown
-      value:
-        device_id: living-room
-        generation: 12
-        intent_version: 23
-      x-schema: CancelRequest
-    Cancelled:
-      summary: Durable cancellation barrier reached; newer playback is unaffected
-      value:
-        request_id: req-example-001
         device_id: living-room
         token: pb-example-001
-        state: acknowledged
-        input_quiescent: true
-      x-schema: CancelResult
-    Authority:
-      summary: Old generation drained; autonomous lease ready
+      x-schema: CancelRequest
+    CancelForManual:
       value:
         device_id: living-room
-        generation: 12
-        mode: autonomous
-        state: ready
-        lease_id: lease-example-012
-        lease_expires_at: '2026-09-30T20:00:30Z'
-        session_id: null
-        manual_expires_at: null
+        through_intent_version: 24
+      x-schema: CancelRequest
+    CancelledToken:
+      value:
+        device_id: living-room
+        token: pb-example-001
+        through_intent_version: null
         input_quiescent: true
-        transition_command_id: authority-example-012
-        capabilities:
-          shared_input_gate: true
-          request_cancellation: true
-          live_verification: true
-          independent_content_status: true
-      x-schema: Authority
-    GrantAutonomous:
-      summary: Compare and transfer authority
+        active_playback: stopped
+        acknowledged_at: '2026-09-30T20:05:00Z'
+      x-schema: CancelResult
+    ManualReady:
       value:
-        command_id: authority-example-012
-        expected_generation: 11
-        mode: autonomous
-        lease_seconds: 30
-      x-schema: AuthorityCommand
-    GrantManual:
-      summary: Fence autonomous actions before enabling manual input
-      value:
-        command_id: authority-example-013
-        expected_generation: 12
-        mode: manual
-        session_id: manual-example-session
-        manual_expires_at: '2026-09-30T20:15:00Z'
-      x-schema: AuthorityCommand
-    RenewAuthority:
-      summary: Extend current lease once without changing generation
-      value:
-        command_id: renew-example-001
-        generation: 12
-        lease_id: lease-example-012
-        lease_seconds: 30
-      x-schema: AuthorityRenewal
+        device_id: living-room
+        token: null
+        through_intent_version: 24
+        input_quiescent: true
+        active_playback: stopped
+        acknowledged_at: '2026-09-30T20:05:00Z'
+      x-schema: CancelResult
     Conflict:
       summary: No input allowed after ownership change
       value:
-        type: urn:dillflix:problem:stale_authority
-        title: Stale input authority
+        type: urn:dillflix:problem:stale_intent
+        title: Playback intent conflict
         status: 409
-        detail: This authority generation is no longer permitted to issue input.
-        code: stale_authority
+        detail: The device intent is at or below its durable cancellation fence.
+        code: stale_intent
         retryable: false
       x-schema: Problem
   responses:
@@ -1671,6 +1188,3 @@ components:
           examples:
             Conflict:
               $ref: '#/components/examples/Conflict'
-externalDocs:
-  description: Engineer handoff in the source repository
-  url: https://github.com/Dillflix/dillflix-live-controller/blob/main/docs/executor-api-handoff.md

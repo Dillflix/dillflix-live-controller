@@ -195,7 +195,8 @@ Withdrawing the observed route or changing its playback locator stages a new int
 | --- | --- |
 | `submit(request)` | Report for an idempotent request; the same ID with a different payload is rejected |
 | `inspect(request_id)` | Current request report, or null if unknown; used before resubmission and after restart |
-| `cancel(request_id)` | Return only after cancellation is acknowledged; raise on uncertainty so it can be retried |
+| `cancel(request_id)` | Cancel navigation and matching active playback; return only after acknowledgement; raise on uncertainty |
+| `cancel_device(device_id, through_intent_version)` | Persist a device cancellation fence, stop/drain work through that intent, reject delayed deliveries in scope, and acknowledge quiescence before manual input |
 | `observe(device_id)` | Current device observation, or null when unavailable |
 
 A report has `request_id`, `executor_job_id`, `device_id`, `intent_version`, `content_id`, `state`, `observation`, and optional `reason`. The simulator reports `accepted`, `navigating`, `playing_verified`, `failed`, `cancelled`, or `superseded`. Acceptance alone never sets observed playback. A verified report contains an observation such as:
@@ -218,7 +219,7 @@ A report has `request_id`, `executor_job_id`, `device_id`, `intent_version`, `co
 
 All identity fields must match the staged request. The option must belong to the original permitted set and remain compatible with current coverage. Missing verification, replay/unknown presentation, unhealthy playback, expired evidence, and timestamps over five seconds in the future are rejected. Evidence is usable for at most 15 seconds from observation, or until its earlier expiry. The controller rechecks its lease, active intent, automation mode, current selection, route compatibility, and deadline before accepting a result. Successful job history alone cannot substitute for current device evidence.
 
-Cancellation targets a request, not a global stop command. The simulator keeps cancellation tombstones and rejects lower device intents. It must not let cancellation of an old request stop newer playback. Failed cancellation delivery remains queued across restarts. The simulator chooses an option only to exercise this contract; its observations are not evidence of real TV playback.
+Cancellation includes active playback attributable to its request or device-intent scope. The simulator keeps request tombstones and a durable device cancellation watermark. Old cancellation never stops newer playback. Failed cancellation delivery and manual input handoff barriers remain queued across restarts. Playback ticks and manual cancellation are serialized in a worker thread, with in-flight calls drained on cancellation/shutdown; a real adapter must enforce finite I/O timeouts. The simulator's observations are not evidence of real TV playback.
 
 ## Maintenance and database operations
 
@@ -226,15 +227,15 @@ Cancellation targets a request, not a global stop command. The simulator keeps c
 
 Maintenance preserves pending/cancellation obligations, current observations, intent fences, manual commitments, and undo references even if these exceed history limits. Old inactive catalog entries are removed only when unreferenced; cleanup never asserts event completion. The simulator retains enough intent evidence to reject replayed requests after old payloads are removed. A real executor must define its own compatible receipt-retention policy.
 
-Full database snapshots and offline restore use `python -m controller.ops`; see [operations.md](operations.md). Restore preserves saved user data/history but pauses automation, clears runtime playback claims, cancels pending work, and advances revision/intent beyond the backup and readable target. Clients should reload before issuing new commands. Database schema remains 4; configuration-transfer schema remains 1.
+Full database snapshots and offline restore use `python -m controller.ops`; see [operations.md](operations.md). Restore preserves saved user data/history but pauses automation, clears runtime playback claims, cancels pending work, and advances revision/intent beyond the backup and readable target. Clients should reload before issuing new commands. Database schema is 5; configuration-transfer schema remains 1.
 
 ## Future external adapters
 
-The [engineer handoff](executor-api-handoff.md) and [OpenAPI draft](executor-api.openapi.yaml) propose the external transport, token lifecycle, independent lifecycle lookup, and shared input authority. They identify required controller changes and acceptance scenarios. Those routes are not implemented by this controller release.
+The [engineer handoff](executor-api-handoff.md) and [OpenAPI draft](executor-api.openapi.yaml) propose three external operations: Play, token status including lifecycle, and Cancel including active stop and a device-scoped manual handoff barrier. Separate request recovery, device observation, content-ID lifecycle lookup, and authority APIs are deferred. Those HTTP routes are not implemented by this controller release.
 
 No outbound playback HTTP endpoint or callback endpoint is connected yet. The future executor should accept the staged payload idempotently by `request_id`, apply monotonic intent fencing per device, and report request progress separately from observations. A successful acknowledgement must not count as live verification.
 
-The real executor must supply device evidence for the playback observation contract above, with transport timeouts and cancellation behavior appropriate to its navigation engine. A real content-status adapter must implement the lookup contract using authoritative event observations rather than discovery receipt times. Exact transport, authentication between services, status tokens, and real device recovery behavior will be finalized when those services are selected.
+The real adapter can implement internal inspect/observe/content-status methods through the token getter and locally persisted token associations. Unplayed content continues using fresh Teamarr evidence; unplayed out-of-window lifecycle may remain unknown. No independent public lookup is required. Real evidence ingestion, token persistence, HTTP timeouts, authentication, and physical executor cancellation remain integration work specified in the handoff.
 
 ## Screen viewing API
 
@@ -294,11 +295,14 @@ State/overview exposes a nullable `device.manual_control`:
   "session_id": "new-random-session-identifier",
   "started_at": "2026-09-30T20:00:00+00:00",
   "expires_at": "2026-10-01T00:00:00+00:00",
-  "return_mode": "active"
+  "return_mode": "active",
+  "input_ready": true
 }
 ```
 
 No token/digest is returned. Automation stays paused for the session. Ownership commands and expiry advance the device revision. Take/end also advance playback intent and invalidate playback claims. Deadline uses real UTC, never the demo clock. `/automation` and watch-plan `play_now` return 409 while manual control exists; other plan/configuration commands remain available.
+
+`input_ready` becomes true only after the executor cancellation barrier is acknowledged. While pending, `device.input_handoff` contains `through_intent_version`; after acknowledgement it is null. An uncertain cancellation returns 503 from Take while retaining the paused session and barrier. Reconnect retries the barrier; no manual input is authorized until it succeeds. Pending barriers survive release/expiry and continue blocking autonomous delivery. Release/expiry drains manual transport before resuming automation.
 
 `WS /api/v1/devices/living-room/control/input` requires same-origin HTTP(S) Origin/Host and existing proxy authentication. Its first text message, within five seconds, is `{"session_id":"…","owner_token":"…"}`. Credentials are not URL parameters. Only one connection can own input. The server starts a separate control-only scrcpy session and sends `{"type":"ready"}` when connected. Then send one of:
 

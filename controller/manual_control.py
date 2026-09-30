@@ -30,7 +30,49 @@ class ManualControl:
 
     def manual_authorized(self, device_id, session_id, owner_token):
         with self.db.transaction() as db:
-            return self.check_manual_owner(db, self.db.device(db, device_id), session_id, owner_token)
+            device = self.db.device(db, device_id)
+            session = self.check_manual_owner(db, device, session_id, owner_token)
+            if device.get("input_handoff") or not session.get("input_ready", False):
+                raise HTTPException(409, "Waiting for playback cancellation. Reconnect the remote to retry.")
+            return session
+
+    def manual_expired(self):
+        with self.db.transaction() as db:
+            session = self.db.device(db).get("manual_control")
+            return bool(session and parse_time(session["expires_at"]) <= datetime.now(UTC))
+
+    def prepare_manual_input(self, device_id, session_id, owner_token):
+        with self.playback_lock:
+            with self.db.transaction() as db:
+                self.check_manual_owner(db, self.db.device(db, device_id), session_id, owner_token)
+            self.reconcile_input_handoff(device_id)
+
+    def reconcile_input_handoff(self, device_id="living-room"):
+        """Caller holds playback_lock. No DB transaction spans executor I/O.
+
+        The fence survives session expiry/release and blocks new playback until
+        acknowledged. A failed cancellation never authorizes manual input.
+        """
+        with self.db.transaction() as db:
+            device = self.db.device(db, device_id)
+            handoff = device.get("input_handoff")
+            session = device.get("manual_control")
+            if not handoff and session and not session.get("input_ready", False):
+                # Upgrade a retained session from before cancellation barriers.
+                handoff = {"through_intent_version": device["intent_version"]}
+                device["input_handoff"] = handoff
+                self.db.save_device(db, device)
+        if not handoff:
+            return
+        self.playback.cancel_device(device_id, handoff["through_intent_version"])
+        with self.db.transaction() as db:
+            device = self.db.device(db, device_id)
+            if device.get("input_handoff") != handoff:
+                return  # Another takeover established a newer barrier during I/O.
+            device["input_handoff"] = None
+            if device.get("manual_control"):
+                device["manual_control"]["input_ready"] = True
+            self.db.save_device(db, device)
 
     def clear_playback_for_manual(self, db, device):
         device["intent_version"] += 1
@@ -84,11 +126,13 @@ class ManualControl:
                 device.update(
                     automation="paused",
                     reason="Manual device control; watch plan retained.",
+                    input_handoff={"through_intent_version": device["intent_version"]},
                     manual_control={
                         "session_id": command.session_id,
                         "started_at": datetime.now(UTC).isoformat(),
                         "expires_at": (datetime.now(UTC) + timedelta(minutes=command.minutes)).isoformat(),
                         "return_mode": return_mode,
+                        "input_ready": False,
                     },
                 )
                 self.db.set_meta(

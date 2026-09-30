@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — Executor handoff preparation
+
+- Simplify the external API proposal to Play, token status including lifecycle, and Cancel including active stop. Defer separate token recovery, device observation, content-ID lookup, and authority endpoints.
+- Run synchronous playback work in a serialized worker thread; drain in-flight work before shutdown relinquishes database ownership. Real adapters must impose finite HTTP timeouts.
+- Require acknowledged device cancellation before manual input, persist failed handoffs through restart/release, and drain manual transport before automation resumes. Simulator device fences reject late requests and preserve newer playback.
+- Update the engineer guide, three-operation OpenAPI draft, adapter mappings, implementation boundaries, and acceptance scenarios. Real executor HTTP and physical cancellation remain integration work.
+
+Validation: 183 backend tests and 27 Chromium browser tests pass, including six new cancellation, concurrency, restart, and cleanup cases. The three-operation OpenAPI draft and all nine embedded examples validate.
+
 ## 0.8.0 — Temporary manual device control
 
 - Take control with 5/15/30 minute and 1/2/4/8/12/24 hour choices, a visible deadline, reset/extend, resume, and stay-paused actions.

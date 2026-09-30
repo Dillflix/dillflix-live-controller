@@ -81,7 +81,7 @@ Load **Playback service outage** to disconnect the simulator after initial playb
 
 When the service responds but playback evidence is missing, the controller first waits for recovery. The initial grace is `PLAYBACK_RECOVERY_GRACE_SECONDS` (default 60, minimum 5). Repeated losses after recovery attempts increase the wait, up to 300 seconds; 30 seconds of healthy observations reset that budget. After grace, selection can reopen a confirmed live target, choose a confirmed live fallback, or wait. Unknown event status never authorizes a new playback request. Fresh verified playback can continue through a status outage. A higher live manual choice takes precedence, and **Play now** can explicitly retry an unverified live target without waiting for grace.
 
-The simulator stores executor state separately from controller jobs. On restart or an uncertain delivery outcome, the controller inspects the original request before resending the same ID. Cancellation is durable and retried; it ends pending navigation without stopping a newer target. These guarantees are exercised locally, with real executor transport still deferred.
+The simulator stores executor state separately from controller jobs. On restart or an uncertain delivery outcome, the controller inspects the original request before resending the same ID. Cancellation is durable and retried; it ends pending navigation and matching active playback without stopping a newer target. Manual input waits for an acknowledged device cancellation barrier. Playback calls run in a drained worker thread so slow adapter calls do not block the HTTP event loop. These guarantees are exercised locally, with real executor transport still deferred.
 
 ## Exercise independent content status
 
@@ -181,7 +181,7 @@ Coverage includes database upgrades, persistent undo, configuration round trips,
 
 ## Next integrations
 
-For the engineer implementing real playback and event-completion APIs, start with the [playback and content status API handoff](docs/executor-api-handoff.md) and its [OpenAPI draft](docs/executor-api.openapi.yaml). They cover durable tokens, independent observations, cancellation, manual-control ownership, adapter changes, and acceptance scenarios. The proposed external endpoints are not yet connected.
+For the engineer implementing real playback and event-completion APIs, start with the [playback API handoff](docs/executor-api-handoff.md) and its [OpenAPI draft](docs/executor-api.openapi.yaml). The v1 proposal has three operations: Play, token status (including lifecycle), and Cancel (including active stop and manual handoff). Separate recovery, device-observation, lifecycle lookup, and authority APIs are deferred. The guide distinguishes implemented controller preparation from the real HTTP integration still required.
 
 See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Local retention, backup/restore, and accelerated multi-day recovery checks are implemented. Next are Docker/restore trials, real-time observation, and proxy/mobile checks on the deployment host; see [the operations guide](docs/operations.md). Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
 
