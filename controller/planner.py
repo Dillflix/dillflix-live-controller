@@ -65,7 +65,7 @@ def content_view(snapshot, seen_at, active, now, real_now, mode, ttl):
         lifecycle = "unknown"
     teams = [t for t in [event.get("away_team_details"), event.get("home_team_details")] if t]
     league = event.get("league") or snapshot.get("competition") or "unknown"
-    teams = [{**t, "key": team_key(t, league)} for t in teams]
+    teams = [{**t, "key": team_key(t, league), "league": league} for t in teams]
     options = allowed_options(snapshot)
     return {
         "content_id": snapshot["id"],

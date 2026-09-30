@@ -1,13 +1,57 @@
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 
 import httpx
 
-from .planner import parse_time
+from .planner import parse_time, team_key
 
 
 class TeamarrClient:
     def __init__(self, url, token="", transport=None):
         self.url, self.token, self.transport = url.rstrip("/"), token, transport
+
+    async def fetch_teams(self, league):
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        async with httpx.AsyncClient(timeout=20, headers=headers, transport=self.transport) as client:
+            response = await client.get(f"{self.url}/api/v1/cache/leagues/{quote(league, safe='')}/teams")
+            response.raise_for_status()
+            if len(response.content) > 8 * 1024 * 1024:
+                raise ValueError("Team directory response exceeds 8 MiB")
+            rows = response.json()
+        if not isinstance(rows, list) or len(rows) > 10_000:
+            raise ValueError("Invalid Teamarr team directory")
+        teams = {}
+        for row in rows:
+            if not isinstance(row, dict) or row.get("league") != league:
+                raise ValueError("Team directory league mismatch")
+            if (
+                not isinstance(row.get("provider"), str)
+                or not row["provider"].strip()
+                or type(row.get("provider_team_id")) not in (str, int)
+                or row.get("provider_team_id") in (None, "")
+                or not isinstance(row.get("team_name"), str)
+                or not row["team_name"].strip()
+            ):
+                raise ValueError("Team directory entry is missing its provider identity")
+            if any(
+                row.get(field) is not None and not isinstance(row[field], str)
+                for field in ("team_short_name", "team_abbrev", "logo_url")
+            ):
+                raise ValueError("Malformed team directory display fields")
+            team = {
+                "id": str(row["provider_team_id"]),  # row.id is Teamarr's cache DB ID, not a provider ID.
+                "provider": row["provider"],
+                "league": league,
+                "full_name": row["team_name"],
+                "short_name": row.get("team_short_name") or row["team_name"],
+                "name": None,
+                "city": None,
+                "abbreviation": row.get("team_abbrev") or "",
+                "logo_url": row.get("logo_url"),
+            }
+            team["key"] = team_key(team, league)
+            teams[team["key"]] = team
+        return list(teams.values())
 
     async def fetch_snapshot(self):
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}

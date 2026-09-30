@@ -25,12 +25,17 @@ import {
   Trash2,
   Tv,
   Users,
+  Undo2,
   X,
 } from "lucide-react";
 import { api, ApiError, commandId } from "./api";
+import { TeamRanking } from "./TeamRanking";
+import { ConfigurationTools } from "./ConfigurationTools";
 import type {
   Action,
+  ConfigurationDocument,
   Content,
+  ImportPreview,
   Overview,
   Preferences,
   Preview,
@@ -56,7 +61,8 @@ type Modal =
       priority: "first" | "last";
       preview: Preview;
     }
-  | { type: "rule"; rule: Rule }
+  | { type: "rule"; rule: Rule; revision: number }
+  | { type: "import"; document: ConfigurationDocument; preview: ImportPreview }
   | { type: "teams" }
   | { type: "simulate"; result: SimulationResult }
   | { type: "playback" }
@@ -213,6 +219,9 @@ function RuleForm({
 }) {
   const [draft, setDraft] = useState(rule);
   const patch = (part: Partial<Rule>) => setDraft((d) => ({ ...d, ...part }));
+  const eligibleTeams = teams.filter(
+    (t) => draft.league === "all" || t.league === draft.league,
+  );
   return (
     <form
       onSubmit={(e) => {
@@ -233,7 +242,18 @@ function RuleForm({
         League
         <select
           value={draft.league}
-          onChange={(e) => patch({ league: e.target.value })}
+          onChange={(e) =>
+            patch({
+              league: e.target.value,
+              team_id:
+                e.target.value === "all" ||
+                teams.some(
+                  (t) => t.key === draft.team_id && t.league === e.target.value,
+                )
+                  ? draft.team_id
+                  : null,
+            })
+          }
         >
           <option value="all">All sports</option>
           {leagues.map((l) => (
@@ -264,7 +284,13 @@ function RuleForm({
             onChange={(e) => patch({ team_id: e.target.value || null })}
           >
             <option value="">Any team</option>
-            {teams.map((t) => (
+            {draft.team_id &&
+              !eligibleTeams.some((t) => t.key === draft.team_id) && (
+                <option value={draft.team_id}>
+                  {draft.team_id} (saved team)
+                </option>
+              )}
+            {eligibleTeams.map((t) => (
               <option value={t.key} key={t.key}>
                 {t.full_name}
               </option>
@@ -283,6 +309,20 @@ function RuleForm({
           <option value="golf">Golf coverage</option>
           <option value="games">Games</option>
           <option value="special_events">Special events</option>
+        </select>
+      </label>
+      <label className="df-field">
+        Content type
+        <select
+          value={draft.kind || ""}
+          onChange={(e) =>
+            patch({ kind: (e.target.value || null) as Rule["kind"] })
+          }
+        >
+          <option value="">Any content type</option>
+          <option value="event">Event</option>
+          <option value="session">Session</option>
+          <option value="broadcast">Broadcast</option>
         </select>
       </label>
       <label className="df-row">
@@ -326,8 +366,7 @@ function App() {
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [connected, setConnected] = useState(true),
-    [teamLeague, setTeamLeague] = useState("nfl");
+    [connected, setConnected] = useState(true);
   const fetchVersion = useRef(0);
   const load = useCallback(async () => {
     const serial = ++fetchVersion.current;
@@ -408,14 +447,13 @@ function App() {
     }).format(new Date(s));
   const timelineTime = (s: string | null) =>
     s && date(s) !== date(data.meta.now) ? `${date(s)}, ${time(s)}` : time(s);
-  const allTeams = [
-    ...new Map(
-      data.events.flatMap((e) => e.teams).map((t) => [t.key, t]),
-    ).values(),
-  ];
+  const allTeams = data.teams;
   const leagues = [
     ...new Set([
       ...data.events.map((e) => e.league),
+      ...allTeams.map((t) => t.league),
+      ...Object.keys(d.team_ranks),
+      ...d.rules.map((r) => r.league).filter((l) => l !== "all"),
       "nfl",
       "nhl",
       "mlb",
@@ -426,22 +464,23 @@ function App() {
   const observed = find(d.observed?.content_id || null),
     desired = find(d.desired),
     protectedEvent = d.plan.some((p) => p.content_id === observed?.content_id);
-  const planCommand = (action: Action) =>
+  const planCommand = (action: Action, expectedRevision = d.revision) =>
     api(devicePath + "/watch-plan", {
       command_id: commandId(),
-      expected_revision: d.revision,
+      expected_revision: expectedRevision,
       action,
     });
   const saveRules = (
     rules: Rule[],
     teamRanks = d.team_ranks,
     preferences = d.preferences,
+    expectedRevision = d.revision,
   ) =>
     api(
       devicePath + "/rules",
       {
         command_id: commandId(),
-        expected_revision: d.revision,
+        expected_revision: expectedRevision,
         rules,
         team_ranks: teamRanks,
         preferences,
@@ -721,19 +760,6 @@ function App() {
       () => saveRules(d.rules, d.team_ranks, { ...d.preferences, ...p }),
       "Settings saved.",
     );
-  const teamOptions = allTeams.filter((t) =>
-    data.events.some(
-      (e) => e.league === teamLeague && e.teams.some((x) => x.key === t.key),
-    ),
-  );
-  const rankedTeams = [
-    ...(d.team_ranks[teamLeague] || []).filter((key) =>
-      teamOptions.some((t) => t.key === key),
-    ),
-    ...teamOptions
-      .map((t) => t.key)
-      .filter((key) => !(d.team_ranks[teamLeague] || []).includes(key)),
-  ];
   const modalEvent = modal && "id" in modal ? find(modal.id) : undefined;
   return (
     <div id="df-app">
@@ -848,6 +874,29 @@ function App() {
                   aria-label="Dismiss message"
                 >
                   <X size={16} />
+                </Button>
+              </div>
+            )}
+            {data.undo && (
+              <div className="df-edit-bar">
+                <span>Last edit: {data.undo.description}</span>
+                <Button
+                  quiet
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(
+                      () =>
+                        api(devicePath + "/undo", {
+                          command_id: commandId(),
+                          expected_revision: d.revision,
+                          history_id: data.undo!.id,
+                        }),
+                      "Last edit undone. Live playback is evaluated from the current schedule.",
+                    )
+                  }
+                >
+                  <Undo2 size={16} />
+                  Undo last edit
                 </Button>
               </div>
             )}
@@ -1027,7 +1076,11 @@ function App() {
                   "The first matching rule wins. Manual choices always come first.",
                   <Button
                     onClick={() =>
-                      setModal({ type: "rule", rule: initialRule() })
+                      setModal({
+                        type: "rule",
+                        rule: initialRule(),
+                        revision: d.revision,
+                      })
                     }
                   >
                     <Plus size={16} />
@@ -1074,7 +1127,9 @@ function App() {
                       <Button
                         quiet
                         aria-label={`Edit ${rule.name}`}
-                        onClick={() => setModal({ type: "rule", rule })}
+                        onClick={() =>
+                          setModal({ type: "rule", rule, revision: d.revision })
+                        }
                       >
                         <Pencil size={16} />
                       </Button>
@@ -1171,11 +1226,25 @@ function App() {
                         })
                       }
                     >
-                      {[0, 300, 600, 900].map((n) => (
-                        <option value={n} key={n}>
-                          {n ? `${n / 60} minutes` : "No minimum"}
-                        </option>
-                      ))}
+                      {[
+                        ...new Set([
+                          0,
+                          300,
+                          600,
+                          900,
+                          d.preferences.minimum_viewing_seconds,
+                        ]),
+                      ]
+                        .sort((a, b) => a - b)
+                        .map((n) => (
+                          <option value={n} key={n}>
+                            {n
+                              ? n % 60 === 0
+                                ? `${n / 60} minutes`
+                                : `${n} seconds`
+                              : "No minimum"}
+                          </option>
+                        ))}
                     </select>
                   </div>
                   <div className="df-setting">
@@ -1193,11 +1262,21 @@ function App() {
                         })
                       }
                     >
-                      {[0, 30, 60, 120].map((n) => (
-                        <option value={n} key={n}>
-                          {n} seconds
-                        </option>
-                      ))}
+                      {[
+                        ...new Set([
+                          0,
+                          30,
+                          60,
+                          120,
+                          d.preferences.switch_cooldown_seconds,
+                        ]),
+                      ]
+                        .sort((a, b) => a - b)
+                        .map((n) => (
+                          <option value={n} key={n}>
+                            {n} seconds
+                          </option>
+                        ))}
                     </select>
                   </div>
                   <div className="df-setting">
@@ -1247,6 +1326,33 @@ function App() {
                     </select>
                   </div>
                 </section>
+                <ConfigurationTools
+                  devicePath={devicePath}
+                  busy={busy}
+                  onError={setError}
+                  onPreview={async (document) => {
+                    setError("");
+                    try {
+                      const preview = await api<ImportPreview>(
+                        devicePath + "/configuration/import/preview",
+                        {
+                          command_id: commandId(),
+                          expected_revision: d.revision,
+                          document,
+                        },
+                      );
+                      setModal({
+                        type: "import",
+                        document: document as ConfigurationDocument,
+                        preview,
+                      });
+                    } catch (e) {
+                      if (e instanceof ApiError && e.status === 409)
+                        await load();
+                      throw e;
+                    }
+                  }}
+                />
                 <section className="df-panel">
                   <h2>Connections</h2>
                   <div className="df-setting">
@@ -1262,6 +1368,17 @@ function App() {
                       </p>
                     </div>
                     <Pill>{data.health.state}</Pill>
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Team directory</strong>
+                      <p>
+                        {data.teams.length} cached teams · refreshed
+                        independently of the schedule. Saved preferences are
+                        retained.
+                      </p>
+                    </div>
+                    <Pill>{data.team_directory_health.state}</Pill>
                   </div>
                   <div className="df-setting">
                     <div className="df-row-copy">
@@ -1346,17 +1463,19 @@ function App() {
       {modal && (
         <Dialog
           title={
-            modal.type === "conflict"
-              ? "Two good games. One TV."
-              : modal.type === "rule"
-                ? "Edit priority"
-                : modal.type === "teams"
-                  ? "Rank your teams"
-                  : modal.type === "simulate"
-                    ? "What your priorities choose"
-                    : modal.type === "playback"
-                      ? "Playback details"
-                      : modalEvent?.title || "Event details"
+            modal.type === "import"
+              ? "Review configuration import"
+              : modal.type === "conflict"
+                ? "Two good games. One TV."
+                : modal.type === "rule"
+                  ? "Edit priority"
+                  : modal.type === "teams"
+                    ? "Rank your teams"
+                    : modal.type === "simulate"
+                      ? "What your priorities choose"
+                      : modal.type === "playback"
+                        ? "Playback details"
+                        : modalEvent?.title || "Event details"
           }
           onClose={close}
         >
@@ -1398,16 +1517,25 @@ function App() {
               <div className="df-dialog-actions">
                 <Button onClick={close}>Cancel</Button>
                 <Button
+                  disabled={busy}
+                  onClick={() => changeConflict(modal.priority)}
+                >
+                  Refresh preview
+                </Button>
+                <Button
                   primary
                   disabled={busy}
                   onClick={() =>
                     void mutate(
                       () =>
-                        planCommand({
-                          type: "add",
-                          content_id: modal.id,
-                          priority: modal.priority,
-                        }),
+                        planCommand(
+                          {
+                            type: "add",
+                            content_id: modal.id,
+                            priority: modal.priority,
+                          },
+                          modal.preview.revision,
+                        ),
                       "Watch plan saved.",
                       true,
                     )
@@ -1511,6 +1639,9 @@ function App() {
                         () =>
                           saveRules(
                             d.rules.filter((r) => r.id !== modal.rule.id),
+                            d.team_ranks,
+                            d.preferences,
+                            modal.revision,
                           ),
                         "Rule removed.",
                         true,
@@ -1527,77 +1658,147 @@ function App() {
                   );
                   rules.splice(tail < 0 ? rules.length : tail, 0, r);
                 }
-                void mutate(() => saveRules(rules), "Priority saved.", true);
+                void mutate(
+                  () =>
+                    saveRules(
+                      rules,
+                      d.team_ranks,
+                      d.preferences,
+                      modal.revision,
+                    ),
+                  "Priority saved.",
+                  true,
+                );
               }}
             />
           )}
           {modal.type === "teams" && (
+            <TeamRanking
+              teams={allTeams}
+              leagues={leagues}
+              ranks={d.team_ranks}
+              busy={busy}
+              onSave={(league, order) =>
+                void mutate(
+                  () =>
+                    saveRules(d.rules, { ...d.team_ranks, [league]: order }),
+                  "Team preferences saved.",
+                )
+              }
+            />
+          )}
+          {modal.type === "import" && (
             <>
               <p>
-                A matchup's highest-ranked team breaks ties within a priority.
+                This replaces your priorities, team preferences, and settings.
+                Your watch plan and automation mode stay in place.
               </p>
-              <label className="df-field df-spacer">
-                League
-                <select
-                  value={teamLeague}
-                  onChange={(e) => setTeamLeague(e.target.value)}
-                >
-                  {leagues.map((l) => (
-                    <option value={l} key={l}>
-                      {leagueName(l)}
-                    </option>
+              <dl className="df-kv">
+                <dt>Priority rules</dt>
+                <dd>
+                  {modal.preview.summary.current_rules} current →{" "}
+                  {modal.preview.summary.imported_rules} imported
+                </dd>
+                <dt>Preferred teams</dt>
+                <dd>{modal.preview.summary.ranked_teams}</dd>
+                <dt>Display timezone</dt>
+                <dd>{modal.preview.configuration.preferences.timezone}</dd>
+                <dt>Exported from</dt>
+                <dd>
+                  {modal.document.source_mode} ·{" "}
+                  {date(modal.document.exported_at)}
+                </dd>
+              </dl>
+              {modal.preview.warnings.map((warning, i) => (
+                <p className="df-warning" key={i}>
+                  {warning}
+                </p>
+              ))}
+              <details className="df-import-details df-spacer">
+                <summary>Review imported priorities and settings</summary>
+                <ol>
+                  {modal.preview.configuration.rules.map((rule) => (
+                    <li key={rule.id}>
+                      <strong>{rule.name}</strong>
+                      {!rule.enabled && " (disabled)"}
+                      <p>
+                        {[
+                          leagueName(rule.league),
+                          rule.phase.replaceAll("_", " "),
+                          rule.kind,
+                          rule.source,
+                          rule.team_id &&
+                            (allTeams.find((t) => t.key === rule.team_id)
+                              ?.full_name ||
+                              rule.team_id),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    </li>
                   ))}
-                </select>
-              </label>
-              {rankedTeams.length ? (
-                rankedTeams.map((id, i) => (
-                  <div className="df-rule" key={id}>
-                    <span className="df-order">{i + 1}</span>
-                    <div className="df-row-copy">
-                      <strong>
-                        {allTeams.find((t) => t.key === id)?.full_name || id}
-                      </strong>
-                    </div>
-                    <div className="df-move">
-                      {[-1, 1].map((delta) => (
-                        <button
-                          key={delta}
-                          type="button"
-                          aria-label={`Move ${allTeams.find((t) => t.key === id)?.name} ${delta < 0 ? "up" : "down"}`}
-                          disabled={
-                            busy ||
-                            i + delta < 0 ||
-                            i + delta >= rankedTeams.length
-                          }
-                          onClick={() => {
-                            const ranks = rankedTeams.slice();
-                            [ranks[i], ranks[i + delta]] = [
-                              ranks[i + delta],
-                              ranks[i],
-                            ];
-                            void mutate(
-                              () =>
-                                saveRules(d.rules, {
-                                  ...d.team_ranks,
-                                  [teamLeague]: ranks,
-                                }),
-                              "Team order saved.",
-                            );
-                          }}
-                        >
-                          {delta < 0 ? (
-                            <ChevronUp size={18} />
-                          ) : (
-                            <ChevronDown size={18} />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p>No teams in the current catalog for this competition.</p>
-              )}
+                </ol>
+                {Object.entries(modal.preview.configuration.team_ranks)
+                  .filter(([, keys]) => keys.length)
+                  .map(([league, keys]) => (
+                    <p key={league}>
+                      <strong>{leagueName(league)} team order:</strong>{" "}
+                      {keys
+                        .map(
+                          (key) =>
+                            allTeams.find((t) => t.key === key)?.full_name ||
+                            key,
+                        )
+                        .join(" → ")}
+                    </p>
+                  ))}
+                <p>
+                  Minimum viewing:{" "}
+                  {
+                    modal.preview.configuration.preferences
+                      .minimum_viewing_seconds
+                  }{" "}
+                  seconds.
+                  <br />
+                  Switch cooldown:{" "}
+                  {
+                    modal.preview.configuration.preferences
+                      .switch_cooldown_seconds
+                  }{" "}
+                  seconds.
+                  <br />
+                  Same-priority switching:{" "}
+                  {modal.preview.configuration.preferences.same_tier_switching
+                    ? "on"
+                    : "off"}
+                  .
+                </p>
+              </details>
+              <div className="df-info df-spacer">
+                You can undo this import. Undo restores saved configuration; it
+                does not rewind live playback.
+              </div>
+              <div className="df-dialog-actions">
+                <Button onClick={close}>Cancel</Button>
+                <Button
+                  primary
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(
+                      () =>
+                        api(devicePath + "/configuration/import", {
+                          command_id: commandId(),
+                          expected_revision: modal.preview.revision,
+                          document: modal.document,
+                        }),
+                      "Configuration imported.",
+                      true,
+                    )
+                  }
+                >
+                  Apply configuration
+                </Button>
+              </div>
             </>
           )}
           {modal.type === "simulate" && (

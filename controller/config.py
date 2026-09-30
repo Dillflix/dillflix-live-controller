@@ -13,6 +13,7 @@ class Settings:
     status_ttl: int = 120
     worker_interval: float = 1.0
     simulation_delay: float = 1.0
+    team_directory_interval: int = 3600
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
     @classmethod

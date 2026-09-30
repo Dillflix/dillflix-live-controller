@@ -1,7 +1,7 @@
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -49,12 +49,47 @@ class Preferences(StrictModel):
         return value
 
 
-class RulesUpdate(StrictModel):
-    command_id: str = Field(min_length=1, max_length=100)
-    expected_revision: int = Field(ge=0)
+class Configuration(StrictModel):
     rules: list[Rule] = Field(max_length=100)
     team_ranks: dict[str, list[str]] = Field(default_factory=dict)
     preferences: Preferences
+
+    @model_validator(mode="after")
+    def consistent_identities(self):
+        if len({r.id for r in self.rules}) != len(self.rules):
+            raise ValueError("Rule IDs must be unique")
+        if len(self.team_ranks) > 100 or any(len(ranks) > 1000 for ranks in self.team_ranks.values()):
+            raise ValueError("Too many team rankings")
+        if any(len(ranks) != len(set(ranks)) for ranks in self.team_ranks.values()):
+            raise ValueError("Team rankings must not contain duplicate identities")
+        if any(not key or len(key) > 300 for ranks in self.team_ranks.values() for key in ranks):
+            raise ValueError("Invalid team identity")
+        return self
+
+
+class RulesUpdate(Configuration):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+
+
+class ConfigurationDocument(StrictModel):
+    format: Literal["dillflix-controller-config"]
+    schema_version: Literal[1]
+    source_mode: Literal["demo", "teamarr"]
+    exported_at: AwareDatetime
+    configuration: Configuration
+
+
+class ConfigurationImport(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+    document: ConfigurationDocument
+
+
+class UndoCommand(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+    history_id: int = Field(ge=1)
 
 
 class AutomationUpdate(StrictModel):

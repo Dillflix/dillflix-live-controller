@@ -23,7 +23,15 @@ export async function api<T>(
       message =
         typeof json.detail === "string"
           ? json.detail
-          : json.detail?.message || JSON.stringify(json.detail);
+          : Array.isArray(json.detail)
+            ? json.detail
+                .slice(0, 3)
+                .map(
+                  (item: { loc?: (string | number)[]; msg: string }) =>
+                    `${item.loc?.filter((p) => p !== "body").join(".") || "Configuration"}: ${item.msg}`,
+                )
+                .join("; ")
+            : json.detail?.message || JSON.stringify(json.detail);
     } catch {
       message = response.statusText;
     }

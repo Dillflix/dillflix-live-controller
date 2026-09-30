@@ -2,6 +2,7 @@ export interface Team {
   key: string;
   id: string;
   provider: string;
+  league: string;
   full_name: string;
   city: string | null;
   name: string | null;
@@ -103,6 +104,13 @@ export interface Preview {
 }
 export interface Overview {
   device: Device;
+  teams: Team[];
+  undo: { id: number; description: string; created_at: string } | null;
+  team_directory_health: {
+    state: string;
+    count?: number;
+    last_attempt?: string;
+  };
   events: Content[];
   plan_preview: Preview;
   activity: {
@@ -125,6 +133,28 @@ export interface Overview {
     now: string;
     server_time: string;
     scenario: string | null;
+  };
+}
+
+export interface ConfigurationDocument {
+  format: "dillflix-controller-config";
+  schema_version: 1;
+  source_mode: "demo" | "teamarr";
+  exported_at: string;
+  configuration: {
+    rules: Rule[];
+    team_ranks: Record<string, string[]>;
+    preferences: Preferences;
+  };
+}
+export interface ImportPreview {
+  revision: number;
+  configuration: ConfigurationDocument["configuration"];
+  warnings: string[];
+  summary: {
+    current_rules: number;
+    imported_rules: number;
+    ranked_teams: number;
   };
 }
 export interface Action {

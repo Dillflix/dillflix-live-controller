@@ -149,8 +149,19 @@ test("rules, team ranking, keyboard dialog and scenario views", async ({
   await expect(page.getByRole("dialog")).toContainText("Detroit Lions");
   await page
     .getByRole("dialog")
-    .getByRole("button", { name: "Move Lions down" })
+    .getByRole("button", { name: "Add Detroit Lions preference" })
     .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Add Buffalo Bills preference" })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Move Detroit Lions down" })
+    .click();
+  await expect(
+    page.getByRole("dialog").locator(".df-team-preference").first(),
+  ).toContainText("Buffalo Bills");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
   await page

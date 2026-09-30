@@ -36,22 +36,69 @@ The watch plan contains `{id, content_id, created_at}` entries in priority order
 `GET /api/v1/events` returns `{items, meta, health}`. Each card includes:
 
 - `content_id`, `kind`, `title`, `league`, `source`, `sports`, and normalized `phase`.
-- `teams`, in away/home order when present. Team fields pass through from Teamarr, with a provider-and-league-qualified `key` added for preferences. `city` is the provider's location, which need not be a literal city.
+- `teams`, in away/home order when present. Team fields pass through from Teamarr, with `league` and a provider-and-league-qualified `key` added for preferences. `city` is the provider's location, which need not be a literal city.
 - `artwork`, scheduled `start_time`, `expected_end_time`, and `end_time_estimated`.
 - `lifecycle: {state, stale, observed_at, source, simulated}`. Current lifecycle states are scheduled, live, ended, cancelled, postponed, delayed, suspended, and unknown.
 - All allowed `viewing_options`, `playable`, `availability_reason`, `active`, `watch_entry_id`, rule `priority`, scores/status detail when present, and temporary playback-failure information.
 
 The card is a projection. The original Teamarr object is retained privately in the catalog and passed intact in playback jobs. Scores, logos, team names, and dates are not derived from title parsing.
 
-`GET /api/v1/overview` adds the complete device state, plan preview, recent activity, feed health, and metadata. Metadata distinguishes demo/Teamarr catalog mode, simulation status, sample/current time, and wall-clock server time. Feed health distinguishes starting, ok, and degraded, with the last successful fetch and count when known.
+`GET /api/v1/overview` adds the complete device state, plan preview, recent activity, feed health, metadata, `teams`, `team_directory_health`, and `undo`. Metadata distinguishes demo/Teamarr catalog mode, simulation status, sample/current time, and wall-clock server time. Feed health distinguishes starting, ok, and degraded, with the last successful fetch and count when known.
+
+`GET /api/v1/teams` returns `{items, health}`; the optional `league=nhl` query filters items. Each team has a stable `key` (`provider:league:id`), provider `id`, `provider`, `league`, `full_name`, and available `short_name`, `name`, `city`, `abbreviation`, and `logo_url` fields. City/nickname can be null; neither is inferred by splitting a display name. Teamarr cache entries map `provider_team_id` to `id`, not their local cache-row `id`. Event metadata can supply richer names. Teams are retained beyond the discovery window and through empty or failed refreshes.
+
+Directory health starts as `{state: "starting"}` (`demo` in demo mode). After a Teamarr refresh it includes `state` (`ok` or `degraded`), total cached `count`, `last_attempt`, and `leagues`, keyed by league. Each league reports `ok`, `empty`, or `degraded`, a count/last successful read when known, and a sanitized error on failure. Directory failure does not change feed health.
 
 ## Priorities and automation
 
 PUT `rules` with `{command_id, expected_revision, rules, team_ranks, preferences}`. This replaces that configuration atomically. Each rule has an ID, name, enabled flag, league (`all` is unrestricted), phase (`any` is unrestricted), optional team key, optional coverage source, and optional content kind. Rules are evaluated in array order.
 
-`team_ranks` maps league codes to ordered team keys. Preferences contain `timezone`, `minimum_viewing_seconds`, `switch_cooldown_seconds`, and `same_tier_switching`. The timezone must be an IANA zone such as `America/Toronto`.
+`team_ranks` maps league codes to ordered preferred team keys. Teams absent from the ranking tie; directory display order does not create a preference. Unresolved saved keys remain intact. Preferences contain `timezone`, `minimum_viewing_seconds`, `switch_cooldown_seconds`, and `same_tier_switching`. The timezone must be an IANA zone such as `America/Toronto`.
 
 POST `automation` with `{command_id, expected_revision, mode: "active" | "paused"}`. POST an empty object to `simulate` for an explained candidate selection without playback changes. The preview bypasses automatic dwell/cooldown so it can show a newly edited priority order; it still respects manual reservations and live eligibility.
+
+## Undo
+
+Overview returns `undo: null` or `{id, description, created_at}` for the latest available edit. POST `/api/v1/devices/{id}/undo` with:
+
+```json
+{
+  "command_id": "unique-undo-command",
+  "expected_revision": 13,
+  "history_id": 42
+}
+```
+
+Both the device revision and the latest undoable history ID must match, otherwise the API returns 409. The command restores only the plan or the rules/team-ranks/preferences from before that edit and increments the revision. It does not restore old lifecycle observations, jobs, automation mode, or clock time. Live eligibility is reevaluated normally. Up to 50 recent edits are retained across restarts, and repeated undo walks backwards. Retrying the same undo command remains idempotent. No redo endpoint is implemented.
+
+## Configuration transfer
+
+GET `/api/v1/devices/{id}/configuration` returns a portable JSON document:
+
+```json
+{
+  "format": "dillflix-controller-config",
+  "schema_version": 1,
+  "source_mode": "teamarr",
+  "exported_at": "2026-09-30T12:00:00+00:00",
+  "configuration": {
+    "rules": [],
+    "team_ranks": {"nfl": ["espn:nfl:8"]},
+    "preferences": {
+      "timezone": "America/Toronto",
+      "minimum_viewing_seconds": 300,
+      "switch_cooldown_seconds": 30,
+      "same_tier_switching": false
+    }
+  }
+}
+```
+
+POST `{command_id, expected_revision, document}` to `/configuration/import/preview`. It validates the complete document without saving and returns `{revision, configuration, warnings, summary: {current_rules, imported_rules, ranked_teams}}`. Warnings flag a different source mode or team IDs not yet in the directory. It retains those IDs rather than guessing a replacement.
+
+POST the same document to `/configuration/import` with a command ID and **the preview's revision**. This atomically replaces the three configuration fields, records an undoable edit, and returns the normal command receipt. A newer edit causes 409; preview again before retrying. Unsupported document versions, duplicate rule IDs or team rankings, invalid timezones, and unexpected fields return 422 without changes.
+
+This transfer excludes the watch plan, automation mode, playback state, database history, Teamarr URL, and credentials. It is not a full database backup. Configuration documents, API/feed schemas, and SQLite migrations are versioned separately.
 
 ## Playback request staged today
 

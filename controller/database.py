@@ -9,12 +9,21 @@ def encode(value):
 
 
 class Database:
+    SCHEMA_VERSION = 2
+
     def __init__(self, path):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with self.transaction() as db:
-            db.executescript("""
-                PRAGMA journal_mode=WAL;
+        db = sqlite3.connect(path, timeout=10, isolation_level=None)
+        try:
+            db.execute("PRAGMA busy_timeout=10000")
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("BEGIN IMMEDIATE")
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version > self.SCHEMA_VERSION:
+                raise ValueError("This database requires a newer controller version")
+            if version == 0:
+                schema = """
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS devices (
                     id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL);
@@ -34,8 +43,26 @@ class Database:
                     at TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, detail TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS leases (
                     resource TEXT PRIMARY KEY, owner TEXT NOT NULL, expires REAL NOT NULL);
-                PRAGMA user_version=1;
-            """)
+                """
+                for statement in schema.split(";"):
+                    if statement.strip():
+                        db.execute(statement)
+            if version < 2:
+                db.execute("""CREATE TABLE IF NOT EXISTS team_directory (
+                    key TEXT PRIMARY KEY, league TEXT NOT NULL,
+                    payload TEXT NOT NULL, seen_at TEXT NOT NULL)""")
+                db.execute("""CREATE TABLE IF NOT EXISTS edit_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL,
+                    command_id TEXT NOT NULL, description TEXT NOT NULL, created_at TEXT NOT NULL,
+                    before_payload TEXT NOT NULL, after_payload TEXT NOT NULL, undone_by TEXT)""")
+                db.execute("CREATE INDEX IF NOT EXISTS history_device ON edit_history(device_id,id)")
+            db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     @contextmanager
     def transaction(self):
@@ -82,6 +109,34 @@ class Database:
                 encode({k: v for k, v in device.items() if k not in {"id", "revision"}}),
             ),
         )
+
+    @staticmethod
+    def upsert_team(db, team, seen_at):
+        existing = db.execute("SELECT payload FROM team_directory WHERE key=?", (team["key"],)).fetchone()
+        merged = json.loads(existing[0]) if existing else {}
+        # Cached team lists do not contain city/nickname. Preserve richer feed metadata.
+        merged.update({k: v for k, v in team.items() if v is not None or k not in merged})
+        db.execute(
+            "INSERT INTO team_directory VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+            "league=excluded.league,payload=excluded.payload,seen_at=excluded.seen_at",
+            (team["key"], team["league"], encode(merged), seen_at),
+        )
+
+    @staticmethod
+    def teams(db):
+        return [
+            json.loads(row[0])
+            for row in db.execute(
+                "SELECT payload FROM team_directory ORDER BY league,json_extract(payload,'$.full_name'),key"
+            )
+        ]
+
+    @staticmethod
+    def undo_entry(db, device_id):
+        return db.execute(
+            "SELECT * FROM edit_history WHERE device_id=? AND undone_by IS NULL ORDER BY id DESC LIMIT 1",
+            (device_id,),
+        ).fetchone()
 
     @staticmethod
     def lease(db, resource, owner, now, seconds=15):

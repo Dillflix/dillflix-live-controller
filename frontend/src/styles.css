@@ -834,6 +834,49 @@ select:focus-visible {
   margin-top: 22px;
   flex-wrap: wrap;
 }
+#df-app .df-wrap {
+  flex-wrap: wrap;
+}
+#df-app .df-edit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  color: var(--df-muted);
+  font-size: 0.8rem;
+}
+#df-app .df-team-directory {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#df-app .df-team-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+#df-app .df-team-actions .df-move {
+  flex-direction: row;
+}
+#df-app .df-team-preference strong {
+  overflow-wrap: anywhere;
+}
+#df-app .df-import-details {
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+#df-app .df-import-details summary {
+  cursor: pointer;
+  padding: 12px 0;
+}
+#df-app .df-import-details ol {
+  padding-left: 24px;
+}
+#df-app .df-import-details li {
+  padding: 6px 0;
+}
 #df-app .df-choice {
   display: flex;
   gap: 12px;
@@ -1089,6 +1132,14 @@ select:focus-visible {
   }
   #df-app .df-rule .df-order {
     width: 18px;
+  }
+  #df-app .df-team-preference {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+  #df-app .df-team-actions {
+    grid-column: 2;
+    justify-content: flex-end;
   }
   #df-app .df-row-copy strong {
     font-size: 0.88rem;

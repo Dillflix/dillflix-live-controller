@@ -3,24 +3,13 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
-import pytest
-from fastapi.testclient import TestClient
 
-from controller.api import create_app
 from controller.config import Settings
 from controller.database import encode
 from controller.fixtures import fixtures
 from controller.planner import allowed_options, parse_time
 from controller.service import Controller
 from controller.teamarr import TeamarrClient
-
-
-@pytest.fixture
-def rig(tmp_path):
-    settings = Settings(database=str(tmp_path / "controller.sqlite"), simulation_delay=0)
-    app = create_app(settings, start_workers=False)
-    with TestClient(app) as client:
-        yield client, app.state.controller, settings
 
 
 def overview(client):

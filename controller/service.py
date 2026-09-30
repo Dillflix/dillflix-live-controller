@@ -9,14 +9,16 @@ from datetime import UTC, datetime, timedelta
 from fastapi import HTTPException
 
 from .database import Database, encode
-from .fixtures import default_device, fixtures
-from .planner import choose, content_view, parse_time, preview_plan, priority
+from .fixtures import default_device, fixtures, make_team
+from .planner import choose, content_view, parse_time, preview_plan, priority, team_key
 from .teamarr import TeamarrClient
 
 log = logging.getLogger(__name__)
 
 
 class Controller:
+    CONFIG_FIELDS = ("rules", "team_ranks", "preferences")
+
     def __init__(self, settings):
         self.settings = settings
         self.db = Database(settings.database)
@@ -41,6 +43,20 @@ class Controller:
                     device["plan"] = [self.entry("demo:canadiens")]
                 self.db.save_device(db, device)
                 self.db.log(db, self.now(db).isoformat(), "Controller started", "Playback adapter: simulator")
+            # Populate the new directory when upgrading an existing version-1 database.
+            for row in db.execute("SELECT snapshot,seen_at FROM contents").fetchall():
+                self.remember_teams(db, json.loads(row["snapshot"]), row["seen_at"])
+            if self.settings.mode == "demo":
+                team = {**make_team("Vancouver", "Canucks", "VAN"), "league": "nhl"}
+                team["key"] = team_key(team, team["league"])
+                self.db.upsert_team(db, team, datetime.now(UTC).isoformat())
+
+    def remember_teams(self, db, item, fetched):
+        event = item.get("event") or {}
+        league = event.get("league") or item.get("competition")
+        for raw in (event.get("away_team_details"), event.get("home_team_details")):
+            if raw and raw.get("id") and raw.get("provider") and league:
+                self.db.upsert_team(db, {**raw, "league": league, "key": team_key(raw, league)}, fetched)
 
     def now(self, db):
         return parse_time(self.db.meta(db, "demo_now")) if self.settings.mode == "demo" else datetime.now(UTC)
@@ -62,6 +78,7 @@ class Controller:
                 "active=1,seen_at=excluded.seen_at,snapshot=excluded.snapshot,source=excluded.source",
                 (item["id"], source, fetched, encode(item)),
             )
+            self.remember_teams(db, item, fetched)
         self.db.set_meta(
             db,
             "feed_health",
@@ -115,6 +132,13 @@ class Controller:
             ]
             return {
                 "device": device,
+                "teams": self.db.teams(db),
+                "team_directory_health": self.db.meta(
+                    db,
+                    "team_directory_health",
+                    {"state": "demo" if self.settings.mode == "demo" else "starting"},
+                ),
+                "undo": self.undo_summary(db, device),
                 "events": cards,
                 "plan_preview": preview_plan(device, items, self.now(db)),
                 "activity": activity,
@@ -130,7 +154,7 @@ class Controller:
                 },
             }
 
-    def mutate(self, device_id, command_id, revision, payload, apply):
+    def mutate(self, device_id, command_id, revision, payload, apply, *, history=None):
         digest = hashlib.sha256(encode(payload).encode()).hexdigest()
         with self.db.transaction() as db:
             prior = db.execute(
@@ -149,7 +173,21 @@ class Controller:
                         "current_revision": device["revision"],
                     },
                 )
+            before = encode({k: device[k] for k in history[0]}) if history else None
             apply(db, device)
+            if history:
+                after = encode({k: device[k] for k in history[0]})
+                if before != after:
+                    db.execute(
+                        "INSERT INTO edit_history(device_id,command_id,description,created_at,"
+                        "before_payload,after_payload) VALUES (?,?,?,?,?,?)",
+                        (device_id, command_id, history[1], datetime.now(UTC).isoformat(), before, after),
+                    )
+                    db.execute(
+                        "DELETE FROM edit_history WHERE device_id=? AND id NOT IN "
+                        "(SELECT id FROM edit_history WHERE device_id=? ORDER BY id DESC LIMIT 50)",
+                        (device_id, device_id),
+                    )
             device["revision"] += 1
             self.db.save_device(db, device)
             result = {"command_id": command_id, "revision": device["revision"], "accepted": True}
@@ -157,6 +195,94 @@ class Controller:
                 "INSERT INTO commands VALUES (?,?,?,?)", (device_id, command_id, digest, encode(result))
             )
             return result
+
+    def undo_summary(self, db, device):
+        row = self.db.undo_entry(db, device["id"])
+        if row is None:
+            return None
+        after = json.loads(row["after_payload"])
+        if any(device.get(key) != value for key, value in after.items()):
+            return None
+        return {"id": row["id"], "description": row["description"], "created_at": row["created_at"]}
+
+    def undo_command(self, device_id, command):
+        def apply(db, device):
+            summary = self.undo_summary(db, device)
+            if summary is None or summary["id"] != command.history_id:
+                raise HTTPException(409, "This edit can no longer be undone. Refresh the current state.")
+            row = self.db.undo_entry(db, device_id)
+            before = json.loads(row["before_payload"])
+            device.update(before)
+            if "plan" in before:
+                device["force_switch"] = True
+            db.execute("UPDATE edit_history SET undone_by=? WHERE id=?", (command.command_id, row["id"]))
+            self.db.log(db, self.now(db).isoformat(), "Edit undone", row["description"], "undo", device_id)
+
+        return self.mutate(
+            device_id, command.command_id, command.expected_revision, command.model_dump(), apply
+        )
+
+    def export_configuration(self, device_id):
+        with self.db.transaction() as db:
+            d = self.db.device(db, device_id)
+            return {
+                "format": "dillflix-controller-config",
+                "schema_version": 1,
+                "source_mode": self.settings.mode,
+                "exported_at": datetime.now(UTC).isoformat(),
+                "configuration": {k: d[k] for k in self.CONFIG_FIELDS},
+            }
+
+    def import_preview(self, device_id, request):
+        with self.db.transaction() as db:
+            d = self.db.device(db, device_id)
+            if d["revision"] != request.expected_revision:
+                raise HTTPException(409, "Configuration changed. Refresh the import preview.")
+            config = request.document.configuration.model_dump()
+            known = {t["key"] for t in self.db.teams(db)}
+            referenced = {r["team_id"] for r in config["rules"] if r["team_id"]}
+            referenced.update(key for keys in config["team_ranks"].values() for key in keys)
+            warnings = []
+            if request.document.source_mode != self.settings.mode:
+                warnings.append(
+                    "This file was exported from a different mode. Demo and real team identities differ."
+                )
+            missing = referenced - known
+            if missing:
+                warnings.append(
+                    f"{len(missing)} team identities are not in the directory yet; they will be preserved."
+                )
+            return {
+                "revision": d["revision"],
+                "configuration": config,
+                "warnings": warnings,
+                "summary": {
+                    "current_rules": len(d["rules"]),
+                    "imported_rules": len(config["rules"]),
+                    "ranked_teams": sum(len(v) for v in config["team_ranks"].values()),
+                },
+            }
+
+    def import_configuration(self, device_id, request):
+        def apply(db, d):
+            d.update(request.document.configuration.model_dump())
+            self.db.log(
+                db,
+                self.now(db).isoformat(),
+                "Configuration imported",
+                "Priorities, team rankings, and preferences replaced; watch plan retained",
+                "settings",
+                device_id,
+            )
+
+        return self.mutate(
+            device_id,
+            request.command_id,
+            request.expected_revision,
+            request.model_dump(mode="json"),
+            apply,
+            history=(self.CONFIG_FIELDS, "Import configuration"),
+        )
 
     def apply_plan(self, db, device, action, *, preview=False):
         items = {i["content_id"]: i for i in self.items(db)}
@@ -195,12 +321,19 @@ class Controller:
 
     def plan_command(self, device_id, command):
         payload = command.model_dump()
+        description = {
+            "add": "Add event to watch plan",
+            "play_now": "Play now selection",
+            "reorder": "Reorder watch plan",
+            "remove": "Remove event from watch plan",
+        }[payload["action"]["type"]]
         return self.mutate(
             device_id,
             command.command_id,
             command.expected_revision,
             payload,
             lambda db, d: self.apply_plan(db, d, payload["action"]),
+            history=(("plan",), description),
         )
 
     def preview(self, device_id, command):
@@ -216,7 +349,13 @@ class Controller:
             }
 
     def rules_command(self, device_id, update):
-        data = update.model_dump()
+        # Keep the original serialized field order so version-1 command receipts
+        # still recognize retries after RulesUpdate gained shared configuration fields.
+        data = {
+            "command_id": update.command_id,
+            "expected_revision": update.expected_revision,
+            **update.model_dump(exclude={"command_id", "expected_revision"}),
+        }
 
         def apply(db, device):
             if len({r["id"] for r in data["rules"]}) != len(data["rules"]):
@@ -233,7 +372,14 @@ class Controller:
                 device_id,
             )
 
-        return self.mutate(device_id, update.command_id, update.expected_revision, data, apply)
+        return self.mutate(
+            device_id,
+            update.command_id,
+            update.expected_revision,
+            data,
+            apply,
+            history=(self.CONFIG_FIELDS, "Edit priorities and settings"),
+        )
 
     def automation_command(self, device_id, update):
         def apply(db, d):
@@ -288,6 +434,7 @@ class Controller:
                 if request.scenario in {"overlap", "overtime"}:
                     d["plan"].append(self.entry("demo:jays"))
                 db.execute("UPDATE jobs SET state='superseded' WHERE state='pending'")
+                db.execute("DELETE FROM edit_history WHERE device_id=?", (d["id"],))
                 self.db.save_device(db, d)
             self.db.log(db, self.now(db).isoformat(), "Simulation updated", request.action, "simulation")
         return {"accepted": True}
@@ -312,6 +459,47 @@ class Controller:
                     }
                 )
                 self.db.set_meta(db, "feed_health", health)
+
+    async def refresh_team_directory(self):
+        if self.settings.mode != "teamarr":
+            return
+        with self.db.transaction() as db:
+            primary = {"nfl", "nhl", "mlb", "nba"}
+            leagues = sorted(primary) + sorted({t["league"] for t in self.db.teams(db)} - primary)[:16]
+            health = self.db.meta(db, "team_directory_health", {"leagues": {}})
+        for league in leagues:
+            try:
+                teams = await self.client.fetch_teams(league)
+                fetched = datetime.now(UTC).isoformat()
+                with self.db.transaction() as db:
+                    for team in teams:
+                        self.db.upsert_team(db, team, fetched)
+                health["leagues"][league] = {
+                    "state": "ok" if teams else "empty",
+                    "count": len(teams),
+                    "last_success": fetched,
+                }
+            except Exception as exc:
+                previous = health["leagues"].get(league, {})
+                health["leagues"][league] = {
+                    **previous,
+                    "state": "degraded",
+                    "error": f"{type(exc).__name__}: team directory refresh failed",
+                }
+        with self.db.transaction() as db:
+            health["state"] = (
+                "degraded" if any(v["state"] == "degraded" for v in health["leagues"].values()) else "ok"
+            )
+            health["last_attempt"] = datetime.now(UTC).isoformat()
+            health["count"] = db.execute("SELECT COUNT(*) FROM team_directory").fetchone()[0]
+            self.db.set_meta(db, "team_directory_health", health)
+            self.db.log(
+                db,
+                self.now(db).isoformat(),
+                "Team directory refreshed",
+                f"{health['count']} known teams · {health['state']}",
+                "directory",
+            )
 
     def tick(self):
         real = datetime.now(UTC)
@@ -444,10 +632,28 @@ class Controller:
                 await self.refresh_catalog()
             await asyncio.sleep(self.settings.feed_interval)
 
+    async def run_team_directory(self):
+        while True:
+            try:
+                with self.db.transaction() as db:
+                    owns = self.db.lease(
+                        db,
+                        "team-directory",
+                        self.owner,
+                        time.time(),
+                        self.settings.team_directory_interval + 60,
+                    )
+                if owns:
+                    await self.refresh_team_directory()
+            except Exception:
+                log.exception("Team directory refresh failed; will retry")
+            await asyncio.sleep(self.settings.team_directory_interval)
+
     def start(self):
         self.tasks = [asyncio.create_task(self.run_worker())]
         if self.settings.mode == "teamarr":
             self.tasks.append(asyncio.create_task(self.run_feed()))
+            self.tasks.append(asyncio.create_task(self.run_team_directory()))
 
     async def stop(self):
         for task in self.tasks:

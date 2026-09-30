@@ -8,7 +8,14 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
-from .models import AutomationUpdate, Command, RulesUpdate, SimulationCommand
+from .models import (
+    AutomationUpdate,
+    Command,
+    ConfigurationImport,
+    RulesUpdate,
+    SimulationCommand,
+    UndoCommand,
+)
 from .planner import choose, priority, team_priority
 from .service import Controller
 
@@ -24,7 +31,7 @@ def create_app(settings=None, *, start_workers=True):
         yield
         await service.stop()
 
-    app = FastAPI(title="Dillflix Controller", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.2.0", lifespan=lifespan)
     app.state.controller = service
 
     @app.exception_handler(KeyError)
@@ -43,6 +50,33 @@ def create_app(settings=None, *, start_workers=True):
     def events():
         data = service.overview()
         return {"items": data["events"], "meta": data["meta"], "health": data["health"]}
+
+    @app.get("/api/v1/teams")
+    def teams(league: str | None = None):
+        with service.db.transaction() as db:
+            items = [t for t in service.db.teams(db) if league is None or t["league"] == league]
+            return {
+                "items": items,
+                "health": service.db.meta(
+                    db, "team_directory_health", {"state": "demo" if settings.mode == "demo" else "starting"}
+                ),
+            }
+
+    @app.post("/api/v1/devices/{device_id}/undo")
+    def undo(device_id: str, command: UndoCommand):
+        return service.undo_command(device_id, command)
+
+    @app.get("/api/v1/devices/{device_id}/configuration")
+    def configuration(device_id: str):
+        return service.export_configuration(device_id)
+
+    @app.post("/api/v1/devices/{device_id}/configuration/import/preview")
+    def import_preview(device_id: str, command: ConfigurationImport):
+        return service.import_preview(device_id, command)
+
+    @app.post("/api/v1/devices/{device_id}/configuration/import")
+    def import_configuration(device_id: str, command: ConfigurationImport):
+        return service.import_configuration(device_id, command)
 
     @app.get("/api/v1/devices/{device_id}/state")
     def state(device_id: str):
