@@ -266,3 +266,45 @@ The first text message identifies the stream:
 Binary messages preserve the pinned scrcpy 3.3.4 packet format: an 8-byte big-endian unsigned flags/timestamp field, a 4-byte big-endian payload length, then one H.264 Annex B packet. Bit 63 marks codec configuration, bit 62 a keyframe, and the lower 62 bits carry presentation time in microseconds. Configuration packets have no media timestamp. Packet payloads are limited to 4 MiB and configuration payloads to 64 KiB. This is screen-stream protocol 1; it is not compatible with arbitrary upstream scrcpy versions or ws-scrcpy's modified wire format.
 
 New viewers get configuration followed by the next keyframe, not a stored recording. A repeated stream metadata message requests decoder reinitialization after encoder configuration changes; initial dimensions are informational, and the H.264 SPS supplies the actual decoded dimensions. Errors are text messages such as `{"type":"error","message":"Authorize this controller's ADB connection on the TV, then reconnect."}`, followed by connection closure. Consumers reconnect for a fresh session; request IDs or content IDs are intentionally absent because a screen feed alone proves no content identity.
+
+## Manual device control API
+
+`POST /api/v1/devices/living-room/control` uses the standard persisted command receipt and revision check. Example:
+
+```json
+{
+  "command_id": "unique-command-id",
+  "expected_revision": 12,
+  "action": "take",
+  "session_id": "new-random-session-identifier",
+  "owner_token": "at-least-32-random-characters-generated-by-the-client",
+  "minutes": 240,
+  "takeover": false
+}
+```
+
+Generate a fresh unpredictable session ID and owner token for each take/takeover. `minutes` defaults to 15 and accepts integers 1–1,440. `takeover: true` explicitly replaces an existing session at the supplied current revision. `action: "extend"` requires the existing session ID/token and resets its deadline to now plus `minutes`. `action: "release"` requires the owner and accepts `release_mode: "active" | "paused"` (default active). Identical command retries return the stored receipt; they do not extend or reclaim ownership twice. A stale revision, missing ownership or expired session returns 409; invalid fields return 422. A provided HTTP Origin must match Host.
+
+State/overview exposes a nullable `device.manual_control`:
+
+```json
+{
+  "session_id": "new-random-session-identifier",
+  "started_at": "2026-09-30T20:00:00+00:00",
+  "expires_at": "2026-10-01T00:00:00+00:00",
+  "return_mode": "active"
+}
+```
+
+No token/digest is returned. Automation stays paused for the session. Ownership commands and expiry advance the device revision. Take/end also advance playback intent and invalidate playback claims. Deadline uses real UTC, never the demo clock. `/automation` and watch-plan `play_now` return 409 while manual control exists; other plan/configuration commands remain available.
+
+`WS /api/v1/devices/living-room/control/input` requires same-origin HTTP(S) Origin/Host and existing proxy authentication. Its first text message, within five seconds, is `{"session_id":"…","owner_token":"…"}`. Credentials are not URL parameters. Only one connection can own input. The server starts a separate control-only scrcpy session and sends `{"type":"ready"}` when connected. Then send one of:
+
+```json
+{"seq":1,"key":"up"}
+{"seq":2,"text":"NFL RedZone"}
+```
+
+Allowed keys: `up`, `down`, `left`, `right`, `select`, `back`, `home`, `menu`, `play_pause`, `backspace`. Text is 1–200 printable ASCII characters. Additional fields, keys or combined key/text inputs are rejected. Messages are bounded to 4,096 characters. Each socket uses strictly increasing positive integer sequences; duplicates are rejected before delivery. Inputs are serialized, with eight commands/second replenishment and a ten-command burst allowance. No persisted input queue or reconnect replay exists.
+
+The response `{"type":"sent","seq":1}` acknowledges transport delivery only. It does not verify a visible app response. An error is `{"type":"error","message":"…"}` followed by closure. Failed/uncertain commands must not be blindly retried. Start a new connection with sequence 1 after reviewing the device screen. Browser hidden/disconnect closes the input transport without ending ownership; takeover, release and deadline revoke it. Raw key/text input is not written to activity or command receipts.

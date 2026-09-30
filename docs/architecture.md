@@ -117,4 +117,17 @@ This screen feed does not write to the catalog, watch plan, jobs, observed playb
 - Implement multiple devices and explicit per-device executor ownership later. Natural-language actions can eventually translate into the same previewable API commands.
 - Build and exercise the Docker image on the target host; test Safari, physical touch devices, and deployment restart behavior.
 
-Application authentication is intentionally delegated to the existing nginx proxy. The initial deployment uses a single process and local SQLite on persistent storage. No Fire TV credentials, screenshots, or navigation commands are stored in this milestone.
+Application authentication is intentionally delegated to the existing nginx proxy. The initial deployment uses a single process and local SQLite on persistent storage. No Fire TV credentials, screenshots, or manual input text are stored. Manual ownership is stored separately from event playback intent.
+
+
+## Manual device control
+
+Version 0.8 stores `manual_control` in the device record and a SHA-256 owner-token digest in metadata. Schema 5 marks this ownership contract so older releases cannot open a database and ignore it. Taking control increments intent, cancels pending navigation, pauses automation, and clears desired/observed playback and viewing timers. The manual plan remains unchanged. Plan/rule edits continue; Play now and ordinary automation mutations cannot override an active manual session. Stage, delivery, and result acceptance also check the manual override independently of the pause flag.
+
+The session uses a real UTC deadline (1–1,440 minutes, default 15), independent of the demo clock. Extensions reset the remaining duration from the time of acceptance. Expiry restores the automation mode in effect before the first takeover. Takeovers retain that return mode. Closing a tab only disconnects its input transport. Restart retains the deadline; an independent lifespan worker expires sessions even without a browser. Offline database restore clears ownership and leaves automation paused.
+
+The input gateway owns an asyncio lock and one input connection. Every write rechecks the current session, owner digest and deadline under that lock. Release, expiry and takeover revoke the connection; cleanup drains before the API operation finishes. New input cannot pass after revocation. Inputs are allowlisted key taps or bounded printable ASCII text. Each tap writes paired down/up events; no long-held keys or persistent repeats exist. A monotonic socket sequence rejects duplicates, token-bucket rate limits bound repeat input, and delivery failures close the transport without replay. Raw commands and text are never saved. Origin/Host validation applies alongside existing nginx authentication.
+
+A control-only pinned scrcpy server shares the process-lifecycle implementation with capture. Video/audio/power-on/clipboard synchronization are disabled for input. It uses a unique server, file and forward, so takeover does not restart shared video. The browser stores its random ownership credential in per-tab session storage and sends it in the initial WebSocket message, never a URL. Only a digest reaches persistent storage. A successful write means transport delivery, not proof that a TV application handled the command.
+
+Autonomous playback still uses the simulator and has no physical input transport. A future real executor must participate in this same device input-ownership gate, fence every action by intent, and acknowledge cancellation before handoff; coordinator checks alone do not establish exclusive control of an independently running executor. Physical remotes, other ADB clients and ws-scrcpy are outside this gate.

@@ -2,9 +2,7 @@ import asyncio
 import json
 import socket
 import struct
-import sys
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 import uvicorn
@@ -170,27 +168,13 @@ async def test_fragmented_packet_retains_timestamp_flags_and_payload():
     assert await task == expected
 
 
-@pytest.fixture
-def fake_adb(tmp_path):
-    # A real subprocess/TCP double exercises the complete ADB launch/forward lifecycle.
-    program = tmp_path / "adb"
-    program.write_text(
-        f"#!{sys.executable}\n" + Path(__file__).with_name("fixtures").joinpath("fake_adb.py").read_text()
-    )
-    program.chmod(0o755)
-    server = tmp_path / "server.jar"
-    server.write_bytes(b"test-server")
-    return Settings(
-        screen_adb_serial="tv.example:5555", screen_adb_path=str(program), screen_server_path=server
-    )
-
-
 async def test_adb_capture_launch_transport_and_owned_cleanup(fake_adb, monkeypatch):
     monkeypatch.setattr("controller.screen_capture.verified", lambda _: True)
     async with AdbCapture(fake_adb) as capture:
         assert capture.metadata["device_name"] == "Fixture TV"
         assert (await capture.packet())[0] & 0x80
         assert (await capture.packet())[0] & 0x40
+    await capture.close()  # A second cleanup must not remove a subsequently reused port.
     calls = [
         json.loads(line)
         for line in (fake_adb.screen_server_path.parent / "adb-calls.jsonl").read_text().splitlines()
@@ -198,7 +182,7 @@ async def test_adb_capture_launch_transport_and_owned_cleanup(fake_adb, monkeypa
     command = next(c[-1] for c in calls if c[-1].startswith("echo $$"))
     assert "control=false" in command and "audio=false" in command and "power_on=false" in command
     assert "forward" in calls[3] and "tcp:0" in calls[3]
-    assert any("--remove" in call for call in calls)
+    assert sum("--remove" in call for call in calls) == 1
     assert all("kill-server" not in call and "disconnect" not in call for call in calls)
     assert capture.process.returncode is not None
 

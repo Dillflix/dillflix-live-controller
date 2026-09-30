@@ -1,7 +1,7 @@
 # Add inside your existing authenticated nginx server.
 location / {
     proxy_pass http://127.0.0.1:8790;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_http_version 1.1;
@@ -10,7 +10,7 @@ location / {
 }
 
 # Keep this under the same server-level authentication as the rest of the app.
-location ~ ^/api/v1/devices/[^/]+/screen/stream$ {
+location ~ ^/api/v1/devices/[^/]+/(screen/stream|control/input)$ {
     proxy_pass http://127.0.0.1:8790;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;

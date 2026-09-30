@@ -116,3 +116,14 @@ class SimulationCommand(StrictModel):
         "coverage_switch",
         "device_outage",
     ] = "normal"
+
+
+class ManualControlCommand(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+    action: Literal["take", "extend", "release"]
+    session_id: str = Field(min_length=16, max_length=100)
+    owner_token: str = Field(min_length=32, max_length=128)
+    minutes: int = Field(default=15, ge=1, le=1440)
+    takeover: bool = False
+    release_mode: Literal["active", "paused"] = "active"

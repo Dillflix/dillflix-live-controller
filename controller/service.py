@@ -13,6 +13,7 @@ from .coordinator import PlaybackCoordinator
 from .database import Database, encode
 from .fixtures import default_device, fixtures, make_team
 from .maintenance import policy, prune
+from .manual_control import ManualControl
 from .planner import content_view, parse_time, preview_plan, priority, team_key
 from .playback import PlaybackAdapter, SimulatedPlaybackAdapter
 from .storage_lock import database_guard
@@ -21,7 +22,7 @@ from .teamarr import TeamarrClient
 log = logging.getLogger(__name__)
 
 
-class Controller(PlaybackCoordinator, ContentStatusCoordinator):
+class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
     CONFIG_FIELDS = ("rules", "team_ranks", "preferences")
 
     def __init__(
@@ -310,6 +311,10 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
         items = {i["content_id"]: i for i in self.items(db)}
         op = action["type"]
         content_id = action.get("content_id")
+        if op == "play_now" and device.get("manual_control"):
+            raise HTTPException(
+                409, "End manual control before using Play now. You can still add events to the plan."
+            )
         if op in {"add", "play_now"}:
             if content_id not in items:
                 raise HTTPException(404, "Content is not in the catalog")
@@ -406,6 +411,10 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
 
     def automation_command(self, device_id, update):
         def apply(db, d):
+            if d.get("manual_control"):
+                raise HTTPException(
+                    409, "End manual control using the device remote before changing automation."
+                )
             d["automation"] = update.mode
             d["force_switch"] = True
             if update.mode == "paused":
@@ -433,6 +442,8 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
         if self.settings.mode != "demo":
             raise HTTPException(409, "Demo scenarios are unavailable in Teamarr mode")
         with self.db.transaction() as db:
+            if request.action == "scenario" and self.db.device(db).get("manual_control"):
+                raise HTTPException(409, "End manual control before resetting the demo scenario.")
             if request.action == "advance":
                 self.db.set_meta(
                     db, "demo_now", (self.now(db) + timedelta(minutes=request.minutes)).isoformat()

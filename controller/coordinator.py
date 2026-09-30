@@ -23,7 +23,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             if not self.db.lease(db, "device:living-room", self.owner, time.time()):
                 return False
             d = self.db.device(db)
-            if d["automation"] == "paused":
+            if d.get("manual_control") or d["automation"] == "paused":
                 return True
             if d.get("executor_health", {}).get("state") == "offline":
                 d["reason"] = "Playback service unavailable; waiting for recovery. Watch plan retained."
@@ -223,7 +223,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             decision = choose(d, items, self.now(db), datetime.now(UTC))
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)
             if (
-                d["automation"] == "paused"
+                d.get("manual_control")
+                or d["automation"] == "paused"
                 or job["intent"] != d["intent_version"]
                 or job["content_id"] != d["desired"]
                 or decision["content_id"] != job["content_id"]
@@ -313,7 +314,11 @@ class PlaybackCoordinator(PlaybackRecovery):
                 if not self.executor_available(db):
                     return
                 d = self.db.device(db, job["device_id"])
-                if d["automation"] == "paused" or job["intent"] != d["intent_version"]:
+                if (
+                    d.get("manual_control")
+                    or d["automation"] == "paused"
+                    or job["intent"] != d["intent_version"]
+                ):
                     continue
                 if job["deadline_at"] is None:
                     job["deadline_at"] = time.time() + self.settings.navigation_timeout

@@ -710,7 +710,9 @@ function App() {
             <Button
               primary={e.playable && !current}
               disabled={
-                busy || ["ended", "cancelled"].includes(e.lifecycle.state)
+                busy ||
+                (!!d.manual_control && e.playable && !current) ||
+                ["ended", "cancelled"].includes(e.lifecycle.state)
               }
               onClick={() =>
                 current
@@ -823,13 +825,15 @@ function App() {
                     <Radio size={15} />
                   )}
                   <span>
-                    {d.automation === "paused"
-                      ? "Automation paused"
-                      : d.playback_state === "navigating"
-                        ? "Switching live coverage"
-                        : d.playback_state === "unverified"
-                          ? "Last observed"
-                          : "Now playing"}
+                    {d.manual_control
+                      ? "Manual device control"
+                      : d.automation === "paused"
+                        ? "Automation paused"
+                        : d.playback_state === "navigating"
+                          ? "Switching live coverage"
+                          : d.playback_state === "unverified"
+                            ? "Last observed"
+                            : "Now playing"}
                   </span>
                   <Pill>
                     {d.playback_state === "verified"
@@ -839,13 +843,18 @@ function App() {
                 </div>
                 <div className="df-playing-title">
                   {(d.playback_state === "navigating" ? desired : observed)
-                    ?.title || "Waiting for live sports"}
+                    ?.title ||
+                    (d.manual_control
+                      ? "You choose what’s on TV"
+                      : "Waiting for live sports")}
                   {protectedEvent && <Pill protected>Protected</Pill>}
                 </div>
                 <div className="df-playing-detail">
-                  {d.automation === "paused"
-                    ? "Your watch plan is saved. Resume when ready."
-                    : d.reason}
+                  {d.manual_control
+                    ? "Use the device remote below. Your watch plan is saved."
+                    : d.automation === "paused"
+                      ? "Your watch plan is saved. Resume when ready."
+                      : d.reason}
                 </div>
                 {data.playback_job?.state === "pending" && !playbackOffline && (
                   <div className="df-playing-detail" aria-live="polite">
@@ -864,7 +873,10 @@ function App() {
                 )}
               </div>
               <div className="df-playing-controls">
-                <Button onClick={togglePause} disabled={busy}>
+                <Button
+                  onClick={togglePause}
+                  disabled={busy || !!d.manual_control}
+                >
                   {d.automation === "paused" ? (
                     <Play size={15} />
                   ) : (
@@ -881,7 +893,13 @@ function App() {
                 </Button>
               </div>
             </section>
-            <ScreenPanel deviceId={d.id} deviceName={d.name} />
+            <ScreenPanel
+              deviceId={d.id}
+              deviceName={d.name}
+              device={d}
+              serverTime={data.meta.server_time}
+              onChange={load}
+            />
             {!connected && (
               <div className="df-warning" role="status">
                 Connection interrupted. Showing the last received state;
@@ -1751,7 +1769,7 @@ function App() {
                 {modalEvent.playable && (
                   <Button
                     primary
-                    disabled={busy}
+                    disabled={busy || !!d.manual_control}
                     onClick={() => play(modalEvent)}
                   >
                     <Play size={15} />

@@ -87,6 +87,12 @@ export interface Device {
   team_ranks: Record<string, string[]>;
   plan: Entry[];
   automation: "active" | "paused";
+  manual_control?: {
+    session_id: string;
+    started_at: string;
+    expires_at: string;
+    return_mode: "active" | "paused";
+  } | null;
   intent_version: number;
   desired: string | null;
   observed: {

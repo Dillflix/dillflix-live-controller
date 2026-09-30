@@ -1,4 +1,4 @@
-"""View-only scrcpy 3.3.4 transport. No planner, input, or playback side effects."""
+"""Owned scrcpy 3.3.4 process transport; video is view-only by default."""
 
 import asyncio
 import logging
@@ -41,6 +41,7 @@ class AdbCapture:
         self.drain_task = None
         self.pushed = False
         self.metadata = None
+        self.close_task = None
 
     async def command(self, *args, timeout=12):
         try:
@@ -104,24 +105,7 @@ class AdbCapture:
         if not forwarded.isdecimal() or not 0 < int(forwarded) < 65536:
             raise CaptureError("ADB did not allocate a capture tunnel.")
         self.port = int(forwarded)
-        options = [
-            "app_process",
-            "/",
-            "com.genymobile.scrcpy.Server",
-            SERVER_VERSION,
-            f"scid={self.scid}",
-            "log_level=warn",
-            "tunnel_forward=true",
-            "audio=false",
-            "control=false",
-            "power_on=false",
-            "cleanup=true",
-            "video_codec=h264",
-            f"max_size={self.settings.screen_max_size}",
-            f"max_fps={self.settings.screen_max_fps}",
-            f"video_bit_rate={self.settings.screen_bit_rate}",
-            "video_codec_options=profile=1,i-frame-interval=1",
-        ]
+        options = self.server_options()
         remote = f"echo $$; CLASSPATH={self.remote_path} exec {shlex.join(options)}"
         self.process = await asyncio.create_subprocess_exec(
             self.settings.screen_adb_path,
@@ -159,6 +143,29 @@ class AdbCapture:
                 await asyncio.sleep(0.15)
         if not self.writer:
             raise CaptureError("Capture did not start. Check device support and the controller logs.")
+        await self.read_metadata()
+
+    def server_options(self):
+        return [
+            "app_process",
+            "/",
+            "com.genymobile.scrcpy.Server",
+            SERVER_VERSION,
+            f"scid={self.scid}",
+            "log_level=warn",
+            "tunnel_forward=true",
+            "audio=false",
+            "control=false",
+            "power_on=false",
+            "cleanup=true",
+            "video_codec=h264",
+            f"max_size={self.settings.screen_max_size}",
+            f"max_fps={self.settings.screen_max_fps}",
+            f"video_bit_rate={self.settings.screen_bit_rate}",
+            "video_codec_options=profile=1,i-frame-interval=1",
+        ]
+
+    async def read_metadata(self):
         async with asyncio.timeout(10):
             name = (await self.reader.readexactly(64)).split(b"\x00", 1)[0].decode(errors="replace")
             codec, width, height = struct.unpack(">III", await self.reader.readexactly(12))
@@ -184,6 +191,13 @@ class AdbCapture:
         return await asyncio.wait_for(read_packet(self.reader), 20)
 
     async def close(self):
+        # Startup failure and connection teardown may both request cleanup.
+        # Run it once, and let every caller drain the same shielded task.
+        if self.close_task is None:
+            self.close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self.close_task)
+
+    async def _close(self):
         if self.writer:
             self.writer.close()
             with suppress(OSError, TimeoutError):

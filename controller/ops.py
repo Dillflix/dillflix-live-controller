@@ -157,6 +157,7 @@ def prepare_restore(path, prior):
                 intent_version=max(d["intent_version"], intent, saved_highest[0] if saved_highest else -1)
                 + 1,
                 automation="paused",
+                manual_control=None,
                 desired=None,
                 observed=None,
                 playback_state="waiting",
@@ -170,6 +171,7 @@ def prepare_restore(path, prior):
                 force_switch=True,
                 failures={},
             )
+            Database.set_meta(db, f"manual-owner:{d['id']}", None)
             Database.save_device(db, d)
             db.execute(
                 "INSERT INTO simulated_devices VALUES (?,?,NULL) ON CONFLICT(device_id) DO UPDATE SET intent=excluded.intent,observation=NULL",

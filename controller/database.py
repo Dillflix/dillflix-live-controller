@@ -11,7 +11,7 @@ def encode(value):
 
 
 class Database:
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
 
     def __init__(self, path):
         self.path = path

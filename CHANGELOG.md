@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 — Temporary manual device control
+
+- Take control with 5/15/30 minute and 1/2/4/8/12/24 hour choices, a visible deadline, reset/extend, resume, and stay-paused actions.
+- Durable exclusive browser ownership, explicit takeover, retained watch plans, cancellation/intent fences, playback-claim invalidation, and restart/expiry recovery.
+- Separate pinned scrcpy control channel for D-pad, Select, Back, Home, Menu, play/pause, delete, and printable ASCII text. Bounded taps, sequence/rate checks and no uncertain-input replay.
+- Mobile remote layout and focused keyboard shortcuts; shared video remains view-only and independent.
+- Schema 5 prevents older releases from ignoring ownership. Offline restore clears sessions. nginx WebSocket routing now includes `/control/input`.
+- Automated backend/Chromium checks cover lifecycle, transport, ownership, four-hour selection, text, reconnect and phone layout. Real Fire TV, Docker/nginx and physical Safari remain host-validation work. Autonomous event playback is still simulated.
+
+
+Validation: 177 backend tests and 27 Chromium browser tests pass, including real HTTP/WebSocket input transport and subprocess/TCP scrcpy framing doubles.
+
 ## 0.7.1
 
 - Fixed screen reconnect loops caused by equal encoder timestamps and long forward timestamp gaps. Preserve every encoded frame, assign positive sample durations, and compress long gaps for live viewing; backward timestamps still trigger an explicit stream reset.

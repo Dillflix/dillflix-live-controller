@@ -50,11 +50,13 @@ Use the exact serial shown by `adb devices`. A network serial ending in `:port` 
 
 `SCREEN_SERVER_PATH` can point to a different local location of the **same pinned binary**, and `SCREEN_ADB_PATH` can select a local ADB executable. For example, `python -m controller.screen_install /opt/dillflix/scrcpy-server-v3.3.4` installs at a chosen path. Checksums are verified at capture startup too; arbitrary versions are rejected. Run ADB and the controller on the same host/container namespace: remote ADB-server environment overrides are not supported because forward ports belong to the ADB server.
 
+For temporary real device input, use [Take control](manual-control.md). The remote uses a separate control-only scrcpy session; shared screen viewers remain read-only.
+
 The capture server is pushed to a uniquely named temporary file on the device. Audio, input control, and power-on behavior are disabled. It does not install a persistent Android application, launch a streaming app, send remote keys, or alter the watch plan.
 
 ## nginx and browser support
 
-Apply the screen WebSocket location in [nginx.conf.example](nginx.conf.example) under your existing authenticated server. Both the status URL and WebSocket URL need the same authentication. If your authentication is currently configured only inside a `location` block, include it in the new location too. Preserve the original `Host`, including a nonstandard public port, using `$http_host`.
+Apply the screen and manual-input WebSocket location in [nginx.conf.example](nginx.conf.example) under your existing authenticated server. Both the status URL and WebSocket URL need the same authentication. If your authentication is currently configured only inside a `location` block, include it in the new location too. Preserve the original `Host`, including a nonstandard public port, using `$http_host`.
 
 The browser uses the same origin and existing proxy session; no ADB address or unauthenticated device port is exposed to it. HTTPS pages use `wss://`. Vite's development proxy also forwards the WebSocket. Avoid an nginx `^~ /api/` block that bypasses the sample regex location, or put the WebSocket upgrade directives in that block.
 

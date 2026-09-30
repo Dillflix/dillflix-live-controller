@@ -31,6 +31,12 @@ elif args[-1].startswith("echo $$"):
         listener.listen()
         conn, _ = listener.accept()
         with conn:
+            if "video=false" in args[-1]:
+                conn.sendall(b"\x00" + b"Fixture TV".ljust(64, b"\x00"))
+                with (root / "input.bin").open("ab", buffering=0) as output:
+                    while data := conn.recv(4096):
+                        output.write(data)
+                sys.exit(0)
             conn.sendall(
                 b"\x00" + b"Fixture TV".ljust(64, b"\x00") + struct.pack(">III", 0x68323634, 320, 180)
             )

@@ -8,10 +8,12 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
+from .device_input import DeviceInput, same_origin
 from .models import (
     AutomationUpdate,
     Command,
     ConfigurationImport,
+    ManualControlCommand,
     RulesUpdate,
     SimulationCommand,
     UndoCommand,
@@ -25,20 +27,34 @@ def create_app(settings=None, *, start_workers=True):
     settings = settings or Settings.from_env()
     service = Controller(settings)
     screen = ScreenStream(settings)
+    control = DeviceInput(service)
 
     @asynccontextmanager
     async def lifespan(app):
+        control.start()
         if start_workers:
             service.start()
         try:
             yield
         finally:
+            await control.stop()
             await screen.stop()
             await service.stop()
 
-    app = FastAPI(title="Dillflix Controller", version="0.7.1", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.8.0", lifespan=lifespan)
     app.state.controller = service
     app.state.screen = screen
+    app.state.control = control
+
+    @app.post("/api/v1/devices/{device_id}/control")
+    async def manual_control(device_id: str, command: ManualControlCommand, request: Request):
+        if "origin" in request.headers and not same_origin(request.headers):
+            raise HTTPException(403, "Manual control requires the same origin.")
+        return await control.command(device_id, command)
+
+    @app.websocket("/api/v1/devices/{device_id}/control/input")
+    async def manual_input(websocket: WebSocket, device_id: str):
+        await control.serve(websocket, device_id)
 
     @app.get("/api/v1/devices/{device_id}/screen")
     def screen_status(device_id: str):

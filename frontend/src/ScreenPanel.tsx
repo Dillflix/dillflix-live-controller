@@ -6,6 +6,8 @@ import {
   Monitor,
   RefreshCw,
 } from "lucide-react";
+import { RemoteControls } from "./RemoteControls";
+import type { Device } from "./types";
 import { api } from "./api";
 import { startScreenPlayer, type ScreenState } from "./screenPlayer";
 
@@ -14,9 +16,15 @@ type ScreenConfig = { enabled: boolean; stream_path: string | null };
 export function ScreenPanel({
   deviceId,
   deviceName,
+  device,
+  serverTime,
+  onChange,
 }: {
   deviceId: string;
   deviceName: string;
+  device: Device;
+  serverTime: string;
+  onChange: () => Promise<void>;
 }) {
   const [config, setConfig] = useState<ScreenConfig | null>(null);
   const [configError, setConfigError] = useState(false);
@@ -221,6 +229,12 @@ export function ScreenPanel({
           </div>
         </div>
       )}
+      <RemoteControls
+        device={device}
+        serverTime={serverTime}
+        enabled={!!config?.enabled}
+        onChange={onChange}
+      />
     </section>
   );
 }

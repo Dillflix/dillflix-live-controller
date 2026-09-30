@@ -1375,3 +1375,183 @@ select:focus-visible {
     min-height: 72px;
   }
 }
+
+/* Manual control shares the device-screen surface on desktop and phones. */
+.df-remote {
+  border-top: 1px solid var(--df-line);
+  padding: 20px;
+}
+.df-remote-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.df-remote-heading h3 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.df-remote-heading p,
+.df-remote-help {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--df-muted);
+  line-height: 1.5;
+}
+.df-remote-duration {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.df-remote-duration select {
+  min-height: 38px;
+  border: 1px solid var(--df-line);
+  border-radius: 8px;
+  padding: 6px;
+  background: var(--df-surface);
+}
+.df-remote-start,
+.df-remote-end {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  align-items: center;
+}
+.df-remote-start p {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+}
+.df-remote-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+.df-remote-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 16px;
+  background: var(--df-panel);
+  border-radius: 14px;
+}
+.df-remote-body:focus-visible {
+  outline: 2px solid var(--df-accent);
+  outline-offset: 3px;
+}
+.df-remote-pad {
+  display: grid;
+  grid-template: repeat(3, 54px) / repeat(3, 58px);
+  gap: 5px;
+}
+.df-remote-key {
+  border: 1px solid var(--df-line);
+  border-radius: 10px;
+  background: var(--df-surface);
+  color: var(--df-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  gap: 6px;
+  cursor: pointer;
+  touch-action: manipulation;
+  font: inherit;
+}
+.df-remote-key:active {
+  background: var(--df-tint);
+  transform: scale(0.97);
+}
+.df-remote-key:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.df-key-up {
+  grid-area: 1 / 2;
+}
+.df-key-left {
+  grid-area: 2 / 1;
+}
+#df-app .df-key-select {
+  grid-area: 2 / 2;
+  background: #23395b;
+  color: white;
+  font-weight: 700;
+}
+.df-key-right {
+  grid-area: 2 / 3;
+}
+.df-key-down {
+  grid-area: 3 / 2;
+}
+.df-remote-extras {
+  flex: 1;
+  min-width: 200px;
+  max-width: 500px;
+}
+.df-remote-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.df-remote-shortcuts .df-remote-key {
+  flex-direction: column;
+  padding: 8px 4px;
+  font-size: 11px;
+}
+.df-remote-text {
+  margin: 16px 0 10px;
+}
+.df-remote-text label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 7px;
+}
+.df-remote-text > div {
+  display: flex;
+  gap: 6px;
+}
+.df-remote-text input {
+  width: 100%;
+  min-width: 0;
+  border-radius: 8px;
+  border: 1px solid var(--df-line);
+  padding: 10px;
+  font-size: 16px;
+}
+.df-remote-text small {
+  display: block;
+  margin-top: 6px;
+  color: var(--df-muted);
+  font-size: 11px;
+}
+.df-remote-error {
+  color: #a32434;
+  font-size: 13px;
+}
+@media (max-width: 480px) {
+  .df-remote {
+    padding: 14px;
+  }
+  .df-remote-body {
+    padding: 14px 10px;
+    gap: 18px;
+  }
+  .df-remote-end .df-button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}

@@ -48,6 +48,10 @@ Do not treat a successful local simulator run as real playback verification or a
 
 The requested screen view is available before autonomous navigation: an independent ADB/scrcpy capture bridge, native browser video panel, phone layout, fullscreen, shared viewers, and automatic reconnect/cleanup. It is opt-in and makes no event-selection or playback-verification claims. Local tests use a subprocess/TCP ADB double and actual H.264 browser decoding. Validate capture on the target Fire TV, protected streaming apps, authenticated nginx, and physical mobile browsers using [the setup guide](screen-mirroring.md). This addition does not complete or replace the remaining host checks or deferred executor work.
 
+## Manual device control — implemented in 0.8
+
+Take control suspends automation for a chosen duration, including four-hour events and up to 24 hours. It provides a mobile remote, focused keyboard shortcuts, text entry, explicit browser takeover, extension, and resume/stay-paused actions. Ownership and deadlines survive restarts; expiry and input are fenced on the server. Input uses a separate control-only scrcpy connection; capture stays shared. Actual Fire TV input compatibility, nginx, and physical mobile behavior need host validation. The autonomous executor remains deferred and must join the same ownership gate.
+
 ## 4. Connect real status and playback services — deferred
 
 Choose the authoritative content-status service and executor transport. Implement real request timeouts, request inspection, cancellation/fencing, and device observations behind the tested boundaries. Verify the requested event and live presentation on the device, exercise process/device/network recovery, and run unattended trials before relying on continuous coverage.
