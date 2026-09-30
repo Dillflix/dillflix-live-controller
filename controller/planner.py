@@ -42,27 +42,8 @@ def allowed_options(snapshot):
     return accepted
 
 
-def content_view(snapshot, seen_at, active, now, real_now, mode, ttl):
+def content_view(snapshot, active, lifecycle):
     event = snapshot.get("event") or {}
-    lifecycle = snapshot.get("status", "unknown")
-    stale = (real_now - parse_time(seen_at)).total_seconds() > ttl
-    if mode == "demo":
-        sim = snapshot.get("_simulation", {})
-        lifecycle = sim.get("override")
-        if not lifecycle:
-            # Explicit simulator fixture transitions, never a real event's expected_end_time.
-            actual_end = parse_time(sim.get("actual_end_time"))
-            lifecycle = (
-                "scheduled"
-                if now < parse_time(snapshot["start_time"])
-                else ("ended" if actual_end and now >= actual_end else "live")
-            )
-        stale = lifecycle == "unknown"
-    elif stale and lifecycle not in {"final", "cancelled"}:
-        lifecycle = "unknown"
-    lifecycle = {"final": "ended"}.get(lifecycle, lifecycle)
-    if lifecycle not in {"scheduled", "live", "ended", "cancelled", "delayed", "suspended", "postponed"}:
-        lifecycle = "unknown"
     teams = [t for t in [event.get("away_team_details"), event.get("home_team_details")] if t]
     league = event.get("league") or snapshot.get("competition") or "unknown"
     teams = [{**t, "key": team_key(t, league), "league": league} for t in teams]
@@ -81,18 +62,12 @@ def content_view(snapshot, seen_at, active, now, real_now, mode, ttl):
         "expected_end_time": snapshot.get("expected_end_time"),
         "end_time_estimated": snapshot.get("end_time_estimated"),
         "active": bool(active),
-        "lifecycle": {
-            "state": lifecycle,
-            "stale": stale,
-            "observed_at": seen_at,
-            "source": "fixture_simulator" if mode == "demo" else "feed_status_simulator",
-            "simulated": True,
-        },
+        "lifecycle": lifecycle,
         "viewing_options": options,
-        "playable": lifecycle == "live" and bool(options),
+        "playable": lifecycle["state"] == "live" and bool(options),
         "availability_reason": "No valid viewing options"
         if not options
-        else ("Awaiting fresh live status" if lifecycle == "unknown" else None),
+        else ("Awaiting fresh live status" if lifecycle["state"] == "unknown" else None),
         "scores": [event.get("away_score"), event.get("home_score")],
         "status_detail": event.get("status_detail"),
         "snapshot": snapshot,

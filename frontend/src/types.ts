@@ -32,9 +32,22 @@ export interface Content {
   lifecycle: {
     state: string;
     stale: boolean;
-    observed_at: string;
-    source: string;
+    last_known_state: string;
+    tracked: boolean;
+    observed_at: string | null;
+    received_at: string | null;
+    valid_until: string | null;
+    effective_valid_until: string | null;
+    source: string | null;
+    timestamp_basis: string | null;
     simulated: boolean;
+    refresh: {
+      state: string;
+      last_attempt: string | null;
+      last_success: string | null;
+      next_check_at: string | null;
+      error: string | null;
+    };
   };
   viewing_options: ViewingOption[];
   playable: boolean;
@@ -106,6 +119,17 @@ export interface Preview {
 }
 export interface Overview {
   device: Device;
+  status_health: {
+    state: string;
+    pinned_count: number;
+    checked_count: number;
+    error_count: number;
+    stale_count: number;
+    unknown_count: number;
+    last_attempt: string | null;
+    adapter: string;
+    simulated: boolean;
+  };
   playback_job: {
     id: string;
     content_id: string;

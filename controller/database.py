@@ -9,7 +9,7 @@ def encode(value):
 
 
 class Database:
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, path):
         self.path = path
@@ -96,6 +96,12 @@ class Database:
                         "INSERT OR IGNORE INTO simulated_devices VALUES (?,?,?)",
                         (device_id, device["intent_version"], encode(observation)),
                     )
+            if version < 4:
+                db.execute("""CREATE TABLE IF NOT EXISTS content_status (
+                    content_id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+                    observation TEXT, last_attempt TEXT, last_success TEXT,
+                    error TEXT, failures INTEGER NOT NULL DEFAULT 0,
+                    next_check REAL NOT NULL DEFAULT 0)""")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:

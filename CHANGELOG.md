@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+- Continued milestone 3 with an independent asynchronous content-status adapter and refresh worker. Desired playback, observed playback, and reservations remain tracked when entries leave discovery and while automation is paused.
+- Added persistent status evidence and retry scheduling, bounded lookup timeouts/concurrency, lease checks, and rejection of mismatched, late, older, invalid, or expired responses.
+- Preserve source observation/expiry timestamps. Missing or failed lookups keep usable evidence; expired nonterminal evidence becomes unknown without completing commitments. Confirmed terminal facts survive outages and can be corrected by newer explicit observations.
+- Separate status health from schedule health in the API and Settings. Event details expose source/timing/expiry, lookup failures, and retained out-of-window entries. Added status-outage and outside-feed demo scenarios.
+- Corrected Teamarr lifecycle timestamp semantics: `observed_at` is null when no provider timestamp exists; `received_at` carries the original feed read time. Rechecking cached evidence never extends its freshness window. A real authoritative out-of-window status source remains deferred.
+- Added transactional schema-4 migration preserving earlier records, and updated contracts and the delivery roadmap.
+- Fixed a dialog keyboard timing issue found during regression testing: focus and Escape handling are installed before the dialog becomes interactive.
+
+Validation: 88 backend tests and 13 Chromium browser tests pass, including desktop and phone workflows. Docker and real status/playback services were not tested in this environment; both adapters remain simulated.
+
+Upgrade with `git pull --ff-only` and `docker compose up -d --build`. Keep the existing `.env` and persistent volume. `STATUS_INTERVAL_SECONDS` defaults to 15, so no environment change is required. Refresh the browser after updating.
+
 ## 0.3.0
 
 - Continued milestone 3 with a separate persistent playback simulator and coordinator. Request acceptance, navigation, and verified live playback are distinct states.

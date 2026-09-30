@@ -31,7 +31,7 @@ def create_app(settings=None, *, start_workers=True):
         yield
         await service.stop()
 
-    app = FastAPI(title="Dillflix Controller", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.4.0", lifespan=lifespan)
     app.state.controller = service
 
     @app.exception_handler(KeyError)
@@ -49,7 +49,12 @@ def create_app(settings=None, *, start_workers=True):
     @app.get("/api/v1/events")
     def events():
         data = service.overview()
-        return {"items": data["events"], "meta": data["meta"], "health": data["health"]}
+        return {
+            "items": data["events"],
+            "meta": data["meta"],
+            "health": data["health"],
+            "status_health": data["status_health"],
+        }
 
     @app.get("/api/v1/teams")
     def teams(league: str | None = None):
@@ -150,8 +155,10 @@ def create_app(settings=None, *, start_workers=True):
             }
 
     @app.post("/api/v1/simulation")
-    def simulation(request: SimulationCommand):
-        return service.simulation(request)
+    async def simulation(request: SimulationCommand):
+        result = service.simulation(request)
+        await service.refresh_status(force=True)
+        return result
 
     @app.get("/api/v1/devices/{device_id}/activity")
     def activity(device_id: str):

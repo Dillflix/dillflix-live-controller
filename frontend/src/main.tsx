@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -115,7 +121,8 @@ function Dialog({
   children,
 }: React.PropsWithChildren<{ title: string; onClose: () => void }>) {
   const ref = useRef<HTMLElement>(null);
-  useEffect(() => {
+  // Install keyboard handling and focus before the dialog becomes interactive.
+  useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement;
     ref.current?.querySelector<HTMLButtonElement>("button")?.focus();
     const onKey = (e: KeyboardEvent) => {
@@ -867,6 +874,13 @@ function App() {
                 are retained.
               </div>
             )}
+            {data.status_health.state === "degraded" && (
+              <div className="df-warning" data-testid="status-warning">
+                Some event statuses are unavailable or out of date. Your watch
+                plan is retained; missing status does not mean an event has
+                ended.
+              </div>
+            )}
             {error && (
               <div className="df-toast error" role="alert">
                 <span>{error}</span>
@@ -1396,7 +1410,27 @@ function App() {
                   </div>
                   <div className="df-setting">
                     <div className="df-row-copy">
-                      <strong>Playback and content status</strong>
+                      <strong>Content status</strong>
+                      <p>
+                        {data.status_health.checked_count} of{" "}
+                        {data.status_health.pinned_count} watched or reserved
+                        events checked.
+                        {data.meta.mode === "demo"
+                          ? " Independent simulated lookups."
+                          : " Cached Teamarr status. An independent live status source is not connected."}
+                      </p>
+                      {data.status_health.error_count > 0 && (
+                        <p>
+                          {data.status_health.error_count} lookup failures;
+                          retrying automatically.
+                        </p>
+                      )}
+                    </div>
+                    <Pill>{data.status_health.state}</Pill>
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Playback</strong>
                       <p>Simulated. No Fire TV commands are sent.</p>
                     </div>
                     <Pill>Simulator</Pill>
@@ -1442,6 +1476,12 @@ function App() {
                         <option value="failure">Playback failure</option>
                         <option value="timeout">Navigation timeout</option>
                         <option value="replay">Replay result rejected</option>
+                        <option value="status_outage">
+                          Status lookup unavailable
+                        </option>
+                        <option value="outside_feed">
+                          Reserved event outside feed
+                        </option>
                         <option value="stale">Stale status</option>
                         <option value="empty">No live events</option>
                       </select>
@@ -1576,6 +1616,44 @@ function App() {
                 </dd>
                 <dt>Expected end</dt>
                 <dd>{time(modalEvent.expected_end_time)} · estimate only</dd>
+                <dt>Status source</dt>
+                <dd>
+                  {modalEvent.lifecycle.timestamp_basis === "feed_received"
+                    ? "Cached Teamarr status; provider freshness is unknown"
+                    : modalEvent.lifecycle.timestamp_basis === "fixture"
+                      ? "Simulated event lifecycle"
+                      : modalEvent.lifecycle.source ||
+                        "Awaiting status evidence"}
+                </dd>
+                <dt>Observation time</dt>
+                <dd>
+                  {modalEvent.lifecycle.observed_at
+                    ? time(modalEvent.lifecycle.observed_at)
+                    : "Not supplied"}
+                </dd>
+                <dt>Status valid until</dt>
+                <dd>{time(modalEvent.lifecycle.effective_valid_until)}</dd>
+                {modalEvent.lifecycle.tracked && (
+                  <>
+                    <dt>Status lookup</dt>
+                    <dd>
+                      {modalEvent.lifecycle.refresh.error ||
+                        (modalEvent.lifecycle.refresh.last_success
+                          ? "Last checked " +
+                            time(modalEvent.lifecycle.refresh.last_success)
+                          : "Waiting for first check")}
+                    </dd>
+                  </>
+                )}
+                {!modalEvent.active && (
+                  <>
+                    <dt>Schedule visibility</dt>
+                    <dd>
+                      Outside the current feed; retained for your watch plan or
+                      playback.
+                    </dd>
+                  </>
+                )}
                 <dt>Viewing options</dt>
                 <dd>
                   {modalEvent.viewing_options.length} valid candidates; chosen

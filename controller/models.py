@@ -102,5 +102,15 @@ class SimulationCommand(StrictModel):
     action: Literal["advance", "scenario"]
     minutes: int = Field(default=15, ge=1, le=1440)
     scenario: Literal[
-        "normal", "overlap", "overtime", "delayed", "failure", "stale", "empty", "timeout", "replay"
+        "normal",
+        "overlap",
+        "overtime",
+        "delayed",
+        "failure",
+        "stale",
+        "empty",
+        "timeout",
+        "replay",
+        "status_outage",
+        "outside_feed",
     ] = "normal"

@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 
+from .content_status import ContentStatusAdapter, ContentStatusCoordinator, SimulatedContentStatusAdapter
 from .coordinator import PlaybackCoordinator
 from .database import Database, encode
 from .fixtures import default_device, fixtures, make_team
@@ -18,13 +19,16 @@ from .teamarr import TeamarrClient
 log = logging.getLogger(__name__)
 
 
-class Controller(PlaybackCoordinator):
+class Controller(PlaybackCoordinator, ContentStatusCoordinator):
     CONFIG_FIELDS = ("rules", "team_ranks", "preferences")
 
-    def __init__(self, settings, playback: PlaybackAdapter | None = None):
+    def __init__(
+        self, settings, playback: PlaybackAdapter | None = None, status: ContentStatusAdapter | None = None
+    ):
         self.settings = settings
         self.db = Database(settings.database)
         self.playback = playback or SimulatedPlaybackAdapter(self.db, settings.observation_ttl)
+        self.status_adapter = status or SimulatedContentStatusAdapter(settings.mode, settings.status_ttl)
         self.owner = str(uuid.uuid4())
         self.client = TeamarrClient(settings.teamarr_url, settings.teamarr_token)
         self.tasks = []
@@ -96,15 +100,13 @@ class Controller(PlaybackCoordinator):
 
     def items(self, db):
         now, real = self.now(db), datetime.now(UTC)
+        checks = {row["content_id"]: row for row in db.execute("SELECT * FROM content_status")}
+        pins = self.pinned_content_ids(db)
         return [
             content_view(
                 json.loads(r["snapshot"]),
-                r["seen_at"],
                 r["active"],
-                now,
-                real,
-                self.settings.mode,
-                self.settings.status_ttl,
+                self.content_lifecycle(r, checks.get(r["id"]), now, real, r["id"] in pins),
             )
             for r in db.execute("SELECT * FROM contents ORDER BY id")
         ]
@@ -140,6 +142,7 @@ class Controller(PlaybackCoordinator):
             return {
                 "device": device,
                 "playback_job": dict(latest_job) if latest_job else None,
+                "status_health": self.status_health(db, items),
                 "teams": self.db.teams(db),
                 "team_directory_health": self.db.meta(
                     db,
@@ -422,7 +425,9 @@ class Controller(PlaybackCoordinator):
                 self.db.set_meta(
                     db, "demo_now", (self.now(db) + timedelta(minutes=request.minutes)).isoformat()
                 )
+                db.execute("UPDATE content_status SET next_check=0")
             else:
+                db.execute("DELETE FROM content_status")
                 entries, now = fixtures(request.scenario)
                 self.replace_catalog(db, entries, "demo")
                 self.db.set_meta(db, "demo_now", now)
@@ -444,6 +449,8 @@ class Controller(PlaybackCoordinator):
                 d["plan"] = [self.entry("demo:canadiens")]
                 if request.scenario in {"overlap", "overtime"}:
                     d["plan"].append(self.entry("demo:jays"))
+                if request.scenario == "outside_feed":
+                    db.execute("UPDATE contents SET active=0 WHERE id='demo:canadiens'")
                 db.execute("UPDATE jobs SET state='superseded' WHERE state='pending'")
                 db.execute("DELETE FROM edit_history WHERE device_id=?", (d["id"],))
                 self.db.save_device(db, d)
@@ -546,7 +553,7 @@ class Controller(PlaybackCoordinator):
             await asyncio.sleep(self.settings.team_directory_interval)
 
     def start(self):
-        self.tasks = [asyncio.create_task(self.run_worker())]
+        self.tasks = [asyncio.create_task(self.run_worker()), asyncio.create_task(self.run_status())]
         if self.settings.mode == "teamarr":
             self.tasks.append(asyncio.create_task(self.run_feed()))
             self.tasks.append(asyncio.create_task(self.run_team_directory()))

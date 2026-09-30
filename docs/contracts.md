@@ -33,17 +33,21 @@ The watch plan contains `{id, content_id, created_at}` entries in priority order
 
 ## Read models
 
-`GET /api/v1/events` returns `{items, meta, health}`. Each card includes:
+`GET /api/v1/events` returns `{items, meta, health, status_health}`. Each card includes:
 
 - `content_id`, `kind`, `title`, `league`, `source`, `sports`, and normalized `phase`.
 - `teams`, in away/home order when present. Team fields pass through from Teamarr, with `league` and a provider-and-league-qualified `key` added for preferences. `city` is the provider's location, which need not be a literal city.
 - `artwork`, scheduled `start_time`, `expected_end_time`, and `end_time_estimated`.
-- `lifecycle: {state, stale, observed_at, source, simulated}`. Current lifecycle states are scheduled, live, ended, cancelled, postponed, delayed, suspended, and unknown.
+- `lifecycle`: effective `state`, `last_known_state` (the stored observation's state), `stale`, `tracked`, `observed_at`, `received_at`, declared `valid_until`, bounded `effective_valid_until`, `timestamp_basis`, `source`, `simulated`, and `refresh`. Current states are scheduled, live, ended, cancelled, postponed, delayed, suspended, and unknown. Observation/source fields can be null when evidence is unavailable.
 - All allowed `viewing_options`, `playable`, `availability_reason`, `active`, `watch_entry_id`, rule `priority`, scores/status detail when present, and temporary playback-failure information.
 
 The card is a projection. The original Teamarr object is retained privately in the catalog and passed intact in playback jobs. Scores, logos, team names, and dates are not derived from title parsing.
 
-`GET /api/v1/overview` adds the complete device state, plan preview, recent activity, feed health, metadata, `teams`, `team_directory_health`, `undo`, and `playback_job`. Metadata distinguishes demo/Teamarr catalog mode, simulation status, sample/current time, and wall-clock server time. Feed health distinguishes starting, ok, and degraded, with the last successful fetch and count when known.
+`GET /api/v1/overview` adds the complete device state, plan preview, recent activity, feed health, metadata, `teams`, `team_directory_health`, `undo`, and `playback_job`, and includes the same `status_health`. Metadata distinguishes demo/Teamarr catalog mode, simulation status, sample/current time, and wall-clock server time. Feed health distinguishes starting, ok, and degraded, with the last successful fetch and count when known.
+
+`status_health` contains `state` (`idle`, `starting`, `ok`, `degraded`), `pinned_count`, `checked_count`, `error_count`, `stale_count`, `unknown_count`, `last_attempt`, `adapter`, and `simulated`. It describes desired, observed, and reserved content, deduplicated by content ID. Each lifecycle's `refresh` contains `state` (`starting`, `ok`, `error`), `last_attempt`, `last_success`, `next_check_at`, and `error`. A successful check is not a new provider observation: clients must use the evidence timestamps to assess freshness. `tracked` indicates whether the independent worker currently refreshes this content.
+
+In version 0.4, `lifecycle.observed_at` is **nullable**. The Teamarr feed has no provider observation timestamp; its read time is now accurately exposed as `received_at` with `timestamp_basis: feed_received`. Repeated cached lookups cannot move the original evidence expiry. `state` becomes unknown on nonterminal expiry; the stored state remains visible in `last_known_state`.
 
 `playback_job` is null before any request, otherwise the latest request's `{id, content_id, state, progress, deadline_at, delivery_attempts, error}`. Job states are `pending`, `verified`, `failed`, `timed_out`, `rejected`, `cancelled`, or `superseded`. Progress distinguishes `queued`, `accepted`, `navigating`, `retrying`, `playing_verified`, and failure reasons/states; the job state remains authoritative after cancellation or supersession. `delivery_attempts` counts submission attempts, not inspection calls. The jobs endpoint also exposes the original payload, intent, executor job ID, ready time, and `cancel_sent` acknowledgement flag.
 
@@ -103,6 +107,48 @@ POST `{command_id, expected_revision, document}` to `/configuration/import/previ
 POST the same document to `/configuration/import` with a command ID and **the preview's revision**. This atomically replaces the three configuration fields, records an undoable edit, and returns the normal command receipt. A newer edit causes 409; preview again before retrying. Unsupported document versions, duplicate rule IDs or team rankings, invalid timezones, and unexpected fields return 422 without changes.
 
 This transfer excludes the watch plan, automation mode, playback state, database history, Teamarr URL, and credentials. It is not a full database backup. Configuration documents, API/feed schemas, and SQLite migrations are versioned separately.
+
+## Content-status adapter implemented today
+
+`ContentStatusAdapter.lookup(request)` is an asynchronous internal boundary, implemented by the simulator. It is not an outbound HTTP API configuration. The worker sends:
+
+```json
+{
+  "schema_version": 1,
+  "request_id": "unique-lookup-id",
+  "content_id": "opaque-Teamarr-feed-entry-id",
+  "content_snapshot_schema_version": 1,
+  "content_snapshot": {"...": "complete original Teamarr entry"},
+  "catalog_seen_at": "2026-09-30T12:00:00+00:00",
+  "as_of": "2026-09-30T12:00:00+00:00"
+}
+```
+
+`as_of` is the demo clock in demo mode and current UTC time otherwise. It is not an event-completion estimate. Full snapshot/provider identifiers allow a real adapter to resolve the event without parsing opaque IDs. The result is null for no observation, or:
+
+```json
+{
+  "schema_version": 1,
+  "request_id": "unique-lookup-id",
+  "content_id": "opaque-Teamarr-feed-entry-id",
+  "observation": {
+    "content_id": "opaque-Teamarr-feed-entry-id",
+    "state": "live",
+    "source": "fixture_simulator",
+    "simulated": true,
+    "timestamp_basis": "fixture",
+    "observed_at": "2026-09-30T12:00:00+00:00",
+    "received_at": "2026-09-30T12:00:00+00:00",
+    "valid_until": "2026-09-30T12:02:00+00:00"
+  }
+}
+```
+
+Timestamp basis is `provider`, `fixture`, or `feed_received`. Provider/fixture observations require an aware `observed_at`; cached feed evidence requires a null `observed_at` and an aware original `received_at`. All observations require source, a boolean simulation flag, a supported state, and expiry after the evidence timestamp. Evidence must be unexpired when accepted, no more than five seconds in the future, and within the controller's 120-second content-status age limit. Source expiry is preserved; `effective_valid_until` is the earlier of that expiry and the controller age limit.
+
+Request/content identity and current lease/request ID must match. Older or conflicting same-time evidence from a comparable source is rejected. Failure/timeout/null retains the previous accepted observation until it expires. An explicit fresh unknown observation makes nonterminal lifecycle unknown immediately. Previously confirmed ended/cancelled evidence survives unknown/error/expiry; a newer explicit state can correct it. None of these operations removes a manual commitment or fabricates a playback observation.
+
+The default cadence is 15 seconds with per-content error backoff of 5, 10, 20, 40, then 60 seconds. Each call has a five-second timeout. Refresh continues during pause and survives restart through persisted evidence/retry state. Only watched/desired/reserved IDs receive independent lookups; ordinary discovery cards use feed/demo evidence. The simulator can resolve retained demo entries outside discovery. In Teamarr mode it only reuses the cached snapshot, so an expired out-of-window event stays unknown until a fresh source is available.
 
 ## Playback request staged today
 
@@ -165,4 +211,4 @@ Cancellation targets a request, not a global stop command. The simulator keeps c
 
 No outbound playback HTTP endpoint or callback endpoint is connected yet. The future executor should accept the staged payload idempotently by `request_id`, apply monotonic intent fencing per device, and report request progress separately from observations. A successful acknowledgement must not count as live verification.
 
-The real executor must supply device evidence for the observation contract above, with transport timeouts and cancellation behavior appropriate to its navigation engine. A separate content-status lookup should accept `content_id` plus the snapshot/provider identifiers and return an explicit lifecycle observation with its source and expiry. Exact transport, authentication between services, status tokens, and real device recovery behavior will be finalized when those services are selected.
+The real executor must supply device evidence for the playback observation contract above, with transport timeouts and cancellation behavior appropriate to its navigation engine. A real content-status adapter must implement the lookup contract using authoritative event observations rather than discovery receipt times. Exact transport, authentication between services, status tokens, and real device recovery behavior will be finalized when those services are selected.

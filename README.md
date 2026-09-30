@@ -2,7 +2,7 @@
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
-**Version 0.3: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): exercise controller recovery before connecting a real executor.
+**Version 0.4: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): exercise controller recovery before connecting real status and playback services.
 
 ## What works
 
@@ -17,6 +17,7 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 - Versioned SQLite migrations, optimistic concurrency, command idempotency, a durable request queue, and a coordinator lease.
 - A separate persistent playback simulator with idempotent delivery, restart reconciliation, cancellation retries, and navigation deadlines. Acknowledgement alone does not verify playback.
 - Validation of observed content, request, device, intent, permitted option, live presentation, and freshness. Expired evidence becomes unverified without completing the event.
+- Independent status checks for desired playback, observed playback, and every reservation, including entries outside the discovery window. Status evidence and retry state survive restarts; status health is separate from schedule health.
 - Demo scenarios for overlaps, overtime, delays, route failures, navigation timeout, rejected replay results, stale status, and an empty live schedule.
 - Teamarr pagination, expired-cursor recovery, atomic catalog replacement, and retention of the previous complete catalog when an HTTP refresh fails.
 
@@ -52,7 +53,7 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Keep your existing `.env` and `controller-data` volume. Version 0.3 automatically migrates schema-1 and schema-2 databases to schema 3, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. Existing simulated playback is adopted by the separate simulator. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
+Keep your existing `.env` and `controller-data` volume. Version 0.4 automatically migrates older databases to schema 4, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. The migration adds independent content-status records without inventing fresh observations. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
 
 Configuration export under **Settings → Configuration backup** saves priorities, preferred teams, and switching/display preferences. Import shows a review before replacing those fields; it preserves the watch plan and automation mode. It is a configuration transfer, not a complete database backup, and contains no Teamarr credentials. Unresolved team IDs are retained with a warning so preferences survive temporary directory gaps.
 
@@ -65,6 +66,16 @@ In demo mode, load **Navigation timeout** or **Replay result rejected** from the
 The playback details show request progress, delivery attempts, the pending deadline, and the latest request error. Activity retains earlier failure reasons after a fallback starts. Request acceptance and navigation are distinct from verified live playback. A playback observation expires after at most 15 seconds without fresh simulator evidence; the interface then shows **Last observed**. No new content-status conclusion is inferred from that outage.
 
 The simulator stores executor state separately from controller jobs. On restart or an uncertain delivery outcome, the controller inspects the original request before resending the same ID. Cancellation is durable and retried; it ends pending navigation without stopping a newer target. These guarantees are exercised locally, with real executor transport still deferred.
+
+## Exercise independent content status
+
+Load **Reserved event outside feed** in demo mode. The Canadiens game is absent from discovery but stays in the watch plan and remains playable through an independent simulated lookup. Advancing the demo clock eventually returns an explicit ended observation and allows live fallback. **Status lookup unavailable** demonstrates a lookup failure while the schedule is healthy; the reservation remains saved.
+
+Settings shows content-status health independently of schedule and team-directory health. Event details show the status source, observation time, effective expiry, lookup error, and whether the entry is outside the current feed. Missing or failed lookups retain still-valid evidence; expired nonterminal evidence becomes unknown. Already-confirmed terminal evidence survives outages, and a newer explicit observation can correct it.
+
+`STATUS_INTERVAL_SECONDS` defaults to 15 (minimum 5). Lookups have a five-second timeout and bounded retry backoff. They continue while automation is paused. The internal lookup contract carries `content_id` and the complete original Teamarr entry, preserving identifiers for a future real service. No real status-service endpoint is configured yet.
+
+**In Teamarr mode, the status adapter currently rereads cached Teamarr evidence.** It cannot obtain fresh out-of-window event status on its own. Rechecking that snapshot never extends its original freshness window. Teamarr's feed does not supply a provider observation timestamp: `lifecycle.observed_at` is null, `received_at` records the feed read, and `timestamp_basis` is `feed_received`. An independent authoritative service is still required for live completion verification outside the feed window.
 
 ## Connect the Teamarr catalog
 
@@ -145,10 +156,10 @@ npm run test:browser
 
 The browser runner builds the interface, starts a temporary demo API/database, checks desktop and phone workflows, and stops the API. Set `CONTROLLER_TEST_PYTHON` if Python is not on the active path. Linux x64 uses the npm-packaged Chromium; other platforms require `npx playwright install chromium`. `TEST_BASE_URL` can target a separate **disposable demo instance**: the tests deliberately reset its sample watch plan.
 
-Coverage includes database upgrades, persistent undo, configuration round trips, stale previews across browsers, team-directory failures and provider IDs, API persistence, manual overlaps, overtime, failed playback fallback, unknown status, original payload preservation, and pagination failures. Playback tests cover lost acknowledgements, restart reconciliation, cancellation retry, intent fencing, late results, deadlines, rejected replay/wrong-content observations, and observation expiry/recovery. Desktop, 390 px phone, and 320 px phone layouts are checked for horizontal overflow. These browser tests use Chromium viewport emulation, not physical phone or Safari testing.
+Coverage includes database upgrades, persistent undo, configuration round trips, stale previews across browsers, team-directory failures and provider IDs, API persistence, manual overlaps, overtime, failed playback fallback, unknown status, original payload preservation, and pagination failures. Playback tests cover lost acknowledgements, restart reconciliation, cancellation retry, intent fencing, late results, deadlines, rejected replay/wrong-content observations, and observation expiry/recovery. Status tests cover out-of-window commitments, timestamp preservation, failed/missing/unknown lookups, bounded timeouts, late/invalid results, lease loss, restart persistence, and explicit terminal corrections. Desktop, 390 px phone, and 320 px phone layouts are checked for horizontal overflow. These browser tests use Chromium viewport emulation, not physical phone or Safari testing.
 
 ## Next integrations
 
-See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Next, complete content-status freshness and pinned-event recovery using simulated contracts. Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
+See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Next, exercise coverage-option changes and prolonged status/device outages, followed by unattended-operation checks. Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
 
 Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillflix/dillflix-live-controller). This application is versioned and deployed independently of Teamarr.

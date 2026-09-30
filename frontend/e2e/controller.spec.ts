@@ -169,6 +169,7 @@ test("rules, team ranking, keyboard dialog and scenario views", async ({
     .click();
   await expect(page.getByRole("dialog")).toContainText("NFL RedZone");
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
   await page.locator("summary").click();
   await page
     .getByRole("combobox", { name: "Scenario", exact: true })
