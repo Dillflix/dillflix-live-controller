@@ -471,6 +471,21 @@ function App() {
   const observed = find(d.observed?.content_id || null),
     desired = find(d.desired),
     protectedEvent = d.plan.some((p) => p.content_id === observed?.content_id);
+  const playbackOffline = d.executor_health?.state === "offline";
+  const recoveryWaiting =
+    d.playback_state === "unverified" &&
+    d.recovery?.content_id === d.observed?.content_id &&
+    !!d.recovery?.retry_after;
+  const requestPurpose = data.playback_job
+    ? {
+        selection: "Event selection",
+        route_handoff: "Updated coverage for the same event",
+        recovery: "Live playback recovery",
+      }[data.playback_job.purpose]
+    : null;
+  const observedOption = observed?.viewing_options.find(
+    (option) => option.id === d.observed?.viewing_option_id,
+  );
   const planCommand = (action: Action, expectedRevision = d.revision) =>
     api(devicePath + "/watch-plan", {
       command_id: commandId(),
@@ -831,16 +846,19 @@ function App() {
                     ? "Your watch plan is saved. Resume when ready."
                     : d.reason}
                 </div>
-                {data.playback_job?.state === "pending" && (
+                {data.playback_job?.state === "pending" && !playbackOffline && (
                   <div className="df-playing-detail" aria-live="polite">
-                    Request {data.playback_job.progress || "queued"} · waiting
-                    for live verification
+                    {data.playback_job.purpose === "route_handoff"
+                      ? "Updating coverage for the same event"
+                      : `Request ${data.playback_job.progress || "queued"}`}{" "}
+                    · waiting for live verification
                   </div>
                 )}
-                {d.playback_state === "unverified" && (
+                {d.playback_state === "unverified" && !playbackOffline && (
                   <div className="df-playing-detail" aria-live="polite">
-                    Playback observation expired. Rechecking without assuming
-                    the event ended.
+                    {recoveryWaiting && d.automation === "active"
+                      ? `Allowing time for playback to recover. Reconsidering live coverage at ${time(d.recovery!.retry_after!)}.`
+                      : "Playback is unverified. Your watch plan is retained."}
                   </div>
                 )}
               </div>
@@ -866,6 +884,19 @@ function App() {
               <div className="df-warning" role="status">
                 Connection interrupted. Showing the last received state;
                 reconnecting automatically.
+              </div>
+            )}
+            {playbackOffline && (
+              <div
+                className="df-warning"
+                role="status"
+                data-testid="playback-warning"
+              >
+                Playback service unavailable. Navigation is waiting; your watch
+                plan is saved. Reconnecting automatically
+                {d.executor_health?.next_probe_at
+                  ? `; next check at ${time(d.executor_health.next_probe_at)}.`
+                  : "."}
               </div>
             )}
             {data.health.state === "degraded" && (
@@ -1433,7 +1464,7 @@ function App() {
                       <strong>Playback</strong>
                       <p>Simulated. No Fire TV commands are sent.</p>
                     </div>
-                    <Pill>Simulator</Pill>
+                    <Pill>{playbackOffline ? "Unavailable" : "Simulator"}</Pill>
                   </div>
                   <div className="df-setting">
                     <div className="df-row-copy">
@@ -1476,6 +1507,12 @@ function App() {
                         <option value="failure">Playback failure</option>
                         <option value="timeout">Navigation timeout</option>
                         <option value="replay">Replay result rejected</option>
+                        <option value="coverage_switch">
+                          Same-event coverage change
+                        </option>
+                        <option value="device_outage">
+                          Playback service outage
+                        </option>
                         <option value="status_outage">
                           Status lookup unavailable
                         </option>
@@ -1501,6 +1538,26 @@ function App() {
                     >
                       <Clock3 size={16} />
                       +15 min
+                    </Button>
+                    <Button
+                      disabled={busy}
+                      onClick={() =>
+                        void mutate(
+                          () =>
+                            api("/simulation", {
+                              action: playbackOffline
+                                ? "reconnect"
+                                : "disconnect",
+                            }),
+                          playbackOffline
+                            ? "Simulator reconnected. Rechecking playback."
+                            : "Simulator disconnected. Your watch plan is saved.",
+                        )
+                      }
+                    >
+                      {playbackOffline
+                        ? "Reconnect simulator"
+                        : "Disconnect simulator"}
                     </Button>
                   </div>
                   <p className="df-lab-note">
@@ -1712,12 +1769,36 @@ function App() {
                 <dd>{observed?.title || "None"}</dd>
                 <dt>State</dt>
                 <dd>{d.playback_state}</dd>
+                <dt>Playback service</dt>
+                <dd>
+                  {playbackOffline
+                    ? "Unavailable; reconnecting automatically"
+                    : "Connected · simulator"}
+                </dd>
+                {d.executor_health?.last_contact_at && (
+                  <>
+                    <dt>Last contact</dt>
+                    <dd>{time(d.executor_health.last_contact_at)}</dd>
+                  </>
+                )}
+                {observedOption && (
+                  <>
+                    <dt>Observed coverage</dt>
+                    <dd>
+                      {[observedOption.app, observedOption.channel]
+                        .filter((value) => typeof value === "string" && value)
+                        .join(" · ") || "Valid viewing option"}
+                    </dd>
+                  </>
+                )}
                 <dt>Verified at</dt>
                 <dd>{time(d.observed?.observed_at || null)} · simulated</dd>
                 <dt>Reason</dt>
                 <dd>{d.reason}</dd>
                 {data.playback_job && (
                   <>
+                    <dt>Last request purpose</dt>
+                    <dd>{requestPurpose}</dd>
                     <dt>Last request progress</dt>
                     <dd>
                       {(
@@ -1745,6 +1826,16 @@ function App() {
                         <dd>{data.playback_job.error}</dd>
                       </>
                     )}
+                  </>
+                )}
+                {recoveryWaiting && !playbackOffline && (
+                  <>
+                    <dt>Recovery</dt>
+                    <dd>
+                      Observing before another playback attempt. Reconsidering
+                      at {time(d.recovery!.retry_after!)}; a live event must
+                      still be confirmed.
+                    </dd>
                   </>
                 )}
               </dl>

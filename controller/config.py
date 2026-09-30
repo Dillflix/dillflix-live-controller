@@ -17,6 +17,8 @@ class Settings:
     simulation_delay: float = 1.0
     navigation_timeout: float = 120.0
     observation_ttl: int = 15
+    playback_recovery_grace: float = 60
+    recovery_stable_seconds: float = 30
     team_directory_interval: int = 3600
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
@@ -36,4 +38,5 @@ class Settings:
             feed_interval=max(10, int(os.getenv("FEED_INTERVAL_SECONDS", "60"))),
             status_interval=max(5, float(os.getenv("STATUS_INTERVAL_SECONDS", "15"))),
             navigation_timeout=max(5, float(os.getenv("NAVIGATION_TIMEOUT_SECONDS", "120"))),
+            playback_recovery_grace=max(5, float(os.getenv("PLAYBACK_RECOVERY_GRACE_SECONDS", "60"))),
         )

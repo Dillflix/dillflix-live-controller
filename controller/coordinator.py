@@ -7,9 +7,10 @@ from datetime import UTC, datetime, timedelta
 
 from .database import encode
 from .planner import choose, parse_time
+from .recovery import PlaybackRecovery, compatible_options
 
 
-class PlaybackCoordinator:
+class PlaybackCoordinator(PlaybackRecovery):
     def owns_device(self, db, device_id):
         row = db.execute(
             "SELECT owner,expires FROM leases WHERE resource=?", (f"device:{device_id}",)
@@ -24,6 +25,10 @@ class PlaybackCoordinator:
             d = self.db.device(db)
             if d["automation"] == "paused":
                 return True
+            if d.get("executor_health", {}).get("state") == "offline":
+                d["reason"] = "Playback service unavailable; waiting for recovery. Watch plan retained."
+                self.db.save_device(db, d)
+                return True
             items = self.items(db)
             indexed = {i["content_id"]: i for i in items}
             now = self.now(db)
@@ -32,7 +37,55 @@ class PlaybackCoordinator:
             target = decision["content_id"]
             d["reason"] = decision["reason"]
             d["next_candidate"] = decision.get("next_candidate")
-            if target != d.get("desired") or (target and d["playback_state"] in {"waiting", "failed"}):
+            pending = db.execute(
+                "SELECT * FROM jobs WHERE device_id=? AND intent=? AND state='pending'",
+                (d["id"], d["intent_version"]),
+            ).fetchone()
+            observed = d.get("observed") or {}
+            if observed.get("verified") and observed.get("content_id") == d.get("retry_playback"):
+                d["retry_playback"] = None
+            previous_job = db.execute(
+                "SELECT * FROM jobs WHERE id=?", (observed.get("request_id"),)
+            ).fetchone()
+            options = indexed[target]["viewing_options"] if target else []
+            changed_pending = bool(
+                pending
+                and target == pending["content_id"]
+                and not compatible_options(json.loads(pending["payload"])["allowed_viewing_options"], options)
+            )
+            handoff = bool(
+                target
+                and observed.get("content_id") == target
+                and previous_job
+                and not compatible_options(
+                    json.loads(previous_job["payload"])["allowed_viewing_options"],
+                    options,
+                    observed.get("viewing_option_id"),
+                )
+            )
+            recovery = d.get("recovery") or {}
+            retry_due = recovery.get("retry_after") and real >= parse_time(recovery["retry_after"])
+            retry = bool(
+                target
+                and observed.get("content_id") == target
+                and not observed.get("verified")
+                and (retry_due or d.get("retry_playback") == target)
+                and indexed[target]["playable"]
+            )
+            missing_job = bool(target and not pending and d["playback_state"] == "navigating")
+            needs_request = (
+                target != d.get("desired")
+                or changed_pending
+                or missing_job
+                or (
+                    not pending
+                    and (handoff or retry or (target and d["playback_state"] in {"waiting", "failed"}))
+                )
+            )
+            # Retaining unknown current playback is not permission to reopen it.
+            if target and not indexed[target]["playable"]:
+                needs_request = False
+            if needs_request:
                 d["intent_version"] += 1
                 d["desired"] = target
                 db.execute(
@@ -51,7 +104,17 @@ class PlaybackCoordinator:
                         "content_snapshot_schema_version": 1,
                         "content_snapshot": item["snapshot"],
                         "allowed_viewing_options": item["viewing_options"],
+                        "purpose": "route_handoff"
+                        if handoff or changed_pending
+                        else "recovery"
+                        if retry
+                        else "selection",
+                        "previous_request_id": observed.get("request_id"),
                     }
+                    if retry and not handoff:
+                        recovery["attempts"] = recovery.get("attempts", 0) + 1
+                        d["recovery"] = recovery
+                    d["retry_playback"] = None
                     budget = self.settings.navigation_timeout
                     if self.settings.mode == "demo" and item["snapshot"].get("_simulation", {}).get(
                         "stall_navigation"
@@ -74,7 +137,15 @@ class PlaybackCoordinator:
                     )
                     d["playback_state"] = "navigating"
                     self.db.log(
-                        db, now.isoformat(), f"Opening {item['title']}", decision["reason"], "navigation"
+                        db,
+                        now.isoformat(),
+                        f"Opening {item['title']}",
+                        "Updating coverage for the same event"
+                        if handoff or changed_pending
+                        else "Recovering live playback"
+                        if retry
+                        else decision["reason"],
+                        "navigation",
                     )
                 else:
                     d["playback_state"], d["observed"] = "waiting", None
@@ -148,12 +219,19 @@ class PlaybackCoordinator:
             if not job or job["state"] != "pending" or not self.owns_device(db, job["device_id"]):
                 return False
             d = self.db.device(db, job["device_id"])
-            decision = choose(d, self.items(db), self.now(db), datetime.now(UTC))
+            items = self.items(db)
+            decision = choose(d, items, self.now(db), datetime.now(UTC))
+            item = next((i for i in items if i["content_id"] == job["content_id"]), None)
             if (
                 d["automation"] == "paused"
                 or job["intent"] != d["intent_version"]
                 or job["content_id"] != d["desired"]
                 or decision["content_id"] != job["content_id"]
+                or not item
+                or not item["playable"]
+                or not compatible_options(
+                    json.loads(job["payload"])["allowed_viewing_options"], item["viewing_options"]
+                )
             ):
                 db.execute("UPDATE jobs SET state='superseded' WHERE id=?", (request_id,))
                 return False
@@ -190,12 +268,15 @@ class PlaybackCoordinator:
                 if error:
                     self.fail_attempt(db, d, job, error, "rejected")
                 else:
+                    same_event = (d.get("observed") or {}).get("content_id") == job["content_id"]
                     d["observed"] = report["observation"]
                     d["playback_state"] = "verified"
-                    d["started_at"], d["last_switch_at"] = (
-                        self.now(db).isoformat(),
-                        datetime.now(UTC).isoformat(),
-                    )
+                    if not same_event:
+                        d["started_at"], d["last_switch_at"] = (
+                            self.now(db).isoformat(),
+                            datetime.now(UTC).isoformat(),
+                        )
+                    self.note_verified_playback(d, datetime.now(UTC))
                     d["failures"].pop(job["content_id"], None)
                     db.execute(
                         "UPDATE jobs SET state='verified',progress='playing_verified',executor_job_id=?,error=NULL WHERE id=?",
@@ -219,54 +300,6 @@ class PlaybackCoordinator:
                 "verified",
             }
 
-    def refresh_playback_observation(self):
-        try:
-            observation = self.playback.observe("living-room")
-        except Exception:
-            observation = None
-        with self.db.transaction() as db:
-            if not self.owns_device(db, "living-room"):
-                return
-            d = self.db.device(db)
-            existing = d.get("observed")
-            if not existing:
-                return
-            job = db.execute("SELECT * FROM jobs WHERE id=?", (existing.get("request_id"),)).fetchone()
-            if (
-                job
-                and isinstance(observation, dict)
-                and observation.get("request_id") == existing.get("request_id")
-                and not self.observation_error(job, observation)
-                and parse_time(observation["observed_at"]) >= parse_time(existing["observed_at"])
-            ):
-                d["observed"] = observation
-                if d["playback_state"] == "unverified":
-                    d["playback_state"] = "verified"
-                    self.db.log(
-                        db,
-                        self.now(db).isoformat(),
-                        "Playback observation recovered",
-                        "Fresh simulated live observation received",
-                        "verified",
-                    )
-            else:
-                expiry = min(
-                    parse_time(existing.get("valid_until")) or datetime.max.replace(tzinfo=UTC),
-                    parse_time(existing["observed_at"]) + timedelta(seconds=self.settings.observation_ttl),
-                )
-                if expiry <= datetime.now(UTC) and existing.get("verified"):
-                    existing["verified"] = False
-                    if d["playback_state"] == "verified":
-                        d["playback_state"] = "unverified"
-                    self.db.log(
-                        db,
-                        self.now(db).isoformat(),
-                        "Playback observation is stale",
-                        "Last observed content retained; current playback is unverified",
-                        "observation",
-                    )
-            self.db.save_device(db, d)
-
     def deliver_pending(self):
         with self.db.transaction() as db:
             jobs = [
@@ -276,6 +309,8 @@ class PlaybackCoordinator:
         for job in jobs:
             with self.db.transaction() as db:
                 if not self.owns_device(db, job["device_id"]):
+                    return
+                if not self.executor_available(db):
                     return
                 d = self.db.device(db, job["device_id"])
                 if d["automation"] == "paused" or job["intent"] != d["intent_version"]:
@@ -327,7 +362,7 @@ class PlaybackCoordinator:
 
     def cancel_obsolete(self):
         with self.db.transaction() as db:
-            if not self.owns_device(db, "living-room"):
+            if not self.owns_device(db, "living-room") or not self.executor_available(db):
                 return
             jobs = [
                 dict(r)
@@ -344,9 +379,12 @@ class PlaybackCoordinator:
                 db.execute("UPDATE jobs SET cancel_sent=1 WHERE id=?", (job["id"],))
 
     def tick(self):
+        with self.db.transaction() as db:
+            if not self.db.lease(db, "device:living-room", self.owner, time.time()):
+                return
+        self.refresh_playback_observation()
         if not self.stage_playback():
             return
         self.cancel_obsolete()
-        self.refresh_playback_observation()
         self.deliver_pending()
         self.cancel_obsolete()

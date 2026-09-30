@@ -99,7 +99,7 @@ class AutomationUpdate(StrictModel):
 
 
 class SimulationCommand(StrictModel):
-    action: Literal["advance", "scenario"]
+    action: Literal["advance", "scenario", "disconnect", "reconnect"]
     minutes: int = Field(default=15, ge=1, le=1440)
     scenario: Literal[
         "normal",
@@ -113,4 +113,6 @@ class SimulationCommand(StrictModel):
         "replay",
         "status_outage",
         "outside_feed",
+        "coverage_switch",
+        "device_outage",
     ] = "normal"

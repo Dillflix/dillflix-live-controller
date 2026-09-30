@@ -136,12 +136,15 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
                 )
             ]
             latest_job = db.execute(
-                "SELECT id,content_id,state,progress,deadline_at,delivery_attempts,error FROM jobs WHERE device_id=? ORDER BY rowid DESC LIMIT 1",
+                "SELECT id,content_id,state,progress,deadline_at,delivery_attempts,error,payload FROM jobs WHERE device_id=? ORDER BY rowid DESC LIMIT 1",
                 (device_id,),
             ).fetchone()
+            latest_job = dict(latest_job) if latest_job else None
+            if latest_job:
+                latest_job["purpose"] = json.loads(latest_job.pop("payload")).get("purpose", "selection")
             return {
                 "device": device,
-                "playback_job": dict(latest_job) if latest_job else None,
+                "playback_job": latest_job,
                 "status_health": self.status_health(db, items),
                 "teams": self.db.teams(db),
                 "team_directory_health": self.db.meta(
@@ -315,6 +318,7 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
             if op == "play_now":
                 device["automation"] = "active"
                 device["failures"].pop(content_id, None)
+                device["retry_playback"] = content_id
         elif op == "remove":
             entry_id = action.get("entry_id")
             if entry_id not in {p["id"] for p in device["plan"]}:
@@ -426,7 +430,28 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
                     db, "demo_now", (self.now(db) + timedelta(minutes=request.minutes)).isoformat()
                 )
                 db.execute("UPDATE content_status SET next_check=0")
+                for row in db.execute("SELECT id,snapshot FROM contents").fetchall():
+                    snapshot = json.loads(row["snapshot"])
+                    switch_at = snapshot.get("_simulation", {}).get("route_switch_at")
+                    if switch_at and self.now(db) >= parse_time(switch_at):
+                        snapshot["viewing_options"][0].update(
+                            decision="excluded", reasons=["simulated_coverage_withdrawn"]
+                        )
+                        db.execute("UPDATE contents SET snapshot=? WHERE id=?", (encode(snapshot), row["id"]))
+            elif request.action in {"disconnect", "reconnect"}:
+                self.db.set_meta(db, "simulated_executor_outage", request.action == "disconnect")
+                self.db.set_meta(db, "simulated_executor_disconnect_at", None)
+                d = self.db.device(db)
+                if d.get("executor_health"):
+                    d["executor_health"]["next_probe_at"] = None
+                self.db.save_device(db, d)
             else:
+                self.db.set_meta(db, "simulated_executor_outage", False)
+                self.db.set_meta(
+                    db,
+                    "simulated_executor_disconnect_at",
+                    time.time() + 3 if request.scenario == "device_outage" else None,
+                )
                 db.execute("DELETE FROM content_status")
                 entries, now = fixtures(request.scenario)
                 self.replace_catalog(db, entries, "demo")
@@ -442,6 +467,9 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
                         "started_at": None,
                         "last_switch_at": None,
                         "force_switch": True,
+                        "recovery": None,
+                        "executor_health": {"state": "starting"},
+                        "retry_playback": None,
                     }
                 )
                 d["intent_version"] += 1
@@ -451,6 +479,8 @@ class Controller(PlaybackCoordinator, ContentStatusCoordinator):
                     d["plan"].append(self.entry("demo:jays"))
                 if request.scenario == "outside_feed":
                     db.execute("UPDATE contents SET active=0 WHERE id='demo:canadiens'")
+                if request.scenario == "coverage_switch":
+                    d["plan"] = [self.entry("demo:golf")]
                 db.execute("UPDATE jobs SET state='superseded' WHERE state='pending'")
                 db.execute("DELETE FROM edit_history WHERE device_id=?", (d["id"],))
                 self.db.save_device(db, d)

@@ -143,6 +143,8 @@ def fixtures(scenario="normal"):
         "replay": 800,
         "status_outage": 870,
         "outside_feed": 870,
+        "coverage_switch": 800,
+        "device_outage": 800,
     }[scenario]
     if scenario == "overtime":
         next(x for x in entries if x["id"] == "demo:canadiens")["_simulation"]["actual_end_time"] = instant(
@@ -159,6 +161,10 @@ def fixtures(scenario="normal"):
         next(x for x in entries if x["id"] == "demo:redzone")["_simulation"][flag] = True
     if scenario == "status_outage":
         next(x for x in entries if x["id"] == "demo:canadiens")["_simulation"]["status_error"] = True
+    if scenario == "coverage_switch":
+        golf = next(x for x in entries if x["id"] == "demo:golf")
+        golf["_simulation"]["route_switch_at"] = instant(815)
+        golf["viewing_options"][0]["expected_end_time"] = instant(815)
     return entries, instant(now)
 
 
@@ -217,4 +223,7 @@ def default_device(mode):
         "failures": {},
         "started_at": None,
         "last_switch_at": None,
+        "recovery": None,
+        "executor_health": {"state": "starting"},
+        "retry_playback": None,
     }

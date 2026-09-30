@@ -49,9 +49,16 @@ The card is a projection. The original Teamarr object is retained privately in t
 
 In version 0.4, `lifecycle.observed_at` is **nullable**. The Teamarr feed has no provider observation timestamp; its read time is now accurately exposed as `received_at` with `timestamp_basis: feed_received`. Repeated cached lookups cannot move the original evidence expiry. `state` becomes unknown on nonterminal expiry; the stored state remains visible in `last_known_state`.
 
-`playback_job` is null before any request, otherwise the latest request's `{id, content_id, state, progress, deadline_at, delivery_attempts, error}`. Job states are `pending`, `verified`, `failed`, `timed_out`, `rejected`, `cancelled`, or `superseded`. Progress distinguishes `queued`, `accepted`, `navigating`, `retrying`, `playing_verified`, and failure reasons/states; the job state remains authoritative after cancellation or supersession. `delivery_attempts` counts submission attempts, not inspection calls. The jobs endpoint also exposes the original payload, intent, executor job ID, ready time, and `cancel_sent` acknowledgement flag.
+`playback_job` is null before any request, otherwise the latest request's `{id, content_id, purpose, state, progress, deadline_at, delivery_attempts, error}`. Purpose is `selection`, `route_handoff`, or `recovery`; older jobs default to selection in this read model. Job states are `pending`, `verified`, `failed`, `timed_out`, `rejected`, `cancelled`, or `superseded`. Progress distinguishes `queued`, `accepted`, `navigating`, `retrying`, `playing_verified`, and failure reasons/states; the job state remains authoritative after cancellation or supersession. `delivery_attempts` counts submission attempts, not inspection calls. The jobs endpoint also exposes the original payload, intent, executor job ID, ready time, and `cancel_sent` acknowledgement flag.
 
 Observed playback is separate from desired content. `device.observed` includes content/request/device/intent identity, `viewing_option_id`, `presentation`, `verified`, `simulated`, `health`, `observed_at`, and `valid_until`. Expired evidence makes `verified` false while retaining the last identity. `device.playback_state` can be `waiting`, `navigating`, `verified`, `unverified`, or `failed`; pending navigation/failure may coexist with a last observation of the previous event.
+
+Version 0.5 adds device recovery read models, initialized lazily for existing devices:
+
+- `executor_health`: `state` (`starting`, `ok`, `offline`), `failures`, `since`, `last_contact_at`, `next_probe_at`, and sanitized `error`. The initial starting record can contain only state. A successful observation call establishes contact, even if it returns null; contact never substitutes for verified playback. Offline probes back off from 5 to 60 seconds and survive restart. Navigation delivery and cancellation wait while offline.
+- `recovery`: null or a record with `content_id`, `attempts`, `since`, `retry_after`, and `stable_since`. Times are nullable ISO timestamps using wall-clock UTC. A missing `since`/`retry_after` indicates recovered evidence whose retry budget is not yet reset. `attempts` counts same-event recovery reopen requests, not ordinary delivery retries or route handoffs. Thirty seconds of healthy observations clear the record. Grace defaults to 60 seconds and increases up to 300 after reopen attempts. Play now can bypass it for an unverified, confirmed-live target.
+
+After reconnect/grace, selection still requires confirmed live status for new requests. Unknown status can retain fresh verified playback on a permitted route; it cannot reopen an event. If both lifecycle and playback evidence are missing beyond grace, the controller selects a confirmed live fallback or waits, preserving reservations.
 
 `GET /api/v1/teams` returns `{items, health}`; the optional `league=nhl` query filters items. Each team has a stable `key` (`provider:league:id`), provider `id`, `provider`, `league`, `full_name`, and available `short_name`, `name`, `city`, `abbreviation`, and `logo_url` fields. City/nickname can be null; neither is inferred by splitting a display name. Teamarr cache entries map `provider_team_id` to `id`, not their local cache-row `id`. Event metadata can supply richer names. Teams are retained beyond the discovery window and through empty or failed refreshes.
 
@@ -162,6 +169,8 @@ The internal durable job contains this payload:
   "intent_version": 23,
   "content_id": "opaque-Teamarr-feed-entry-id",
   "mode": "live",
+  "purpose": "route_handoff",
+  "previous_request_id": "previously-observed-request-id",
   "content_snapshot_schema_version": 1,
   "content_snapshot": {"...": "complete original Teamarr entry"},
   "allowed_viewing_options": [{"...": "original valid option object"}]
@@ -173,6 +182,10 @@ The internal durable job contains this payload:
 Excluded options, explicit replay/highlight presentations, and partial/multi-event coverage that cannot satisfy a specific event/session are filtered out. An uncertainty such as an unknown end time is retained with its review reasons. RedZone is eligible as its own broadcast; it cannot be used to claim a full individual NFL game is playing. The future executor must resolve remaining review uncertainty and verify live presentation.
 
 The simulator chooses the first permitted option only to exercise the observation workflow. This is a simulator implementation detail, not a product preference or the future executor's route-selection policy.
+
+`purpose` and `previous_request_id` are additive version-0.5 fields. Purpose is `selection`, `route_handoff`, or `recovery`; previous request is the last observed request ID or JSON null. They explain the request but do not relax live verification or monotonic intent fencing. Older persisted payloads remain valid and are retried unchanged.
+
+Withdrawing the observed route or changing its playback locator stages a new intent for the same `content_id` with the latest snapshot and all currently allowed options. The controller compares `id`, `app`, `channel`, `stream_title`, `listing_url`, `broadcast_id`, `presentation`, and `coverage_type`. Pending requests are superseded if any of their issued options becomes incompatible. Reordering, adding alternatives, display changes, and estimated ends do not interrupt an existing valid route. The controller does not infer withdrawal from elapsed expected end times. Successful same-event handoff/recovery preserves the original viewing and switch timestamps and manual commitment.
 
 ## Playback adapter implemented today
 
@@ -203,7 +216,7 @@ A report has `request_id`, `executor_job_id`, `device_id`, `intent_version`, `co
 }
 ```
 
-All identity fields must match the staged request. The option must belong to the original permitted set. Missing verification, replay/unknown presentation, unhealthy playback, expired evidence, and timestamps over five seconds in the future are rejected. Evidence is usable for at most 15 seconds from observation, or until its earlier expiry. The controller rechecks its lease, active intent, automation mode, current selection, and deadline before accepting a result. Successful job history alone cannot substitute for current device evidence.
+All identity fields must match the staged request. The option must belong to the original permitted set and remain compatible with current coverage. Missing verification, replay/unknown presentation, unhealthy playback, expired evidence, and timestamps over five seconds in the future are rejected. Evidence is usable for at most 15 seconds from observation, or until its earlier expiry. The controller rechecks its lease, active intent, automation mode, current selection, route compatibility, and deadline before accepting a result. Successful job history alone cannot substitute for current device evidence.
 
 Cancellation targets a request, not a global stop command. The simulator keeps cancellation tombstones and rejects lower device intents. It must not let cancellation of an old request stop newer playback. Failed cancellation delivery remains queued across restarts. The simulator chooses an option only to exercise this contract; its observations are not evidence of real TV playback.
 

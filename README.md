@@ -2,7 +2,7 @@
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
-**Version 0.4: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): exercise controller recovery before connecting real status and playback services.
+**Version 0.5: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): complete unattended-operation checks before connecting real status and playback services.
 
 ## What works
 
@@ -18,7 +18,9 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 - A separate persistent playback simulator with idempotent delivery, restart reconciliation, cancellation retries, and navigation deadlines. Acknowledgement alone does not verify playback.
 - Validation of observed content, request, device, intent, permitted option, live presentation, and freshness. Expired evidence becomes unverified without completing the event.
 - Independent status checks for desired playback, observed playback, and every reservation, including entries outside the discovery window. Status evidence and retry state survive restarts; status health is separate from schedule health.
-- Demo scenarios for overlaps, overtime, delays, route failures, navigation timeout, rejected replay results, stale status, and an empty live schedule.
+- Same-event coverage handoff when a route is withdrawn or its playback locator changes, preserving the watch plan and viewing timers. Every currently permitted option is sent again.
+- Durable playback recovery grace, increasing retry delays, and service-outage probes. Reconnection rechecks the latest manual intent before navigation resumes.
+- Demo scenarios for overlaps, overtime, delays, route failures, navigation timeout, rejected replay results, coverage handoff, service/status outages, stale status, and an empty live schedule.
 - Teamarr pagination, expired-cursor recovery, atomic catalog replacement, and retention of the previous complete catalog when an HTTP refresh fails.
 
 The controller never offers replay or start-over. An expected end time is only a planning estimate. It never completes a manual commitment because an estimate elapsed, an entry disappeared from the feed, or playback temporarily failed.
@@ -53,7 +55,7 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Keep your existing `.env` and `controller-data` volume. Version 0.4 automatically migrates older databases to schema 4, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. The migration adds independent content-status records without inventing fresh observations. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
+Keep your existing `.env` and `controller-data` volume. Version 0.5 continues using database schema 4; recovery fields initialize automatically in existing device records. Older databases migrate to schema 4, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. No environment changes are required. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
 
 Configuration export under **Settings → Configuration backup** saves priorities, preferred teams, and switching/display preferences. Import shows a review before replacing those fields; it preserves the watch plan and automation mode. It is a configuration transfer, not a complete database backup, and contains no Teamarr credentials. Unresolved team IDs are retained with a warning so preferences survive temporary directory gaps.
 
@@ -63,7 +65,13 @@ Configuration export under **Settings → Configuration backup** saves prioritie
 
 In demo mode, load **Navigation timeout** or **Replay result rejected** from the scenario controls. The controller records the failed attempt, preserves the watch plan, and selects another eligible live event. The timeout scenario uses a three-second deadline so the transition is easy to observe. Normal requests use `NAVIGATION_TIMEOUT_SECONDS`, which defaults to 120 and has a minimum of 5.
 
-The playback details show request progress, delivery attempts, the pending deadline, and the latest request error. Activity retains earlier failure reasons after a fallback starts. Request acceptance and navigation are distinct from verified live playback. A playback observation expires after at most 15 seconds without fresh simulator evidence; the interface then shows **Last observed**. No new content-status conclusion is inferred from that outage.
+The playback details show request purpose, observed coverage, service contact, progress, delivery attempts, the pending deadline, and the latest request error. Activity retains earlier failure reasons after a fallback starts. Request acceptance and navigation are distinct from verified live playback. A playback observation expires after at most 15 seconds without fresh simulator evidence; the interface then shows **Last observed**. No new content-status conclusion is inferred from that outage.
+
+Load **Same-event coverage change**, wait for golf to be verified, then use **+15 min**. The fixture explicitly withdraws its TSN option. The controller requests the same golf event with the remaining valid option, preserving its manual protection and original viewing timers. An estimated coverage end alone never triggers a handoff or completes an event; the source must withdraw the option or change its playback locator.
+
+Load **Playback service outage** to disconnect the simulator after initial playback, or use **Disconnect simulator**. The controller stops new navigation and probes at increasing intervals of 5, 10, 20, 40, then 60 seconds. Playback evidence still expires. You can edit your plan during the outage; **Reconnect simulator** prompts a check and the latest live selection is honored. Probe and recovery state survive controller restart. These controls are unavailable in Teamarr mode.
+
+When the service responds but playback evidence is missing, the controller first waits for recovery. The initial grace is `PLAYBACK_RECOVERY_GRACE_SECONDS` (default 60, minimum 5). Repeated losses after recovery attempts increase the wait, up to 300 seconds; 30 seconds of healthy observations reset that budget. After grace, selection can reopen a confirmed live target, choose a confirmed live fallback, or wait. Unknown event status never authorizes a new playback request. Fresh verified playback can continue through a status outage. A higher live manual choice takes precedence, and **Play now** can explicitly retry an unverified live target without waiting for grace.
 
 The simulator stores executor state separately from controller jobs. On restart or an uncertain delivery outcome, the controller inspects the original request before resending the same ID. Cancellation is durable and retried; it ends pending navigation without stopping a newer target. These guarantees are exercised locally, with real executor transport still deferred.
 
@@ -160,6 +168,6 @@ Coverage includes database upgrades, persistent undo, configuration round trips,
 
 ## Next integrations
 
-See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Next, exercise coverage-option changes and prolonged status/device outages, followed by unattended-operation checks. Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
+See [docs/roadmap.md](docs/roadmap.md) for the agreed sequence and [docs/architecture.md](docs/architecture.md) for boundaries and remaining production work. Next are unattended-operation checks: bounded record retention, complete database backup/restore, longer simulation runs, and deployment/mobile checks on the user's host. Continue reviewing real event data and selection behavior against your Teamarr deployment. Real status and playback services follow that work, without changing the user's watch-plan commands.
 
 Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillflix/dillflix-live-controller). This application is versioned and deployed independently of Teamarr.

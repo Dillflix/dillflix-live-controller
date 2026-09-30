@@ -29,6 +29,13 @@ class SimulatedPlaybackAdapter:
         self.db = database
         self.observation_ttl = observation_ttl
 
+    def check_online(self, db):
+        disconnect_at = self.db.meta(db, "simulated_executor_disconnect_at")
+        if self.db.meta(db, "simulated_executor_outage", False) or (
+            disconnect_at and time.time() >= disconnect_at
+        ):
+            raise ConnectionError("Simulated playback service is disconnected")
+
     @staticmethod
     def report(row):
         payload = json.loads(row["payload"])
@@ -47,6 +54,7 @@ class SimulatedPlaybackAdapter:
         if request["mode"] != "live" or request["content_id"] != request["content_snapshot"]["id"]:
             raise ValueError("Playback request identity or presentation mismatch")
         with self.db.transaction() as db:
+            self.check_online(db)
             row = db.execute("SELECT * FROM simulated_jobs WHERE id=?", (request["request_id"],)).fetchone()
             if row:
                 if json.loads(row["payload"]) != request:
@@ -97,6 +105,7 @@ class SimulatedPlaybackAdapter:
 
     def inspect(self, request_id):
         with self.db.transaction() as db:
+            self.check_online(db)
             row = db.execute("SELECT * FROM simulated_jobs WHERE id=?", (request_id,)).fetchone()
             if row is None:
                 return None
@@ -144,6 +153,7 @@ class SimulatedPlaybackAdapter:
 
     def cancel(self, request_id):
         with self.db.transaction() as db:
+            self.check_online(db)
             # Remember cancellation even if it arrives before an uncertain submit.
             db.execute("INSERT OR IGNORE INTO simulated_cancellations VALUES (?)", (request_id,))
             db.execute(
@@ -153,6 +163,7 @@ class SimulatedPlaybackAdapter:
 
     def observe(self, device_id):
         with self.db.transaction() as db:
+            self.check_online(db)
             device = db.execute("SELECT * FROM simulated_devices WHERE device_id=?", (device_id,)).fetchone()
             if not device or not device["observation"]:
                 return None

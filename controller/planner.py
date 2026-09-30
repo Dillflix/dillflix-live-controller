@@ -137,7 +137,22 @@ def choose(device, items, now, real_now):
             else "Waiting for an eligible live event",
         }
     current = indexed.get(current_id)
-    if current and current["lifecycle"]["state"] == "unknown" and device.get("observed", {}).get("verified"):
+    observed = device.get("observed") or {}
+    recovery = device.get("recovery") or {}
+    grace = recovery.get("retry_after")
+    holding = bool(grace and recovery.get("content_id") == current_id and real_now < parse_time(grace))
+    route_present = current and observed.get("viewing_option_id") in {
+        o["id"] for o in current["viewing_options"]
+    }
+    leaving_current = device.get("playback_state") == "navigating" and device.get("desired") != current_id
+    if (
+        route_present
+        and not leaving_current
+        and (
+            (current["lifecycle"]["state"] == "unknown" and observed.get("verified"))
+            or (holding and current["lifecycle"]["state"] in {"live", "unknown"})
+        )
+    ):
         order = [p["content_id"] for p in device["plan"]]
         wins_manual = result["manual"] and (
             current_id not in order or order.index(result["content_id"]) < order.index(current_id)
@@ -147,13 +162,21 @@ def choose(device, items, now, real_now):
                 "content_id": current_id,
                 "manual": current_id in order,
                 "rule_id": None,
-                "reason": "Status is stale; retaining existing verified playback",
+                "reason": "Playback evidence is missing; allowing time for recovery"
+                if holding
+                else "Status is stale; retaining existing verified playback",
             }
     # Dwell/cooldown decides whether to start a switch. Once navigation is approved,
     # the previous event's timer must not reverse it while we await verification.
     if device.get("force_switch") or device.get("playback_state") == "navigating":
         return result
-    if current and current_id in ids and not result["manual"] and result["content_id"] != current_id:
+    if (
+        current
+        and observed.get("verified")
+        and current_id in ids
+        and not result["manual"]
+        and result["content_id"] != current_id
+    ):
         prefs = device["preferences"]
         started = parse_time(device.get("started_at"))
         switched = parse_time(device.get("last_switch_at"))

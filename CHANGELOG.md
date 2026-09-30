@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0
+
+- Continued milestone 3 with same-event coverage handoff. A withdrawn option or changed playback locator triggers a new request containing the latest complete Teamarr snapshot and every currently permitted option. Late results from obsolete routes are fenced out.
+- Preserve manual commitments and original viewing/cooldown timestamps across a successful handoff or same-event recovery. Option reordering, added alternatives, display changes, and estimated ends do not interrupt valid coverage.
+- Added durable observation recovery grace and increasing retry delays, with reset after sustained healthy observations. Unknown content status cannot authorize reopening; missing lifecycle and playback evidence eventually allows confirmed live fallback or waiting without completing commitments.
+- Added persisted playback-service health and probes with backoff, suspension of navigation while unreachable, restart continuity, and reevaluation of the latest manual intent on reconnect. Existing navigation deadlines remain unchanged.
+- Added recovery explanations, service contact, request purpose, and observed coverage to the existing interface. Demo controls now include same-event coverage change, service outage, and explicit disconnect/reconnect.
+- Prevented recovery grace for the previous event from reversing navigation already underway to a new selection.
+- Database schema remains 4; new device fields initialize automatically. Updated API contracts, operational examples, and the roadmap. Real Fire TV and authoritative status adapters remain deferred.
+
+Validation: 110 backend tests and 15 Chromium browser tests pass, including desktop and 390/320 px phone workflows. Docker and real status/playback services were not tested in this environment; both adapters remain simulated.
+
+Upgrade with `git pull --ff-only` and `docker compose up -d --build`. Keep the existing `.env` and persistent volume. `PLAYBACK_RECOVERY_GRACE_SECONDS` defaults to 60, so no environment change is required. Refresh the browser after updating.
+
 ## 0.4.0
 
 - Continued milestone 3 with an independent asynchronous content-status adapter and refresh worker. Desired playback, observed playback, and reservations remain tracked when entries leave discovery and while automation is paused.

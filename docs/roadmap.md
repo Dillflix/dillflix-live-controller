@@ -26,10 +26,14 @@ Version 0.4 completes the independent content-status increment:
 - Separate content-status health, event-level evidence details, and outage/outside-feed scenarios, with restart and mobile regression coverage.
 - Explicit distinction between source observation time and feed receipt time. The Teamarr-mode simulator cannot fetch new out-of-window facts; real authoritative lookup remains milestone 4.
 
-Next work, in order:
+Version 0.5 completes the coverage and prolonged-outage increment:
 
-1. Exercise coverage-option changes and prolonged status/device outages. Specify when to keep observing, retry, select another live event, or wait; avoid repeated switching and preserve commitments.
-2. Complete unattended-operation checks: bounded job/receipt retention, full database backup/restore, longer simulation runs, and deployment/mobile checks on the user's host.
+- Same-event handoff on source withdrawal or playback-locator change, updated full payloads/all permitted options, stale-route fencing, and preserved viewing timers/manual commitments.
+- Durable observation grace and increasing recovery delays; fresh playback can survive unknown lifecycle status, but unknown status never permits a new playback request. Confirmed fallback or waiting follows loss of both kinds of evidence.
+- Persisted service-outage probes, navigation suspension while unreachable, restart continuity, and reconciliation of the latest manual choice on reconnect.
+- Recovery explanations, request purpose/current coverage, coverage-change and disconnect/reconnect demo controls, and desktop/mobile regression coverage.
+
+Next: complete unattended-operation checks: bounded job/receipt retention, full database backup/restore, longer simulation runs, and deployment/mobile checks on the user's host.
 
 Do not treat a successful local simulator run as real playback verification or as completion of all milestone-3 work.
 

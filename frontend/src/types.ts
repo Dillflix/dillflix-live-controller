@@ -100,6 +100,20 @@ export interface Device {
     presentation: string;
   } | null;
   playback_state: string;
+  executor_health?: {
+    state: "starting" | "ok" | "offline";
+    last_contact_at?: string | null;
+    next_probe_at?: string | null;
+    since?: string | null;
+    failures?: number;
+  };
+  recovery?: {
+    content_id: string;
+    attempts: number;
+    since?: string | null;
+    retry_after?: string | null;
+    stable_since?: string | null;
+  } | null;
   reason: string;
   next_candidate?: { content_id: string; reason: string } | null;
   preferences: Preferences;
@@ -132,6 +146,7 @@ export interface Overview {
   };
   playback_job: {
     id: string;
+    purpose: "selection" | "route_handoff" | "recovery";
     content_id: string;
     state: string;
     progress: string | null;

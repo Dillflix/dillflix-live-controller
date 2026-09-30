@@ -10,6 +10,7 @@ The first milestone implements the web application and persistent controller ind
 | `controller/planner.py` | Project catalog cards, qualify viewing options, rank live candidates, and preview estimated manual windows |
 | `controller/service.py` | Apply revisioned commands, retain commitments, expose read models, and refresh the catalog/team directory |
 | `controller/coordinator.py` | Stage playback intent, deliver/inspect requests, validate results, enforce deadlines, retry cancellation, and reconcile observations |
+| `controller/recovery.py` | Compare coverage routes, track playback evidence recovery, and probe an unavailable playback service |
 | `controller/playback.py` | Playback adapter protocol and a separate persistent simulator; no device I/O |
 | `controller/content_status.py` | Independent lifecycle lookup contract, evidence validation/persistence, freshness projection, and refresh worker |
 | `controller/database.py` | Versioned SQLite migrations, records, edit history, activity, command receipts, and leases |
@@ -22,8 +23,8 @@ The first milestone implements the web application and persistent controller ind
 1. Candidates need live status and at least one permitted viewing option. A recent failed attempt temporarily defers that content. Inactive catalog entries remain candidates only when already observed or manually committed.
 2. The first eligible watch-plan entry wins. Its rank only matters during overlap; all other entries remain reserved for their remaining live windows.
 3. Otherwise, the first enabled matching rule wins. Conditions within a rule are ANDed. Within that tier, the best team rank wins, followed by the current event, scheduled start, and opaque content ID for stable ties.
-4. Existing verified playback is retained if its content status becomes unknown, unless a higher manual choice is confirmed live. Editing a future reservation does not accidentally clear this protection.
-5. Automatic changes respect minimum viewing time, cooldown, and same-tier switching. Manual choices bypass automatic dwell restrictions.
+4. Existing verified playback on a still-permitted route is retained if its content status becomes unknown, unless a higher manual choice is confirmed live. Missing playback evidence grants a bounded recovery grace instead. Editing a future reservation does not accidentally clear this protection.
+5. Automatic changes respect minimum viewing time, cooldown, and same-tier switching while current playback remains verified. Manual choices bypass automatic dwell restrictions.
 6. If no eligible live event exists, the controller waits. It never selects a replay as filler.
 
 The phase matcher uses explicit provider season metadata. It does not guess playoffs from dates or title strings. Missing stage metadata is `unknown`; rules requiring a stage will not match it. Broadcast and session entries can have no teams. A team's ranking key is `provider:league:id`, preventing provider IDs shared by two leagues from colliding.
@@ -41,6 +42,12 @@ The SQLite lease prevents a second coordinator from acting on the same device. P
 Request acceptance and navigation are progress, not playback verification. Results must match request/device/content/intent identity; verified observations must also identify an allowed viewing option, healthy live presentation, and valid observation/expiry timestamps. The controller requires evidence younger than 15 seconds and honors an earlier reported expiry. It never updates observation timestamps itself. An observation outage retains the last identity as unverified and does not imply event completion. Fresh matching evidence can recover verification without opening a new request. Pausing does not turn expired evidence into verification.
 
 Navigation has a persisted wall-clock deadline, normally 120 seconds from staging. Transport/inspection failures retry with the same request ID and bounded backoff without resetting that deadline. Expiry records a timed-out attempt, queues cancellation, and enables live fallback. The explicit demo timeout scenario uses three seconds. Pending schema-2 jobs receive a deadline on their first delivery check after upgrade.
+
+When playback evidence expires but the service remains reachable, a durable recovery grace holds the current live/unknown event if its route is still permitted. The default grace is 60 seconds, then 120, 240, and at most 300 seconds following repeated reopen attempts without sustained recovery. Thirty seconds of fresh healthy observations reset this budget. A brief recovery uses the original request and does not reset viewing timers. After grace, only confirmed live content can be opened again; the planner can choose a confirmed fallback or wait if all candidates are unknown. Manual commitments remain intact. A higher eligible manual choice takes precedence immediately; Play now on an unverified live event explicitly bypasses grace.
+
+An exception from `observe` marks the playback service offline. Persisted probes back off through 5, 10, 20, 40, and 60 seconds; only contact-state transitions are logged. While offline, the controller does not stage, submit, inspect, or cancel navigation jobs. It continues aging playback evidence and refreshing content status. A successful contact, including a null observation, restores reachability without claiming verified playback. Selection is reevaluated using the latest watch plan before delivery resumes. Existing deadlines do not extend during an outage; overdue pending work times out after reconnect. Submit/inspect failures with a functioning observation channel retain ordinary per-job retry behavior.
+
+Coverage compatibility is checked before staging and before accepting results or fresh observations. Withdrawal of the observed option or a change to its `id`, `app`, `channel`, `stream_title`, `listing_url`, `broadcast_id`, `presentation`, or `coverage_type` requests the same content with its latest complete snapshot and every current permitted option. Pending work is superseded if any originally issued option becomes incompatible. Option reordering, added alternatives, display metadata, and estimated end changes do not trigger a handoff. Estimated ends never withdraw coverage by themselves. A successful same-event handoff preserves original viewing/cooldown timestamps and manual protection; it is not a new event or proof of completion. Real executor handling of failures within its allowed option set remains part of the deferred integration.
 
 Cancellation is a durable obligation until the adapter acknowledges it. The simulator remembers cancellation even if it precedes submission; old intent cannot replace newer intent. Cancelling old navigation does not stop already-playing or newer content. An approved switch is not reversed by the previous event's dwell timer while awaiting verification, but current eligibility and manual order are still reevaluated before accepting results.
 
@@ -80,8 +87,7 @@ Open rule drafts, overlap reviews, and import previews retain the revision they 
 
 - Continue validating the actual household catalog, coverage routes, images, timezones, and proxy behavior after successful initial Teamarr testing.
 - Connect real content-status and playback services after the remaining simulator recovery work. Both adapter boundaries are implemented; authoritative out-of-window event status and actual device evidence are still future work.
-- Define executor option handoff when one broadcast window ends and another valid route for the same event begins. Route changes must not manufacture event completion.
-- Define recovery policy for prolonged device/observation outages and verify it with a real heartbeat source. Playback evidence now expires, separately from event lifecycle freshness.
+- Verify the implemented coverage handoff and prolonged-outage policies against real provider route changes, executor navigation, and device heartbeat evidence.
 - Add richer tournament/session/major filters.
 - Add completed-plan cleanup, job and command retention, complete database backup/restore tooling, and longer soak testing before unattended operation.
 - Implement multiple devices and explicit per-device executor ownership later. Natural-language actions can eventually translate into the same previewable API commands.
