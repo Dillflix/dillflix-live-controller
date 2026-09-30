@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dillflix-controller"
-version = "0.6.0"
+version = "0.7.0"
 description = "Persistent live-sports planner and web controller with simulated playback"
 requires-python = ">=3.12"
-dependencies = ["fastapi==0.141.1", "uvicorn==0.53.0", "httpx==0.28.1"]
+dependencies = ["fastapi==0.141.1", "uvicorn==0.53.0", "httpx==0.28.1", "websockets==16.0"]
 
 [project.optional-dependencies]
 test = ["pytest==9.1.1", "pytest-asyncio==1.4.0"]

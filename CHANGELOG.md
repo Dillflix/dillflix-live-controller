@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+- Added optional live device-screen mirroring through a separate view-only ADB/scrcpy bridge. The pinned server is verified by checksum, launched with unique session ownership, and stopped after the last viewer leaves. It sends no navigation/input commands and does not change playback evidence or watch-plan state.
+- Added a responsive screen panel with inline muted H.264 video, fullscreen, automatic reconnect, visible connection states, remembered show/hide preference, and background-tab suspension. Browser media retention and stalled decoding are bounded.
+- Share one capture among up to eight viewers; joining clients wait for a keyframe, and slow clients reconnect rather than retaining an unbounded backlog. WebSocket origins are checked, ADB targets remain server-configured, and input messages are rejected.
+- Added opt-in capture environment settings, pinned server installer, Docker ADB support and persistent identity home, nginx WebSocket configuration, setup/contract documentation, and dependency licenses. Existing installations remain capture-disabled until configured. Schema remains 4.
+- Used ws-scrcpy as an architectural reference; the implementation uses upstream scrcpy 3.3.4 and JMuxer 2.1.4 without requiring a separate ws-scrcpy deployment.
+
+Validation: 153 backend tests and 20 Chromium browser tests pass. Coverage includes real Uvicorn WebSocket transport, ADB subprocess/TCP doubles, shared capture and cleanup, and actual H.264 decoding/reconnection on desktop and phone-sized layouts. The pinned server download and checksum were also verified locally.
+
+Playback/navigation and independent content-status adapters remain simulated. Actual Fire TV capture, Docker deployment, protected-app video, nginx authentication, and physical mobile browsers require target-host testing. Protected video surfaces may appear black; mirroring cannot guarantee their visibility.
+
+Upgrade with `git pull --ff-only` and `docker compose up -d --build`, preserving `.env` and the data volume. See [screen setup](docs/screen-mirroring.md) to enable the optional feed.
+
 ## 0.6.0
 
 - Added consistent online SQLite backups, integrity/schema/JSON/reference verification, SHA-256 reporting, and atomic publication without overwriting existing backup files. Committed WAL data is included.

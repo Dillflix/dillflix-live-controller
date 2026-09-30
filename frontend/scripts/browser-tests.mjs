@@ -91,6 +91,8 @@ try {
           ...process.env,
           CONTROLLER_MODE: "demo",
           CONTROLLER_DATABASE: join(scratch, "controller.sqlite3"),
+          // Regression tests must never contact a developer's configured TV.
+          SCREEN_ADB_SERIAL: "",
         },
         stdio: ["ignore", "pipe", "pipe"],
       },

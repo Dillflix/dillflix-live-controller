@@ -3,7 +3,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -17,22 +17,42 @@ from .models import (
     UndoCommand,
 )
 from .planner import choose, priority, team_priority
+from .screen import ScreenStream, serve_screen
 from .service import Controller
 
 
 def create_app(settings=None, *, start_workers=True):
     settings = settings or Settings.from_env()
     service = Controller(settings)
+    screen = ScreenStream(settings)
 
     @asynccontextmanager
     async def lifespan(app):
         if start_workers:
             service.start()
-        yield
-        await service.stop()
+        try:
+            yield
+        finally:
+            await screen.stop()
+            await service.stop()
 
-    app = FastAPI(title="Dillflix Controller", version="0.6.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.7.0", lifespan=lifespan)
     app.state.controller = service
+    app.state.screen = screen
+
+    @app.get("/api/v1/devices/{device_id}/screen")
+    def screen_status(device_id: str):
+        with service.db.transaction() as db:
+            service.db.device(db, device_id)
+        return screen.status()
+
+    @app.websocket("/api/v1/devices/{device_id}/screen/stream")
+    async def screen_stream(websocket: WebSocket, device_id: str):
+        # One configured device today. Never let a browser select an ADB target.
+        if device_id != "living-room":
+            await websocket.close(code=1008)
+            return
+        await serve_screen(websocket, screen)
 
     @app.exception_handler(KeyError)
     async def missing(_request, _error):
@@ -204,6 +224,13 @@ def create_app(settings=None, *, start_workers=True):
     assets = settings.frontend / "assets"
     if assets.is_dir():
         app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+    @app.get("/screen-licenses.txt")
+    def screen_licenses():
+        notices = settings.frontend / "screen-licenses.txt"
+        if not notices.is_file():
+            raise HTTPException(404, "Build the web interface to include its dependency notices")
+        return FileResponse(notices, media_type="text/plain")
 
     @app.get("/")
     def index():

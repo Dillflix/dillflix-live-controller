@@ -233,3 +233,36 @@ Full database snapshots and offline restore use `python -m controller.ops`; see 
 No outbound playback HTTP endpoint or callback endpoint is connected yet. The future executor should accept the staged payload idempotently by `request_id`, apply monotonic intent fencing per device, and report request progress separately from observations. A successful acknowledgement must not count as live verification.
 
 The real executor must supply device evidence for the playback observation contract above, with transport timeouts and cancellation behavior appropriate to its navigation engine. A real content-status adapter must implement the lookup contract using authoritative event observations rather than discovery receipt times. Exact transport, authentication between services, status tokens, and real device recovery behavior will be finalized when those services are selected.
+
+## Screen viewing API
+
+`GET /api/v1/devices/living-room/screen` is a read-only, side-effect-free status/configuration read. It never starts ADB. Example when configured but unused:
+
+```json
+{
+  "enabled": true,
+  "state": "idle",
+  "viewers": 0,
+  "error": null,
+  "read_only": true,
+  "audio": false,
+  "max_size": 1280,
+  "max_fps": 30,
+  "bit_rate": 2000000,
+  "stream_path": "/api/v1/devices/living-room/screen/stream"
+}
+```
+
+Other states are `disabled`, `starting`, `streaming`, and `error`. Disabled configuration returns a null stream path. Errors describe the last capture failure; `idle` may retain that diagnostic until another start. Capture transport state is independent of actual video decoding in each browser and independent of verified sports playback. Target serial, server paths, and credentials are not exposed.
+
+`WS /api/v1/devices/living-room/screen/stream` starts or joins the shared capture. It requires a browser `Origin` with an HTTP(S) scheme and an authority matching the forwarded `Host`. nginx supplies authentication. Other device IDs are rejected; browser messages never become ADB commands, and application-level inbound messages close the socket with 1008. Protocol ping/pong remains transport-managed.
+
+The first text message identifies the stream:
+
+```json
+{"type":"stream","protocol":1,"codec":"h264","device_name":"Fire TV","width":1280,"height":720,"max_fps":30}
+```
+
+Binary messages preserve the pinned scrcpy 3.3.4 packet format: an 8-byte big-endian unsigned flags/timestamp field, a 4-byte big-endian payload length, then one H.264 Annex B packet. Bit 63 marks codec configuration, bit 62 a keyframe, and the lower 62 bits carry presentation time in microseconds. Configuration packets have no media timestamp. Packet payloads are limited to 4 MiB and configuration payloads to 64 KiB. This is screen-stream protocol 1; it is not compatible with arbitrary upstream scrcpy versions or ws-scrcpy's modified wire format.
+
+New viewers get configuration followed by the next keyframe, not a stored recording. A repeated stream metadata message requests decoder reinitialization after encoder configuration changes; initial dimensions are informational, and the H.264 SPS supplies the actual decoded dimensions. Errors are text messages such as `{"type":"error","message":"Authorize this controller's ADB connection on the TV, then reconnect."}`, followed by connection closure. Consumers reconnect for a fresh session; request IDs or content IDs are intentionally absent because a screen feed alone proves no content identity.

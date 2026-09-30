@@ -250,6 +250,117 @@ select:focus-visible {
   align-items: center;
   gap: 8px;
 }
+#df-app .df-screen {
+  margin: -8px 0 26px;
+  border: 1px solid var(--df-line);
+  border-radius: 12px;
+  background: var(--df-surface);
+  overflow: hidden;
+}
+#df-app .df-screen-header,
+#df-app .df-screen-footer {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+#df-app .df-screen-title,
+#df-app .df-screen-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+#df-app .df-screen-title h2 {
+  font-size: 0.9rem;
+}
+#df-app .df-screen-title p,
+#df-app .df-screen-footer p {
+  font-size: 0.75rem;
+  color: var(--df-muted);
+}
+#df-app .df-screen-title p {
+  overflow-wrap: anywhere;
+}
+#df-app .df-screen-state {
+  font-size: 0.73rem;
+  color: var(--df-muted);
+}
+#df-app .df-screen-state.is-live {
+  color: var(--df-success);
+}
+#df-app .df-screen-state.is-live::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 5px;
+}
+#df-app .df-screen-stage {
+  position: relative;
+  width: 100%;
+  background: #08090c;
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  aspect-ratio: 16 / 9;
+  max-height: 480px;
+}
+#df-app .df-screen-stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  object-fit: contain;
+}
+#df-app .df-screen-stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-height: none;
+  aspect-ratio: auto;
+}
+#df-app .df-screen-overlay {
+  position: absolute;
+  inset: 0;
+  background: #08090c;
+  color: #bfc5d0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  text-align: center;
+  font-size: 0.84rem;
+}
+#df-app .df-screen-overlay p {
+  max-width: 440px;
+}
+#df-app .df-screen-footer {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+#df-app .df-screen-footer p {
+  flex: 1;
+  min-width: 130px;
+}
+@media (max-width: 520px) {
+  #df-app .df-screen-header {
+    padding: 10px 12px;
+    gap: 6px;
+  }
+  #df-app .df-screen-header > .df-screen-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  #df-app .df-screen-stage {
+    min-height: 168px;
+  }
+}
 #df-app .df-button {
   border: 1px solid var(--df-line);
   background: var(--df-surface);

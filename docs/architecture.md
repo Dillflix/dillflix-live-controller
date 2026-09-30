@@ -17,6 +17,7 @@ The first milestone implements the web application and persistent controller ind
 | `controller/maintenance.py` | Retain recent history while preserving user and recovery references |
 | `controller/ops.py`, `controller/storage_lock.py` | Consistent SQLite backups, validation, offline restore, and cooperative process exclusion |
 | `controller/soak.py` | Isolated accelerated multi-day recovery and retention exercise |
+| `controller/screen.py`, `controller/screen_capture.py` | Shared, on-demand view-only ADB/scrcpy capture; independent of planner and playback evidence |
 | `controller/fixtures.py` | Explicit sample lifecycle transitions, independent of estimated end times |
 | `controller/api.py` | Same-origin HTTP API, update notifications, and built frontend |
 | `frontend/src` | React interface using server state rather than an independent browser watch plan |
@@ -97,6 +98,14 @@ The browser fetches `/overview` and listens to SSE invalidation notices. It also
 Mutations include command IDs and the observed configuration revision. The interface refreshes after saving and on a conflict; it does not silently merge another browser's plan. A successful mutation means the command was accepted, not that live playback was verified. Demo status is visible throughout the interface.
 
 Open rule drafts, overlap reviews, and import previews retain the revision they were reviewed against, even if SSE refreshes the underlying overview. An overlap review offers Refresh preview; rule/import conflicts require reopening the review. The team selector uses the retained directory, and ranking controls preserve saved identities absent from it. Unranked teams share a tie-break value rather than acquiring implicit preferences from list order.
+
+## Device screen
+
+Version 0.7 adds an opt-in live screen view, separately from the deferred navigation executor. Opening the panel establishes a same-origin WebSocket to a configured device. A server-side capture bridge starts the pinned scrcpy server over ADB with audio/control/power-on disabled. Unique process/socket/file ownership prevents cleanup from stopping another scrcpy client. The browser cannot choose an ADB address or send input commands.
+
+One capture session serves up to eight viewers. New viewers receive codec configuration and wait for a keyframe. Rotation/encoder configuration changes reset browser decoding. Per-viewer packet/byte limits, read/send timeouts, decoder stall detection, media retention limits, and reconnect backoff bound failure behavior. Closing the last viewer stops the capture and removes its ADB forward; background tabs release their viewers. Shutdown cleanup is protected from a cancelled WebSocket request scope. The bridge never globally disconnects ADB or kills unrelated sessions.
+
+This screen feed does not write to the catalog, watch plan, jobs, observed playback, or content-status evidence. A visible image cannot prove event identity, live presentation, or completion; those require the future executor/status contracts. Protected surfaces may appear black. See [screen-mirroring.md](screen-mirroring.md) for settings, deployment, and hardware-validation limits.
 
 ## Production work remaining
 

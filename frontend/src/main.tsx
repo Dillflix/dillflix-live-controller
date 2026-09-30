@@ -37,6 +37,7 @@ import {
 import { api, ApiError, commandId } from "./api";
 import { TeamRanking } from "./TeamRanking";
 import { ConfigurationTools } from "./ConfigurationTools";
+import { ScreenPanel } from "./ScreenPanel";
 import type {
   Action,
   ConfigurationDocument,
@@ -880,6 +881,7 @@ function App() {
                 </Button>
               </div>
             </section>
+            <ScreenPanel deviceId={d.id} deviceName={d.name} />
             {!connected && (
               <div className="df-warning" role="status">
                 Connection interrupted. Showing the last received state;

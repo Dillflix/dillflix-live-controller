@@ -1,6 +1,6 @@
 {
   "name": "dillflix-controller-web",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "test:browser": "node scripts/browser-tests.mjs"
   },
   "dependencies": {
+    "jmuxer": "2.1.4",
     "lucide-react": "1.40.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"

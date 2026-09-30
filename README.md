@@ -2,10 +2,11 @@
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
-**Version 0.6: playback and content-status verification remain simulated. It does not connect to Fire TV or send ADB commands.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): complete unattended-operation checks before connecting real status and playback services.
+**Version 0.7 adds optional live device-screen mirroring over ADB. Event playback/navigation and content-status verification remain simulated.** The interface, database, API, policy engine, and Teamarr HTTP adapter are implemented. Initial user testing has confirmed startup and the Teamarr connection; automated integration tests use the fork's contract and mocked HTTP responses. Current work follows [the delivery roadmap](docs/roadmap.md): complete unattended-operation checks before connecting real status and playback services. Screen capture is a separate, view-only service.
 
 ## What works
 
+- An optional live device-screen panel with inline phone video, fullscreen, automatic reconnect, shared capture across viewers, and cleanup when the panel or tab is hidden. See [screen setup](docs/screen-mirroring.md).
 - Events page with live/upcoming views, league filters, search, structured team names, provider logos, event details, and manual selection.
 - A persistent watch plan. The first eligible manual entry wins an overlap; the others resume while still live. Play now moves an event to the front without deleting other commitments.
 - Ordered priority rules for leagues, season stages, teams, content kind, and coverage sources, all editable in the UI. Team rankings break ties within a rule.
@@ -57,7 +58,7 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Keep your existing `.env` and `controller-data` volume. Version 0.6 continues using database schema 4. Maintenance initializes automatically and uses safe defaults for existing installations. Older databases migrate to schema 4, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. No environment changes are required. Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
+Keep your existing `.env` and `controller-data` volume. Version 0.7 continues using database schema 4. Older databases migrate to schema 4, retaining settings, watch-plan entries, catalog snapshots, pending requests, command receipts, and edit history. No environment changes are required unless you enable screen mirroring. Add `SCREEN_ADB_SERIAL=your-fire-tv-ip:5555` and the WebSocket location from [the nginx example](docs/nginx.conf.example) to enable it; see [screen setup](docs/screen-mirroring.md). Refresh the browser after updating. A database created by a newer controller is rejected rather than silently downgraded. See [CHANGELOG.md](CHANGELOG.md) for release details.
 
 Configuration export under **Settings → Configuration backup** saves priorities, preferred teams, and switching/display preferences. Import shows a review before replacing those fields; it preserves the watch plan and automation mode. It is a configuration transfer, not a complete database backup, and contains no Teamarr credentials. Unresolved team IDs are retained with a warning so preferences survive temporary directory gaps.
 
@@ -144,6 +145,8 @@ Interactive request schemas are available at `/docs`; the generated OpenAPI docu
 | `GET /api/v1/events` | Catalog cards, lifecycle observations, options, and metadata |
 | `GET /api/v1/teams?league=nhl` | Persistent team directory and independent refresh health |
 | `GET /api/v1/devices/{id}/state` | Plan, configuration revision, desired target, and observed playback |
+| `GET /api/v1/devices/{id}/screen` | Screen configuration and capture status; no device contact |
+| `WS /api/v1/devices/{id}/screen/stream` | On-demand view-only H.264 stream over the authenticated origin |
 | `GET /api/v1/devices/{id}/watch-plan` | Ordered commitments and estimated overlap timeline |
 | `POST /api/v1/devices/{id}/watch-plan/preview` | Preview a proposed command without saving it |
 | `POST` or `PATCH /api/v1/devices/{id}/watch-plan` | Add, play now, reorder, or remove |

@@ -44,6 +44,10 @@ Remaining milestone-3 work is target-host validation: Docker build and disposabl
 
 Do not treat a successful local simulator run as real playback verification or as completion of all milestone-3 work.
 
+## Live screen addition — implemented in 0.7
+
+The requested screen view is available before autonomous navigation: an independent ADB/scrcpy capture bridge, native browser video panel, phone layout, fullscreen, shared viewers, and automatic reconnect/cleanup. It is opt-in and makes no event-selection or playback-verification claims. Local tests use a subprocess/TCP ADB double and actual H.264 browser decoding. Validate capture on the target Fire TV, protected streaming apps, authenticated nginx, and physical mobile browsers using [the setup guide](screen-mirroring.md). This addition does not complete or replace the remaining host checks or deferred executor work.
+
 ## 4. Connect real status and playback services — deferred
 
 Choose the authoritative content-status service and executor transport. Implement real request timeouts, request inspection, cancellation/fencing, and device observations behind the tested boundaries. Verify the requested event and live presentation on the device, exercise process/device/network recovery, and run unattended trials before relying on continuous coverage.

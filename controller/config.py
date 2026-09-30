@@ -24,6 +24,12 @@ class Settings:
     job_history_limit: int = 1000
     command_history_limit: int = 10000
     catalog_retention_days: int = 30
+    screen_adb_serial: str = ""
+    screen_adb_path: str = "adb"
+    screen_server_path: Path = Path("data/scrcpy-server-v3.3.4")
+    screen_max_size: int = 1280
+    screen_max_fps: int = 30
+    screen_bit_rate: int = 2000000
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
     @classmethod
@@ -46,4 +52,10 @@ class Settings:
             job_history_limit=max(50, int(os.getenv("JOB_HISTORY_LIMIT", "1000"))),
             command_history_limit=max(100, int(os.getenv("COMMAND_HISTORY_LIMIT", "10000"))),
             catalog_retention_days=max(1, int(os.getenv("CATALOG_RETENTION_DAYS", "30"))),
+            screen_adb_serial=os.getenv("SCREEN_ADB_SERIAL", "").strip(),
+            screen_adb_path=os.getenv("SCREEN_ADB_PATH", "adb"),
+            screen_server_path=Path(os.getenv("SCREEN_SERVER_PATH", "data/scrcpy-server-v3.3.4")),
+            screen_max_size=min(1920, max(320, int(os.getenv("SCREEN_MAX_SIZE", "1280")))),
+            screen_max_fps=min(60, max(5, int(os.getenv("SCREEN_MAX_FPS", "30")))),
+            screen_bit_rate=min(12000000, max(250000, int(os.getenv("SCREEN_BIT_RATE", "2000000")))),
         )
