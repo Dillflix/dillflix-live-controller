@@ -10,7 +10,7 @@ from .adb import PACKAGE
 
 PRIME_APPS = {"primevideo", "amazonprimevideo", "amazonprime", "comamazonfirebat"}
 BLOCKED = re.compile(
-    r"\b(replay|highlights?|subscribe|subscription required|purchase|buy|rent|start over|beginning|sign in)\b",
+    r"\b(replay|highlights?|recap|multiview|resume|subscribe|subscription required|purchase|buy|rent|start over|beginning|sign in)\b",
     re.I,
 )
 LIVE = re.compile(r"\b(live|en direct)\b", re.I)
@@ -111,7 +111,7 @@ def identity_matches(identity, snapshot, captured_at, timezone="America/Vancouve
     return norm(identity.title) in {norm(t) for t in titles if t}
 
 
-def route_matches(identity, option):
+def route_matches(identity, option, *, allow_unknown=False):
     if identity is None or not prime_option(option):
         return False
     # Explicit provider/language constraints cannot be silently satisfied by some
@@ -125,12 +125,14 @@ def route_matches(identity, option):
             and requested.strip()
             and norm(requested) not in {norm("Prime Video"), norm(PACKAGE)}
         ):
-            if not observed or norm(requested) != norm(observed):
+            if (not observed and not allow_unknown) or (observed and norm(requested) != norm(observed)):
                 return False
     return True
 
 
 def activation_allowed(scene, request, option, frame, timezone):
+    from .navigation import activation_agrees, watch_live
+
     focus = scene.focus
     if scene.blocker != "none" or not focus.label or BLOCKED.search(focus.label):
         return False
@@ -138,9 +140,13 @@ def activation_allowed(scene, request, option, frame, timezone):
         return not re.search(r"\b(watch|play|resume|start)\b", focus.label, re.I)
     if focus.role not in {"event", "play_live"}:
         return False
+    if not activation_agrees(scene, frame.native_focus):
+        return False
+    if focus.role == "play_live" and not watch_live(focus.label):
+        return False
     if not identity_matches(focus.identity, request["content_snapshot"], frame.captured_at, timezone):
         return False
-    if not route_matches(focus.identity, option):
+    if not route_matches(focus.identity, option, allow_unknown=focus.role == "event"):
         return False
     return bool(
         focus.availability == "live"
@@ -155,13 +161,27 @@ def playing_session(frame):
     return active[0] if len(active) == 1 and active[0]["package"] == PACKAGE else None
 
 
-def playback_sample(scene, frame, request, timezone):
+def player_matches(scene, frame, request, option, timezone):
     player = scene.player
     return bool(
         scene.surface == "player"
         and scene.blocker == "none"
         and player
         and identity_matches(player.identity, request["content_snapshot"], frame.captured_at, timezone)
+        and route_matches(player.identity, option)
+        and player.live_edge is not False
+        and player.transport in {"playing", "unknown"}
+    )
+
+
+def playback_sample(scene, frame, request, timezone, option=None):
+    player = scene.player
+    return bool(
+        scene.surface == "player"
+        and scene.blocker == "none"
+        and player
+        and identity_matches(player.identity, request["content_snapshot"], frame.captured_at, timezone)
+        and (option is None or route_matches(player.identity, option))
         and player.live_edge is True
         and player.live_text
         and LIVE.search(player.live_text)
@@ -179,11 +199,9 @@ def progression(previous, current):
     a, b = old_scene.player.position_seconds, scene.player.position_seconds
     if a is not None and b is not None and 0 < b - a <= elapsed * 3 + 5:
         return True
-    before, after = playing_session(old_frame), playing_session(frame)
-    if not before or not after:
-        return False
-    a, b = before.get("position_ms"), after.get("position_ms")
-    return a is not None and b is not None and a >= 0 and 0 < b - a <= (elapsed * 3 + 5) * 1000
+    # MediaSession positions can be extrapolated or use an unrelated timebase.
+    # Only a visible elapsed player timer supports this visual fallback.
+    return False
 
 
 def completed(scene, frame, request, timezone):

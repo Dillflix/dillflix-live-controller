@@ -96,16 +96,16 @@ def identity():
     }
 
 
-def scene(*, playing=False, ended=False, availability="live"):
+def scene(*, playing=False, menu=False, ended=False, availability="live"):
     return Scene.model_validate(
         {
-            "surface": "player" if playing else "search",
+            "surface": "player" if playing else "live_choice" if menu else "search",
             "search_state": "listings",
             "current_query": None,
             "blocker": "none",
             "focus": {
-                "label": "Jets vs. Lions",
-                "role": "event",
+                "label": "Watch Live" if menu else "Jets vs. Lions",
+                "role": "play_live" if menu else "event",
                 "identity": identity(),
                 "availability": availability,
                 "live_text": "LIVE" if availability == "live" else availability.upper(),
@@ -115,7 +115,7 @@ def scene(*, playing=False, ended=False, availability="live"):
                 "live_edge": True,
                 "live_text": "LIVE",
                 "transport": "playing",
-                "position_seconds": None,
+                "position_seconds": time.monotonic(),
             }
             if playing
             else None,
@@ -124,6 +124,18 @@ def scene(*, playing=False, ended=False, availability="live"):
                 "scope": "game" if ended else "unknown",
                 "final_text": "FINAL" if ended else None,
             },
+            "action_menu": {
+                "identity": identity(),
+                "availability": availability,
+                "live_text": "LIVE",
+                "layout": "vertical",
+                "items": [
+                    {"label": "Watch Live", "provider": None, "language": None},
+                    {"label": "Resume", "provider": None, "language": None},
+                ],
+            }
+            if menu
+            else None,
         }
     )
 
@@ -131,6 +143,7 @@ def scene(*, playing=False, ended=False, availability="live"):
 class Device:
     def __init__(self):
         self.actions, self.playing, self.ended = [], False, False
+        self.menu = False
         self.captures = 0
         self.stop_error = False
         self.stop_release = None
@@ -141,8 +154,10 @@ class Device:
     async def close(self):
         pass
 
-    async def prepare_input(self, action, *, frame=None):
+    async def prepare_input(self, action, *, frame=None, native=None):
         self.validate_frame(frame)
+        if native:
+            self.validate_native(native)
 
     async def after_input(self, action):
         pass
@@ -153,17 +168,25 @@ class Device:
     def invalidate_focus(self):
         pass
 
+    def native_focus(self):
+        return None
+
     async def launch(self):
         self.actions.append("LAUNCH")
 
     async def search(self, query):
         self.actions.append("SEARCH:" + query)
         self.playing = False
+        self.menu = False
 
     async def key(self, action):
         self.actions.append(action)
         if action == "SELECT":
-            self.playing = True
+            if self.menu:
+                self.playing = True
+                self.menu = False
+            else:
+                self.menu = True
 
     async def state(self):
         return PACKAGE, [
@@ -178,10 +201,36 @@ class Device:
 
     async def capture(self):
         self.captures += 1
-        image = json.dumps({"playing": self.playing, "ended": self.ended, "capture": self.captures}).encode()
+        image = json.dumps(
+            {"playing": self.playing, "menu": self.menu, "ended": self.ended, "capture": self.captures}
+        ).encode()
         return Frame(
-            image, hashlib.sha256(image).hexdigest(), datetime.now(UTC), PACKAGE, (await self.state())[1]
+            image,
+            hashlib.sha256(image).hexdigest(),
+            datetime.now(UTC),
+            PACKAGE,
+            (await self.state())[1],
+            runtime={**await self.runtime(), "capture_association": "unchanged"},
         )
+
+    async def runtime(self):
+        return {
+            "source": "media_probe",
+            "source_health": "fresh",
+            "foreground": PACKAGE,
+            "boot_id": "fixture-boot",
+            "identity_revision": 1,
+            "active_confirmed": True,
+            "observed_at": datetime.now(UTC).isoformat(),
+            "device_elapsed_ms": time.monotonic() * 1000,
+            "session": {
+                "session_token": "fixture-session",
+                "runtime_media_id": "fixture-media",
+                "identity_status": "consistent",
+                "transport": "playing" if self.playing else "none",
+                "position_ms": 344511168,
+            },
+        }
 
     async def stop(self):
         if self.stop_release:
@@ -207,7 +256,7 @@ class Vision:
                 self.cancelled = True
                 raise
         fields = json.loads(frame.image)
-        return scene(playing=fields["playing"], ended=fields["ended"])
+        return scene(playing=fields["playing"], menu=fields["menu"], ended=fields["ended"])
 
     async def decide(self, frame, request, option, history, feedback=None):
         return "FINISH" if json.loads(frame.image)["playing"] else "SELECT"
@@ -257,7 +306,7 @@ def test_api_durable_play_get_active_cancel_and_authentication(api):
     assert report["operation"]["state"] == "playing_verified", report
     PlaybackReport.model_validate(report)
     assert report["observation"]["simulated"] is False and report["observation"]["verified"]
-    assert engine.device.actions.count("SELECT") == 1
+    assert engine.device.actions.count("SELECT") == 2
     assert "SEARCH:Jets Lions" in engine.device.actions
     cancelled = client.post(
         "/v1/playbacks/cancel", headers=HEADERS, json={"device_id": "living-room", "token": token}
@@ -468,6 +517,9 @@ def test_identity_date_route_and_completion_negative_cases():
     )
     current = scene()
     option = {**request["allowed_viewing_options"][0], "channel": "DAZN"}
+    # Opening the matching card can reveal route details. Playing still needs them.
+    assert activation_allowed(current, request, option, frame, "America/Vancouver")
+    current = scene(menu=True)
     assert not activation_allowed(current, request, option, frame, "America/Vancouver")
     current.focus.role, current.focus.label = "navigation", "Watch replay"
     assert not activation_allowed(current, request, option, frame, "America/Vancouver")
@@ -604,6 +656,7 @@ async def test_controller_receives_real_token_observation_pause_and_completion(t
     service = Controller(settings(tmp_path))
     engine = service.executor
     engine.device, engine.vision = Device(), Vision()
+    engine.vision.block = asyncio.Event()
     request = payload()
     with service.db.transaction() as db:
         service.replace_catalog(db, [request["content_snapshot"]], "teamarr")
@@ -618,6 +671,7 @@ async def test_controller_receives_real_token_observation_pause_and_completion(t
             job = db.execute("SELECT * FROM jobs").fetchone()
         token = job["executor_job_id"]
         assert token and engine.store.report(token)["operation"]["state"] in {"accepted", "navigating"}
+        engine.vision.block.set()  # Assert async acceptance without relying on inference being slow.
         await until(lambda: engine.store.report(token)["operation"]["state"] == "playing_verified")
         await service.playback_work(service.tick)
         observed = service.overview()["device"]["observed"]
@@ -1024,7 +1078,7 @@ async def test_pre_input_io_cannot_extend_frame_lifetime(tmp_path, monkeypatch):
         await service.stop()
 
 
-async def test_focus_change_in_second_playback_sample_recaptures_without_reactivating(tmp_path, monkeypatch):
+async def test_focus_change_in_watch_live_confirmation_recaptures_without_reactivating(tmp_path, monkeypatch):
     service = Controller(settings(tmp_path))
     engine = service.executor
     engine.device, engine.vision = Device(), Vision()
@@ -1038,7 +1092,7 @@ async def test_focus_change_in_second_playback_sample_recaptures_without_reactiv
     async def reading(token, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 4:  # Initial scene, Select confirmation, player, second player sample.
+        if calls == 4:  # Result, result confirmation, action menu, Watch Live confirmation.
             raise ExecutorError("stale_navigation_focus", "fixture focus changed during observer")
         return await original(token, **kwargs)
 
@@ -1047,7 +1101,7 @@ async def test_focus_change_in_second_playback_sample_recaptures_without_reactiv
         assert await engine.navigate_query(
             report["token"], request, request["allowed_viewing_options"][0], "Jets Lions", timezone
         )
-        assert calls == 6 and engine.device.actions == ["SELECT"]
+        assert calls == 7 and engine.device.actions == ["SELECT", "SELECT"]
         assert engine.store.report(report["token"])["operation"]["state"] == "playing_verified"
     finally:
         await service.stop()

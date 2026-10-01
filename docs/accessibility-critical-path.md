@@ -1,8 +1,10 @@
 # Accessibility grounding: evidence and implementation correction
 
-Audit date: 2026-09-30. Status: collector and capture/input integration implemented in 0.9.1; live critical-path validation not performed.
+Original audit: 2026-09-30. Update: 2026-10-01. Version 0.10.0 adds the later recorder fixes, measured action-menu policy and structured runtime association described in [runtime grounding](runtime-grounding.md). The supplied capture 05 establishes one successful manual path; autonomous target-TV validation is still outstanding.
 
-The initial 0.9.0 Python executor omitted accessibility collection. Its `Scene.focus.label` was only a vision-model reading. No comparative evaluation justified that omission. Version 0.9.1 ports the native collector, action timing, screenshot association and focus-revision safeguards described below. `Scene.focus` remains the independent visual reading; acquired native evidence is carried separately in `Frame.native_focus`. The three API operations remain unchanged. Complete physical search-to-play behavior is still unvalidated.
+The initial 0.9.0 Python executor omitted accessibility collection. Its `Scene.focus.label` was only a vision-model reading. No comparative evaluation justified that omission. Version 0.9.1 ported the collector, action timing, screenshot association and focus-revision safeguards. `Scene.focus` remains the independent visual reading; native evidence is separate in `Frame.native_focus`. Version 0.10.0 also uses native labels in deterministic menu traversal and activation contradiction checks. The three API operations remain unchanged.
+
+The inventory and stage matrix below describe the **original exploration corpus**. Its earlier gaps in result movement, action labels and player behavior are now partly covered by capture 05: repeated row labels across different games, exact multiline action labels, unlabeled player focus and structured media transitions. See the new [source-by-source matrix and remaining gaps](runtime-grounding.md#what-each-source-can-establish); do not treat the earlier corpus limitations as an assessment of the later attachments.
 
 Accessibility is a foundational runtime evidence source for this work. Its authority must be scoped to what each event actually describes. A native keyboard label can identify the input receiver even while the requested event is visible elsewhere. A sports-row label can establish row context without identifying an individual match. These limitations require combining evidence; they do not justify discarding it.
 
@@ -50,7 +52,9 @@ The port in `controller/executor/accessibility.py` uses `tvtheseus/accessibility
 - Do not reinterpret no event, repeated text, or unchanged event revision as proof of a stationary screen, same element instance, or failed movement. Keep a bounded visual fallback when native evidence is unavailable; a known unresolved contradiction requires reobservation.
 - Keep collection, capture, inference and waits nonblocking. Tie collector ownership and cleanup to the device worker; invalidate across Cancel, handoff, restart and connection changes. A physical remote or other ADB client remains outside the input gate, so observed changes still matter.
 
-## Ordered implementation and validation plan
+## Original implementation plan and subsequent progress
+
+Steps 1 and 3 now include complete multiline framing, separate transport streams, pending-record capture validity, listener failure latching/owned remote cleanup, native activation contradictions, observed-order menu navigation and runtime-bound monitoring. Step 2 has the later manual capture and the user's short-Select clarification. Full autonomous trials and contribution measurements in step 4 remain outstanding. The opt-in multi-step recorder described below is a separate development tool proposal; the production collector and read-only single-capture diagnostics are implemented.
 
 ### 1. Port collection and add a recorder before extending navigation policy
 
@@ -86,7 +90,9 @@ Compare screenshot-only and combined-evidence decisions on matched recorded obse
 
 Acceptance: the requested event actually starts at the live presentation and token status agrees with the independent outcome observation. Upcoming/replay/purchase alternatives are not activated. Label or focus completion never becomes event-completion evidence. Broader unattended reliability and event-end monitoring remain distinct validations.
 
-## Completion accounting
+## Original 0.9.1 completion accounting
+
+The following records what shipped in 0.9.1. Current implementation and acceptance coverage are in [runtime grounding](runtime-grounding.md); in particular, 0.10.0 replaces automatic listener reconnect with latched failure and uses measured action-menu/runtime semantics.
 
 Completed: audit of available search/focus observations and reproducible inventory; the Python native collector; action/device-clock boundaries; dual channels; version-scoped Prime bursts; before/after/finalized screenshot association; native metadata in JSON and TVTheseus actor requests; stale-observation/input rejection; manual-input invalidation; bounded stream reconnect/cleanup; and read-only native diagnostics. The goal-blind visual observer receives no native label or expected answer.
 

@@ -10,10 +10,12 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import quote
+from uuid import uuid4
 
 from PIL import Image, ImageStat, UnidentifiedImageError
 
 from .accessibility import FocusCollector, associate_capture, observation_validity
+from .media import PROBE, MediaTracker, identity_key, records
 from .models import ExecutorError
 
 PACKAGE = "com.amazon.firebat"
@@ -31,6 +33,7 @@ class Frame:
     sessions: list[dict]
     native_focus: dict | None = None
     captured_monotonic: float | None = None
+    runtime: dict | None = None
 
 
 def prepare_image(png):
@@ -89,14 +92,47 @@ def media_sessions(text):
 class AdbDevice:
     def __init__(self, settings):
         self.settings, self.config = settings, settings.executor
+        self.media = MediaTracker()
+        self._probe_retry_at = 0
         serial = settings.screen_adb_serial
         if not serial or serial.startswith("-") or not re.fullmatch(r"[\w.:[\]%-]+", serial):
             raise ValueError("Real playback requires SCREEN_ADB_SERIAL for the configured TV")
+        marker = "__DF_A11Y_" + uuid4().hex + "__"
+        script = (
+            "uiautomator events & p=$!; s=$(awk '{print $22}' /proc/$p/stat); "
+            "cleanup() { now=$(awk '{print $22}' /proc/$p/stat 2>/dev/null); "
+            '[ -n "$s" ] && [ "$now" = "$s" ] && kill "$p" 2>/dev/null; }; '
+            "trap cleanup EXIT; trap 'exit 143' HUP INT TERM; "
+            f'echo "{marker} $p $s"; wait "$p"; rc=$?; trap - EXIT; exit "$rc"'
+        )
         self.accessibility = FocusCollector(
-            [settings.screen_adb_path, "-s", serial, "shell", "uiautomator", "events"],
+            [settings.screen_adb_path, "-s", serial, "shell", "sh", "-c", shlex.quote(script)],
             self.app_version,
             timeout=self.config.adb_timeout,
+            remote_marker=marker,
+            remote_cleanup=self.stop_listener,
         )
+
+    async def stop_listener(self, identity):
+        pid, ticks = identity["pid"], identity["start_ticks"]
+        if type(pid) is not int or type(ticks) is not int or min(pid, ticks) <= 0:
+            raise ValueError("Invalid owned listener identity")
+        # PID reuse cannot authorize a signal to another process. Read cmdline
+        # as a second check, exactly as the uploaded recorder's cleanup does.
+        script = (
+            f"s=$(awk '{{print $22}}' /proc/{pid}/stat 2>/dev/null); "
+            f'if [ "$s" != "{ticks}" ]; then echo absent_or_reused; '
+            f"else c=$(tr '\\000' ' ' < /proc/{pid}/cmdline); case \"$c\" in "
+            f"*uiautomator*) kill {pid} 2>/dev/null; "
+            'i=0; while [ "$i" -lt 20 ]; do '
+            f"s=$(awk '{{print $22}}' /proc/{pid}/stat 2>/dev/null); "
+            f'if [ "$s" != "{ticks}" ]; then echo stopped_owned_listener; exit 0; fi; '
+            "i=$((i+1)); sleep 0.1; done; echo cleanup_unconfirmed;; "
+            "*) echo identity_mismatch;; esac; fi"
+        )
+        result = await self.shell("sh", "-c", script)
+        if result.strip() not in {"absent_or_reused", "stopped_owned_listener"}:
+            raise ExecutorError("accessibility_cleanup_unconfirmed", "Owned listener cleanup is unconfirmed")
 
     async def app_version(self):
         package = await self.shell("dumpsys", "package", PACKAGE)
@@ -110,6 +146,9 @@ class AdbDevice:
     def invalidate_focus(self):
         self.accessibility.invalidate()
 
+    def native_focus(self):
+        return self.accessibility.snapshot()
+
     def validate_frame(self, frame):
         validity = observation_validity(frame.native_focus, self.accessibility.snapshot())
         if validity["status"] == "changed":
@@ -118,7 +157,18 @@ class AdbDevice:
             )
         return validity
 
-    async def prepare_input(self, action, *, frame=None):
+    def validate_native(self, snapshot):
+        from .accessibility import same_validity
+
+        current = self.accessibility.snapshot()
+        if (
+            not current["usable"]
+            or not snapshot.get("usable")
+            or not same_validity(snapshot.get("validity"), current.get("validity"))
+        ):
+            raise ExecutorError("stale_navigation_focus", "Native focus changed before controller input")
+
+    async def prepare_input(self, action, *, frame=None, native=None):
         """Called under the shared input gate, before the durable dispatch record."""
         if action == "STOP_PRIME":
             # Cleanup has no focus goal. Do not start a reader/version/clock
@@ -128,6 +178,8 @@ class AdbDevice:
         await self.accessibility.start()
         if frame is not None:
             self.validate_frame(frame)
+        if native is not None:
+            self.validate_native(native)
         before = self.accessibility.snapshot()
         # Invalidate before the clock read so old labels cannot survive a failed
         # clock request. /proc/uptime is the archive's tested device-clock proxy.
@@ -255,21 +307,102 @@ class AdbDevice:
         )
         return foreground(activity), media_sessions(media)
 
+    async def runtime(self, *, device_state=None):
+        started_at, started = datetime.now(UTC).isoformat(), time.monotonic()
+        app, legacy = device_state if device_state is not None else await self.state()
+        fallback = {
+            "source": "dumpsys",
+            "source_health": "unavailable",
+            "foreground": app,
+            "session": None,
+            "legacy_sessions": legacy,
+            "started_at": started_at,
+            "observed_at": datetime.now(UTC).isoformat(),
+            "live_edge": "unmeasured",
+        }
+        if not self.config.media_probe or time.monotonic() < self._probe_retry_at:
+            return fallback
+        try:
+            clock = (await self.shell("cat", "/proc/sys/kernel/random/boot_id", "/proc/uptime")).splitlines()
+            boot_id = clock[0].strip()
+            seconds = float(clock[1].split()[0])
+            if not re.fullmatch(r"[a-fA-F0-9-]{36}", boot_id) or not math.isfinite(seconds) or seconds < 0:
+                raise ValueError("Invalid boot clock")
+            clock_received = time.monotonic()
+            dump = await self.shell("dumpsys", "activity", "service", PROBE + "/.ProbeService")
+            values = records(dump)
+            if not values:
+                raise ValueError("No structured media snapshot")
+            record = values[-1]
+            history, history_available = [], False
+            try:
+                # Both rotating files preserve short callbacks between host
+                # polls. Read-only, bounded by run(); missing old file is normal.
+                script = 'for f in files/events.previous.jsonl files/events.jsonl; do if [ -r "$f" ]; then cat "$f"; fi; done'
+                raw = await self.run("exec-out", "run-as", PROBE, "sh", "-c", shlex.quote(script))
+                history = await asyncio.to_thread(records, raw.decode(errors="replace"))
+                history_available = bool(history)
+            except ExecutorError:
+                pass  # A live service snapshot remains useful without journal access.
+            # A callback can arrive after the service dump but before journal
+            # acquisition finishes. Do not knowingly return the earlier state.
+            # Both device elapsed time and wall time must place it in this read.
+            elapsed_seconds = time.monotonic() - clock_received
+            upper = seconds * 1000 + elapsed_seconds * 1000 + 1000
+            wall = record.get("wallTimeMs")
+            if type(wall) in (int, float):
+                newer = [
+                    r
+                    for r in history
+                    if record["elapsedRealtimeMs"] < r["elapsedRealtimeMs"] <= upper
+                    and type(r.get("wallTimeMs")) in (int, float)
+                    and wall <= r["wallTimeMs"] <= wall + elapsed_seconds * 1000 + 1000
+                ]
+                if newer:
+                    record = max(newer, key=lambda r: r["elapsedRealtimeMs"])
+            sample = self.media.update(
+                record,
+                history,
+                boot_id=boot_id,
+                started_at=started_at,
+                finished_at=datetime.now(UTC).isoformat(),
+                foreground=app,
+                legacy=legacy,
+                device_before_ms=seconds * 1000,
+                elapsed_seconds=elapsed_seconds,
+                max_age=self.config.runtime_max_age,
+                history_available=history_available,
+            )
+            sample["read_seconds"] = time.monotonic() - started
+            return sample
+        except (ExecutorError, ValueError, IndexError, KeyError, TypeError):
+            self._probe_retry_at = time.monotonic() + 30
+            fallback["source_error"] = "media_probe_unavailable"
+            return fallback
+
     async def capture(self):
         await self.accessibility.start()
         if self.accessibility.state.action is None:
             await self.prepare_input("OBSERVE")
         try:
-            before, _ = await self.state()
+            before, previous_sessions = await self.state()
+            runtime_before = await self.runtime(device_state=(before, previous_sessions))
             focus_before = self.accessibility.snapshot()
             captured_at, captured_monotonic = datetime.now(UTC), time.monotonic()
             png = await self.run("exec-out", "screencap", "-p")
             focus_after = self.accessibility.snapshot()
             after, sessions = await self.state()
+            runtime_after = await self.runtime(device_state=(after, sessions))
             if before != after or after != PACKAGE:
                 raise ExecutorError("foreground_changed", "Prime Video is not the foreground application")
             image = await asyncio.to_thread(prepare_image, png)
             native_focus = associate_capture(focus_before, focus_after, self.accessibility.snapshot())
+            runtime_after["capture_association"] = (
+                "unchanged"
+                if identity_key(runtime_before) is not None
+                and identity_key(runtime_before) == identity_key(runtime_after)
+                else "unproven"
+            )
             return Frame(
                 image,
                 hashlib.sha256(image).hexdigest(),
@@ -278,6 +411,7 @@ class AdbDevice:
                 sessions,
                 native_focus,
                 captured_monotonic,
+                runtime_after,
             )
         except BaseException:
             self.invalidate_focus()

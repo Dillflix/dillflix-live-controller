@@ -12,6 +12,8 @@ import math
 import re
 import time
 
+from .event_records import EventRecords, RecordStream, TransportEvidence
+
 PRIME = "com.amazon.firebat"
 SUPPORTED_VERSION = "PVFTV-321.0096-L (321009610)"
 MAX_LINE = 65536
@@ -41,7 +43,7 @@ _FIELD_NAMES = (
     "ScrollDeltaY",
 )
 _FIELDS = {
-    name: re.compile(r"(?:^|[;\s])" + name + r": (.*?)(?=; [A-Z][A-Za-z]+:|$)") for name in _FIELD_NAMES
+    name: re.compile(r"(?:^|[;\s])" + name + r": (.*?)(?=; [A-Z][A-Za-z]+:|$)", re.S) for name in _FIELD_NAMES
 }
 
 
@@ -117,6 +119,7 @@ def same_validity(a, b):
         and a.get("generation") == b.get("generation")
         and a.get("revision") == b.get("revision")
         and a.get("actionId") == b.get("actionId")
+        and a.get("transportRevision") == b.get("transportRevision")
     )
 
 
@@ -580,26 +583,43 @@ async def drain(task):
 
 
 class FocusCollector:
-    """One asynchronous, reconnecting uiautomator event stream for one device."""
+    """One owned event stream. An unexpected exit latches failure, never respawns."""
 
-    def __init__(self, command, version_lookup, *, timeout=10, reconnect_seconds=1, state=None, spawn=None):
+    def __init__(
+        self,
+        command,
+        version_lookup,
+        *,
+        timeout=10,
+        state=None,
+        spawn=None,
+        remote_marker=None,
+        remote_cleanup=None,
+    ):
         self.command, self.version_lookup = tuple(command), version_lookup
-        self.timeout, self.reconnect_seconds = timeout, reconnect_seconds
+        self.timeout = timeout
         self.state = state or FocusState()
         self.spawn = spawn or asyncio.create_subprocess_exec
         self.process = self.runner = None
         self.status, self.version_status = "stopped", "unavailable"
+        self.failure, self.last_diagnostic = None, None
+        self.remote_marker, self.remote_cleanup, self.remote_identity = remote_marker, remote_cleanup, None
+        self.transport = TransportEvidence()
+        self.event_count = 0
         self._lifecycle = asyncio.Lock()
         self._first_attempt = asyncio.Event()
+        self._identity_ready = asyncio.Event()
 
     async def start(self):
         async with self._lifecycle:
+            # A normal capture/input call must not turn an already-registered
+            # UiAutomation failure into dozens of competing remote listeners.
+            if self.failure:
+                return
             if self.runner is None or self.runner.done():
                 self._first_attempt = asyncio.Event()
                 self.runner = asyncio.create_task(self._run(), name="prime-accessibility")
             initialized = self._first_attempt
-        # A missing reader/version must not hang the navigation worker. The
-        # stream can recover later; until then native evidence remains unknown.
         try:
             await asyncio.wait_for(initialized.wait(), self.timeout + 0.5)
         except TimeoutError:
@@ -613,8 +633,10 @@ class FocusCollector:
 
     def snapshot(self):
         return {
-            **self.state.snapshot(),
+            **self.transport.snapshot(self.state.snapshot()),
             "streamStatus": self.status,
+            "streamFailure": self.failure,
+            "eventCount": self.event_count,
             "appVersion": self.state.app_version,
             "appVersionStatus": self.version_status,
         }
@@ -632,72 +654,123 @@ class FocusCollector:
                 self.version_status = "observed" if version else "unavailable"
             initialized.set()
 
-    async def _discard_stderr(self, process):
-        while await process.stderr.read(65536):
-            pass
+    def _diagnostic(self, line):
+        if self.remote_marker and line.startswith(self.remote_marker + " "):
+            match = re.fullmatch(re.escape(self.remote_marker) + r" ([1-9]\d*) ([1-9]\d*)", line)
+            if match and self.remote_identity is None:
+                self.remote_identity = {"pid": int(match[1]), "start_ticks": int(match[2])}
+                self._identity_ready.set()
+            return
+        self.last_diagnostic = line[:1000]
+
+    async def _read(self, stream, channel):
+        def received(raw):
+            parsed = parse_event(raw)
+            if parsed is None:
+                self.state.invalidate()
+                return
+            self.event_count += 1
+            if parsed["package"] == PRIME:
+                self.status = "receiving"
+            self.state.ingest(raw)
+
+        def truncated(reason):
+            self.last_diagnostic = reason
+            self.state.invalidate()
+
+        records = EventRecords(
+            received,
+            pending=lambda active: self.transport.set(channel, active),
+            truncated=truncated,
+            diagnostic=self._diagnostic,
+        )
+        decoder = RecordStream(records, self.transport, channel)
+        try:
+            while chunk := await stream.read(65536):
+                decoder.feed(chunk)
+        finally:
+            decoder.end()
 
     async def _cleanup(self, process, tasks):
-        for task in tasks:
-            task.cancel()
+        # The remote identity is emitted before events. Let an already-created
+        # process's output readers deliver that marker even when spawn was
+        # interrupted. Never kill an unrelated UIAutomator registration.
+        if process is not None and not tasks:
+            tasks.extend(
+                [
+                    asyncio.create_task(self._read(process.stdout, "stdout")),
+                    asyncio.create_task(self._read(process.stderr, "stderr")),
+                ]
+            )
+        if self.remote_marker and process is not None and self.remote_identity is None:
+            try:
+                await asyncio.wait_for(self._identity_ready.wait(), min(self.timeout, 1))
+            except TimeoutError:
+                # The shell trap remains a fallback; an absent identity cannot
+                # authorize a signal or another reader after uncertain cleanup.
+                self.failure = {"code": "accessibility_cleanup_unconfirmed"}
+        if self.remote_identity and self.remote_cleanup:
+            try:
+                async with asyncio.timeout(self.timeout):
+                    await self.remote_cleanup(self.remote_identity)
+            except Exception:
+                self.failure = {"code": "accessibility_cleanup_unconfirmed"}
         if process is not None and process.returncode is None:
             try:
                 process.kill()
             except ProcessLookupError:
                 pass
+        for task in tasks:
+            task.cancel()
         await asyncio.gather(
             *(tasks + ([asyncio.create_task(process.wait())] if process else [])), return_exceptions=True
         )
 
     async def _run(self):
         initialized = self._first_attempt
+        process, tasks = None, []
+        self.remote_identity = None
+        self._identity_ready = asyncio.Event()
+        self.state.invalidate()
+        self.state.app_version, self.version_status = None, "unavailable"
+        self.status = "connecting"
         try:
-            while True:
-                self.state.invalidate()
-                self.state.app_version, self.version_status = None, "unavailable"
-                self.status = "connecting"
-                process, tasks = None, []
-                try:
-                    # Drain spawn on cancellation too: losing a process handle
-                    # between creation and assignment must not orphan a reader.
-                    spawning = asyncio.create_task(
-                        self.spawn(
-                            *self.command,
-                            stdin=asyncio.subprocess.DEVNULL,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                        )
-                    )
-                    try:
-                        process = await asyncio.shield(spawning)
-                    except asyncio.CancelledError:
-                        await drain(asyncio.gather(spawning, return_exceptions=True))
-                        if not spawning.cancelled() and spawning.exception() is None:
-                            process = spawning.result()
-                        raise
-                    self.process, self.status = process, "connected"
-                    tasks = [
-                        asyncio.create_task(self._version(process, initialized)),
-                        asyncio.create_task(self._discard_stderr(process)),
-                    ]
-                    lines = EventLines(self.state.ingest)
-                    while chunk := await process.stdout.read(65536):
-                        lines.feed(chunk)
-                except (OSError, ValueError):
-                    pass
-                finally:
-                    self.process = None
-                    self.state.invalidate()
-                    self.state.app_version, self.version_status = None, "unavailable"
-                    self.status = "disconnected"
-                    initialized.set()
-                    cleanup = asyncio.create_task(self._cleanup(process, tasks))
-                    if await drain(cleanup):
-                        raise asyncio.CancelledError
-                await asyncio.sleep(self.reconnect_seconds)
+            spawning = asyncio.create_task(
+                self.spawn(
+                    *self.command,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            )
+            try:
+                process = await asyncio.shield(spawning)
+            except asyncio.CancelledError:
+                await drain(asyncio.gather(spawning, return_exceptions=True))
+                if not spawning.cancelled() and spawning.exception() is None:
+                    process = spawning.result()
+                raise
+            self.process, self.status = process, "waiting_for_events"
+            tasks = [
+                asyncio.create_task(self._read(process.stdout, "stdout")),
+                asyncio.create_task(self._read(process.stderr, "stderr")),
+                asyncio.create_task(self._version(process, initialized)),
+            ]
+            await asyncio.gather(*tasks[:2])
+            code = await process.wait()
+            self.failure = {"code": "accessibility_listener_exited", "exit_code": code}
+        except Exception:
+            self.failure = {"code": "accessibility_listener_unavailable"}
         finally:
-            self.status = "stopped"
+            self.process = None
             self.state.invalidate()
+            self.state.app_version, self.version_status = None, "unavailable"
             initialized.set()
+            cleanup = asyncio.create_task(self._cleanup(process, tasks))
+            cancelled = await drain(cleanup)
+            self.status = "failed" if self.failure else "stopped"
+            if cancelled:
+                raise asyncio.CancelledError
 
     async def wait_for_focus(self, action, timeout_ms=900):
         deadline = time.monotonic() + timeout_ms / 1000

@@ -25,6 +25,9 @@ class ExecutorConfig:
     max_actions: int = 30
     frame_max_age: float = 60
     retention_days: int = 7
+    media_probe: bool = True
+    visual_monitor_interval: float = 30
+    runtime_max_age: float = 15
     # Explicit self-hosted sampler extensions are opt-in, never assumed by the client.
     model_options: dict = field(default_factory=lambda: {"temperature": 0, "top_p": 1})
 
@@ -76,6 +79,8 @@ class ExecutorConfig:
             "frame_max_age",
             "max_actions",
             "retention_days",
+            "visual_monitor_interval",
+            "runtime_max_age",
         ):
             if not 0 < getattr(self, key) <= 86400:
                 raise ValueError(f"Invalid executor setting: {key}")
@@ -100,6 +105,9 @@ class ExecutorConfig:
             completion_interval=float(os.getenv("EXECUTOR_COMPLETION_INTERVAL_SECONDS", "15")),
             settle_seconds=float(os.getenv("EXECUTOR_SETTLE_SECONDS", "1")),
             max_actions=int(os.getenv("EXECUTOR_MAX_ACTIONS", "30")),
+            media_probe=os.getenv("EXECUTOR_MEDIA_PROBE", "true").lower() not in {"0", "false", "no"},
+            visual_monitor_interval=float(os.getenv("EXECUTOR_VISUAL_MONITOR_INTERVAL_SECONDS", "30")),
+            runtime_max_age=float(os.getenv("EXECUTOR_RUNTIME_MAX_AGE_SECONDS", "15")),
             model_options=json.loads(os.getenv("EXECUTOR_LLM_OPTIONS_JSON") or '{"temperature":0,"top_p":1}'),
         )
         value.validate()

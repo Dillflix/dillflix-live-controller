@@ -99,6 +99,21 @@ class Player(Strict):
     position_seconds: float | None = Field(ge=0)
 
 
+class MenuItem(Strict):
+    label: str = Field(min_length=1, max_length=500)
+    provider: str | None
+    language: str | None
+
+
+class ActionMenu(Strict):
+    identity: Identity | None
+    availability: Literal["live", "replay", "upcoming", "ended", "unknown"]
+    live_text: str | None
+    layout: Literal["vertical", "horizontal", "unknown"]
+    # Visible items in screen order only. This is not an inventory of the menu.
+    items: list[MenuItem] = Field(max_length=40)
+
+
 class Completion(Strict):
     identity: Identity | None
     scope: Literal["game", "broadcast", "session", "unknown"]
@@ -113,6 +128,7 @@ class Scene(Strict):
     focus: Focus
     player: Player | None
     completion: Completion
+    action_menu: ActionMenu | None = None
 
 
 class Decision(Strict):
@@ -218,6 +234,28 @@ class Cancellation(Strict):
     input_quiescent: bool
 
 
+class RuntimeStatus(Strict):
+    source: str
+    source_health: str
+    observed_at: datetime
+    valid_until: datetime
+    foreground: str | None
+    session_token: str | None
+    runtime_media_id: str | None
+    boot_id: str | None
+    identity_revision: int | None
+    transport: str
+    binding: Literal["visually_associated", "unbound", "revalidation_required"]
+    bound_content_id: str | None
+    last_visual_at: datetime | None
+    live_mode: Literal["watch_live_selected", "visually_at_live", "unknown"]
+    live_edge: Literal["unmeasured"] = "unmeasured"
+    position_ms: float | None
+    position_meaning: str
+    history_available: bool
+    recent_events: list[dict] = Field(max_length=24)
+
+
 class PlaybackReport(Strict):
     schema_version: Literal[1]
     token: str
@@ -232,6 +270,7 @@ class PlaybackReport(Strict):
     content_status: ContentStatus
     cancellation: Cancellation
     retained_until: datetime | None
+    runtime: RuntimeStatus | None = None
 
 
 class CancelResult(Strict):

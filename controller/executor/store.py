@@ -157,6 +157,14 @@ class ExecutorStore:
         if observation and parse_time(observation["valid_until"]) <= now:
             observation["verified"] = False
             report["observation_status"]["state"] = "stale"
+        runtime = report.get("runtime")
+        if runtime and parse_time(runtime["valid_until"]) <= now:
+            runtime.update(
+                source_health="stale",
+                binding="revalidation_required",
+                bound_content_id=None,
+                live_mode="unknown",
+            )
         lifecycle = report["content_status"]
         if db is not None and lifecycle["effective_state"] not in {"ended", "cancelled"}:
             catalog = db.execute(
@@ -312,6 +320,10 @@ class ExecutorStore:
                 )
             report["cancellation"] = {"state": "acknowledged", "input_quiescent": True}
             report["observation"] = None
+            if report.get("runtime"):
+                report["runtime"].update(
+                    binding="unbound", bound_content_id=None, live_mode="unknown", source_health="unavailable"
+                )
             report["observation_status"] = {"state": "unavailable", "checked_at": utc(), "error": None}
             until = datetime.now(UTC) + timedelta(days=self.settings.executor.retention_days)
             report["retained_until"] = until.isoformat()
@@ -358,6 +370,13 @@ class ExecutorStore:
                     if report["observation"]:
                         report["observation"]["verified"] = False
                     report["observation_status"]["state"] = "unavailable"
+                    if report.get("runtime"):
+                        report["runtime"].update(
+                            binding="revalidation_required",
+                            bound_content_id=None,
+                            live_mode="unknown",
+                            source_health="unavailable",
+                        )
                     self.write(db, row["token"], report, next_check=0)
                 elif row["touched_device"] and row["state"] in {"accepted", "navigating"}:
                     report["operation"].update(

@@ -34,6 +34,10 @@ def event(at=101, label="A", kind="TYPE_VIEW_FOCUSED", description="null"):
     )
 
 
+def wire_event(**kwargs):
+    return event(**kwargs) + "; Enabled: true; recordCount: 0"
+
+
 @pytest.mark.parametrize("case", REFERENCE["cases"], ids=lambda case: case["name"])
 def test_archive_conformance(case):
     now = [0]
@@ -153,7 +157,7 @@ async def until(predicate):
             await asyncio.sleep(0.002)
 
 
-async def test_stream_reconnect_withdraws_version_and_focus_and_stop_owns_only_its_children():
+async def test_stream_failure_withdraws_evidence_and_never_respawns_on_capture_calls():
     children, versions = [], []
 
     async def spawn(*args, **kwargs):
@@ -166,29 +170,30 @@ async def test_stream_reconnect_withdraws_version_and_focus_and_stop_owns_only_i
         versions.append(future)
         return await future
 
-    collector = FocusCollector(["fixture"], version, spawn=spawn, reconnect_seconds=0.01)
+    collector = FocusCollector(["fixture"], version, spawn=spawn)
     starting = asyncio.create_task(collector.start())
     try:
         await until(lambda: versions)
         versions[0].set_result(SUPPORTED_VERSION)
         await starting
         collector.begin_action("RIGHT", 100)
-        children[0].stdout.feed_data((event() + "\n").encode())
+        children[0].stderr.feed_data((wire_event() + "\n").encode())
         await until(lambda: collector.snapshot()["usable"])
         captured = collector.snapshot()["validity"]
         children[0].exit()
-        await until(lambda: len(versions) == 2)
+        await until(lambda: collector.status == "failed")
         assert collector.snapshot()["appVersion"] is None
         assert collector.snapshot()["usable"] is False
         assert collector.snapshot()["validity"]["generation"] > captured["generation"]
-        versions[1].set_exception(OSError("package query failed"))
-        await asyncio.sleep(0.01)
-        assert collector.snapshot()["appVersion"] is None
+        for _ in range(5):
+            await collector.start()
+        assert len(children) == 1 and len(versions) == 1
+        assert collector.failure["code"] == "accessibility_listener_exited"
         assert collector.snapshot()["appVersionStatus"] == "unavailable"
         await collector.stop()
-        assert children[1].killed == 1 and collector.runner is None
+        assert children[0].killed == 0 and collector.runner is None
         await asyncio.sleep(0.025)
-        assert len(children) == 2
+        assert len(children) == 1
     finally:
         starting.cancel()
         await asyncio.gather(starting, return_exceptions=True)
@@ -256,7 +261,7 @@ async def test_real_reader_subprocess_utf8_and_close(tmp_path):
     program = tmp_path / "events.py"
     program.write_text(
         "import sys,time\n"
-        f"raw={(event(label='Dynamic tab é') + chr(10)).encode()!r}\n"
+        f"raw={(wire_event(label='Dynamic tab é') + chr(10)).encode()!r}\n"
         "time.sleep(.05)\n"
         "for byte in raw: sys.stdout.buffer.write(bytes([byte])); sys.stdout.buffer.flush()\n"
         "time.sleep(30)\n"
@@ -278,7 +283,9 @@ async def test_real_reader_subprocess_utf8_and_close(tmp_path):
 
 
 def device():
-    return AdbDevice(Settings(screen_adb_serial="fixture", executor=ExecutorConfig(adb_timeout=0.1)))
+    return AdbDevice(
+        Settings(screen_adb_serial="fixture", executor=ExecutorConfig(adb_timeout=0.1, media_probe=False))
+    )
 
 
 async def test_adb_clock_cutoff_failed_clock_and_version_lookup(monkeypatch):

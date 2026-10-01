@@ -6,6 +6,8 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 
 **Version 0.9.1 integrates the exploration's native accessibility collector:** separate focus channels, action timing, Prime window-burst handling, screenshot association and stale-input checks. Native metadata accompanies actor screenshots; the visual observer remains separate. Full search-to-play behavior on the target TV is still unvalidated. See the [evidence audit and implementation status](docs/accessibility-critical-path.md).
 
+**Version 0.10.0 uses runtime evidence in navigation and monitoring:** complete multiline native records from both output streams, observed menu order with label-confirmed movement, separate result/menu and Watch Live activations, and visual identity associated with structured MediaSession telemetry. Stable playback monitoring avoids per-poll screenshots/inference. See the [grounding policy and capture evidence](docs/runtime-grounding.md) and [media-probe dependency](docs/executor-setup.md#structured-media-probe). Target-TV autonomous reliability remains unvalidated.
+
 ## What works
 
 - Opt-in Prime Video playback with package-scoped ADB search, configurable JSON/TVTheseus actor, independent vision observer, durable tokens, active cancellation, completion checks and read-only diagnostics.

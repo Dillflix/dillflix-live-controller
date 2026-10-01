@@ -10,13 +10,18 @@ from datetime import UTC, datetime, timedelta
 
 from ..planner import parse_time
 from .adb import PACKAGE, AdbDevice
+from .media import identity_key, reported_playing
 from .models import ExecutorError
+from .monitoring import Binding, can_bind
+from .monitoring import status as runtime_status
+from .navigation import MenuPlan, input_focus, label
 from .store import ExecutorStore, utc
 from .verification import (
     activation_allowed,
     completed,
     evidence,
     playback_sample,
+    player_matches,
     prime_option,
     progression,
     search_queries,
@@ -36,6 +41,8 @@ class PlaybackExecutor:
         self.wake = asyncio.Event()
         self.loop = self.worker = self.active = self.active_token = self.guard = None
         self.stopping = False
+        self.bindings = {}
+        self.next_visual = {}
 
     async def start(self):
         if self.worker:
@@ -207,13 +214,16 @@ class PlaybackExecutor:
         finally:
             await self.device.close()
 
-    async def input(self, token, action, call, *, frame=None, cancelling=False):
+    async def input(
+        self, token, action, call, *, frame=None, native=None, context_frame=None, cancelling=False
+    ):
         def validate_age():
-            if frame:
+            basis = frame or context_frame
+            if basis:
                 age = (
-                    time.monotonic() - frame.captured_monotonic
-                    if frame.captured_monotonic is not None
-                    else (datetime.now(UTC) - frame.captured_at).total_seconds()
+                    time.monotonic() - basis.captured_monotonic
+                    if basis.captured_monotonic is not None
+                    else (datetime.now(UTC) - basis.captured_at).total_seconds()
                 )
                 if not 0 <= age <= self.config.frame_max_age:
                     self.device.invalidate_focus()
@@ -230,14 +240,19 @@ class PlaybackExecutor:
                         "action_budget", "Playback reached its bounded input budget", retryable=False
                     )
             validate_age()
-            if frame:
+            if frame or native:
                 foreground, _ = await self.device.state()
                 if foreground != PACKAGE:
                     raise ExecutorError("foreground_changed", "Application changed before input")
-            native_action = await self.device.prepare_input(action, frame=frame)
+            native_action = await self.device.prepare_input(
+                action, frame=frame, **({"native": native} if native is not None else {})
+            )
             validate_age()  # Foreground/version/clock I/O must not extend frame lifetime.
             action_id = self.store.journal(
-                token, action, frame.sha256 if frame else None, cancelling=cancelling
+                token,
+                action,
+                (frame or context_frame).sha256 if (frame or context_frame) else None,
+                cancelling=cancelling,
             )
             if action_id is None:
                 self.device.invalidate_focus()
@@ -271,6 +286,8 @@ class PlaybackExecutor:
                 raise
 
     async def cancel_one(self, token):
+        self.bindings.pop(token, None)
+        self.next_visual.pop(token, None)
         with self.db.transaction() as db:
             row = self.store.get_row(db, token)
             owner = db.execute(
@@ -311,6 +328,35 @@ class PlaybackExecutor:
         with self.db.transaction() as db:
             self.store.allowed(db, token, navigation=navigation)
         return frame, scene
+
+    async def runtime_sample(self, token):
+        with self.db.transaction() as db:
+            self.store.allowed(db, token)
+        sample = await self.device.runtime()
+        with self.db.transaction() as db:
+            self.store.allowed(db, token)
+        return sample
+
+    async def walk_menu(self, token, frame, plan):
+        """Only adjacent, visually observed items. Always re-observe before SELECT."""
+        native = frame.native_focus
+        moved = False
+        for _ in range(self.config.max_actions):
+            step = plan.step(native)
+            if step is None or step[0] == "SELECT":
+                return moved
+            action, expected = step
+            await self.input(
+                token, action, lambda: self.device.key(action), native=native, context_frame=frame
+            )
+            moved = True
+            native = self.device.native_focus()
+            focused = input_focus(native)
+            # Known virtual-node bursts preserve only action labels. A hard
+            # boundary or unexpected neighbor requires a new visual context.
+            if not focused or label(focused["text"]) != expected or native.get("hardWindowBoundary"):
+                return True
+        return moved
 
     async def navigate(self, row):
         token = row["token"]
@@ -426,7 +472,19 @@ class PlaybackExecutor:
                 if scene.search_state in {"loading", "empty", "unknown"}:
                     await asyncio.sleep(max(self.config.settle_seconds, 0.5))
                     continue
-            if proof and playback_sample(scene, frame, request, timezone):
+            if proof and player_matches(scene, frame, request, option, timezone):
+                runtime = await self.runtime_sample(token)
+                if can_bind((frame, scene), runtime):
+                    self.bindings[token] = Binding(
+                        identity_key(runtime), option["id"], (frame, scene), "watch_live_selected"
+                    )
+                    if self.save_observation(
+                        token, request, option, (frame, scene), verified=True, runtime=runtime
+                    ):
+                        self.next_visual[token] = time.monotonic() + self.config.visual_monitor_interval
+                        return True
+                self.record_runtime(token, runtime)
+            if proof and playback_sample(scene, frame, request, timezone, option):
                 await asyncio.sleep(max(1, self.config.settle_seconds))
                 try:
                     second = await self.read_scene(token, navigation=True)
@@ -435,20 +493,46 @@ class PlaybackExecutor:
                         raise
                     feedback = "Focus changed during playback confirmation. Observe again."
                     continue
-                if playback_sample(second[1], second[0], request, timezone) and progression(
+                if playback_sample(second[1], second[0], request, timezone, option) and progression(
                     (frame, scene), second
                 ):
                     if self.save_observation(token, request, option, second, verified=True):
                         return True
-            action = await self.vision.decide(frame, request, option, history, feedback)
-            signature = (scene.surface, scene.focus.model_dump_json(), action)
+            if proof and scene.surface == "player":
+                # Startup/buffering is observed, never another activation click.
+                await asyncio.sleep(max(self.config.settle_seconds, 0.5))
+                continue
+            if scene.surface in {"search", "browse", "details", "live_choice"}:
+                proof = False
+                self.bindings.pop(token, None)
+            plan = MenuPlan.observe(scene, frame, request, option, timezone)
+            if plan and input_focus(frame.native_focus):
+                try:
+                    if await self.walk_menu(token, frame, plan):
+                        feedback = "Menu movement used current labels; re-read its identity and focus before selecting."
+                        continue
+                except ExecutorError as error:
+                    if error.code not in {"stale_navigation_focus", "stale_navigation_frame"}:
+                        raise
+                    feedback = "Menu evidence changed; re-read visible ordering and focus."
+                    continue
+            if scene.focus.role in {"event", "play_live"} and activation_allowed(
+                scene, request, option, frame, timezone
+            ):
+                action = "SELECT"
+            else:
+                action = await self.vision.decide(frame, request, option, history, feedback)
+            # A stable Top Sports label does not mean the card failed to move.
+            signature = (frame.sha256, scene.surface, scene.focus.model_dump_json(), action)
             repeated = repeated + 1 if signature == prior_signature else 1
             prior_signature = signature
             if repeated >= 4:
                 return False
             feedback = None
             if action in {"WAIT", "FINISH"}:
-                feedback = "Playback has not passed independent live/content/progression verification."
+                feedback = (
+                    "Playback has not passed independent event/route/live-mode and transport verification."
+                )
                 await asyncio.sleep(max(1, self.config.settle_seconds))
                 continue
             if action == "SELECT":
@@ -469,6 +553,7 @@ class PlaybackExecutor:
                     feedback = "Focus changed or could not be confirmed. Observe and navigate again."
                     continue
                 frame = second_frame
+                scene = second_scene
             self.store.phase(token, "verifying" if proof else "navigating")
             try:
                 await self.input(token, action, lambda: self.device.key(action), frame=frame)
@@ -478,16 +563,38 @@ class PlaybackExecutor:
                 feedback = "Focus changed before input. No key was sent; observe again."
                 continue
             # A rejected stale SELECT must not establish an activation history.
-            proof = proof or (action == "SELECT" and scene.focus.role in {"event", "play_live"})
+            # One SELECT on a search result opens the action menu. Only the
+            # subsequent, independently confirmed Watch Live starts live mode.
+            proof = proof or (action == "SELECT" and scene.focus.role == "play_live")
             history.append((frame, action))
             await asyncio.sleep(self.config.settle_seconds)
         return False
 
-    def save_observation(self, token, request, option, sample, *, verified):
+    def save_observation(self, token, request, option, sample, *, verified, runtime=None):
         frame, scene = sample
         now = datetime.now(UTC)
-        if (now - frame.captured_at).total_seconds() >= self.settings.observation_ttl:
+        observed_at = parse_time(runtime["observed_at"]) if runtime else frame.captured_at
+        if not 0 <= (now - observed_at).total_seconds() < self.settings.observation_ttl:
             return False
+        binding = self.bindings.get(token)
+        if runtime and not (
+            binding and binding.current(runtime, self.visual_max_age) and reported_playing(runtime)
+        ):
+            return False
+        proof = evidence(frame, "Matched live player/event/route; visible elapsed player timer advanced")
+        if runtime:
+            proof = {
+                "method": "device_observation",
+                "evidence_id": "media:"
+                + str(runtime.get("device_elapsed_ms"))
+                + ":"
+                + observed_at.isoformat(),
+                "summary": "Prime reports PLAYING on the visually associated session/media ID; "
+                + binding.live_mode
+                + ". Position is not rendered-video or live-lag proof.",
+                "confidence": None,
+                "captured_at": observed_at.isoformat(),
+            }
         observation = {
             "device_id": request["device_id"],
             "request_id": request["request_id"],
@@ -498,11 +605,9 @@ class PlaybackExecutor:
             "verified": verified,
             "simulated": False,
             "health": "healthy",
-            "observed_at": frame.captured_at.isoformat(),
-            "valid_until": (frame.captured_at + timedelta(seconds=self.settings.observation_ttl)).isoformat(),
-            "evidence": evidence(
-                frame, "Matched requested content and live edge; two sampled playback positions advanced"
-            ),
+            "observed_at": observed_at.isoformat(),
+            "valid_until": (observed_at + timedelta(seconds=self.settings.observation_ttl)).isoformat(),
+            "evidence": proof,
         }
         with self.db.transaction() as db:
             row = self.store.allowed(db, token)
@@ -517,6 +622,10 @@ class PlaybackExecutor:
             if report["operation"]["attempts"]:
                 report["operation"]["attempts"][-1].update(phase="verified", finished_at=utc())
             report["observation"] = observation
+            if runtime:
+                report["runtime"] = runtime_status(
+                    runtime, binding, request["content_id"], self.config.runtime_max_age
+                )
             report["observation_status"] = {"state": "fresh", "checked_at": utc(), "error": None}
             self.store.write(
                 db,
@@ -527,36 +636,119 @@ class PlaybackExecutor:
             )
         return True
 
+    @property
+    def visual_max_age(self):
+        # Periodic reads may see an ad/hidden controls. Retain a matching runtime
+        # association briefly, with its original visual timestamp, then expire it.
+        return max(self.config.frame_max_age, self.config.visual_monitor_interval * 2)
+
+    def record_runtime(self, token, runtime):
+        with self.db.transaction() as db:
+            row = self.store.allowed(db, token)
+            report = json.loads(row["report"])
+            binding = self.bindings.get(token)
+            if binding and not binding.current(runtime, self.visual_max_age):
+                self.bindings.pop(token, None)
+                binding = None
+            report["runtime"] = runtime_status(
+                runtime, binding, row["content_id"], self.config.runtime_max_age
+            )
+            self.store.write(db, token, report)
+
     async def monitor(self, row):
         token = row["token"]
         request, timezone = self.context(row)
         try:
-            first = await self.read_scene(token)
-            if completed(first[1], first[0], request, timezone):
-                self.record_completion(token, request, first)
-                self.unverified(token, None)
-                return
-            self.clear_completion_candidate(token)
             report = self.store.report(token)
             old = report["observation"] or {}
             option = next(
                 (o for o in request["allowed_viewing_options"] if o["id"] == old.get("viewing_option_id")),
                 None,
             )
-            if option and playback_sample(first[1], first[0], request, timezone):
+            runtime = await self.runtime_sample(token)
+            binding = self.bindings.get(token)
+            transport = (runtime.get("session") or {}).get("transport")
+            if binding and (
+                not binding.current(runtime, self.visual_max_age)
+                or runtime.get("foreground") != PACKAGE
+                or transport not in {"playing", "buffering", "connecting"}
+            ):
+                self.bindings.pop(token, None)
+                binding = None
+            self.record_runtime(token, runtime)
+            due = time.monotonic() >= self.next_visual.get(token, 0)
+            if option and binding and not due:
+                if self.save_observation(
+                    token, request, option, binding.sample, verified=True, runtime=runtime
+                ):
+                    return
+                # A brief BUFFERING transition does not launch again, complete
+                # the event, or discard an otherwise continuous media identity.
+                self.unverified(token, None)
+                return
+            self.next_visual[token] = time.monotonic() + self.config.visual_monitor_interval
+            first = await self.read_scene(token)
+            if completed(first[1], first[0], request, timezone):
+                self.bindings.pop(token, None)
+                self.record_runtime(token, runtime)
+                self.record_completion(token, request, first)
+                self.next_visual[token] = time.monotonic() + self.config.completion_interval
+                self.unverified(token, None)
+                return
+            self.clear_completion_candidate(token)
+            runtime = await self.runtime_sample(token)
+            frame, scene = first
+            if (
+                option
+                and player_matches(scene, frame, request, option, timezone)
+                and can_bind(first, runtime)
+            ):
+                # Watch Live history can persist only through the same runtime
+                # identity. A new session/restart/seek needs explicit visual
+                # playhead-at-live evidence, not just another LIVE badge.
+                current = binding and binding.current(runtime, self.visual_max_age)
+                if current or scene.player.live_edge is True:
+                    self.bindings[token] = Binding(
+                        identity_key(runtime),
+                        option["id"],
+                        first,
+                        binding.live_mode if current else "visually_at_live",
+                    )
+                    if self.save_observation(token, request, option, first, verified=True, runtime=runtime):
+                        return
+            elif (
+                (scene.player and scene.player.identity.kind != "unknown")
+                or scene.surface in {"search", "browse", "details", "live_choice"}
+                or scene.blocker not in {"none", "unknown"}
+            ):
+                # A positively observed contradiction cannot hide behind the
+                # previously matched runtime ID (snapshots are not atomic).
+                self.bindings.pop(token, None)
+            binding = self.bindings.get(token)
+            if binding and option and binding.current(runtime, self.visual_max_age):
+                if self.save_observation(
+                    token, request, option, binding.sample, verified=True, runtime=runtime
+                ):
+                    return
+            self.record_runtime(token, runtime)
+            if option and playback_sample(first[1], first[0], request, timezone, option):
                 await asyncio.sleep(max(1, self.config.settle_seconds))
                 second = await self.read_scene(token)
-                if playback_sample(second[1], second[0], request, timezone) and progression(first, second):
+                if playback_sample(second[1], second[0], request, timezone, option) and progression(
+                    first, second
+                ):
                     if self.save_observation(token, request, option, second, verified=True):
                         return
             self.unverified(token, None)
         except ExecutorError as error:
+            self.bindings.pop(token, None)
             self.clear_completion_candidate(token)
             self.unverified(token, error)
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("Playback observation failed")
+            self.bindings.pop(token, None)
             self.clear_completion_candidate(token)
             self.unverified(
                 token, ExecutorError("observation_failed", "Playback observation could not be refreshed")
@@ -568,6 +760,10 @@ class PlaybackExecutor:
             if row["cancel_requested"]:
                 return
             report = json.loads(row["report"])
+            if token not in self.bindings and report.get("runtime"):
+                report["runtime"].update(
+                    binding="revalidation_required", bound_content_id=None, live_mode="unknown"
+                )
             if report["observation"]:
                 report["observation"]["verified"] = False
             report["observation_status"] = {

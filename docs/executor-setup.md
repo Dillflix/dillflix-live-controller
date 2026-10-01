@@ -2,7 +2,7 @@
 
 The executor is included in the controller image; there is no second service or repository. Version 0.9 implements autonomous Prime Video navigation, token APIs, completion observation, cancellation and shared manual ownership. Real playback is opt-in. The default simulator still tests watch-plan policy without controlling a TV.
 
-**Version 0.9.1** includes the native accessibility collector and its freshness/association safeguards. `scene.focus` remains vision-model output; separately acquired `native_focus` reaches the actor, diagnostics and stale-input checks. A successful API/test run does not establish a validated search-to-play path. See the [audit and implementation status](accessibility-critical-path.md).
+**Version 0.10.0** adds complete multiline native records, failure-latched listener cleanup, dynamic menu traversal and structured runtime monitoring. `scene.focus` remains independent vision-model output. See the [grounding policy and evidence](runtime-grounding.md), including the external media-probe dependency below. A successful API/test run does not establish autonomous TV reliability.
 
 ## Configure and start
 
@@ -69,7 +69,24 @@ This checks ADB, foreground identity, image decoding, media-session parsing and 
 
 It also starts and cleans up a read-only `uiautomator events` reader. `native_focus` reports both channels, usability/reason, app version, stream status, window evidence and screenshot association. `native_focus_validity_after_observer` shows whether that evidence changed while the model was running. An already stationary screen may emit no new focus event: `no_event` is an expected unknown, not permission to reuse an old label. The diagnostic never presses a key to manufacture a focus event. A saved PNG carries no native-focus evidence.
 
-Native collection is automatic in real mode and uses the same configured ADB destination. It adds no Node runtime dependency or separate service. The reader uses a 64 KiB line bound, a 120 ms coalescing interval, a maximum 900 ms wait after acknowledged D-pad input, and a 60-second native-evidence age limit. These are additional bounded waits within the existing navigation deadline. Device cutoffs use the exploration's `/proc/uptime` proxy rounded upward plus 10 ms; failure leaves native focus unknown. The Prime cleanup-burst exception applies only to `PVFTV-321.0096-L (321009610)`. Unknown versions retain conservative window invalidation and visual fallback. Confirm clock behavior after suspend and label coverage on the actual deployment.
+Native collection is automatic in real mode and uses the same configured ADB destination. It adds no Node runtime dependency. stdout/stderr are framed separately into complete records, preserving literal newlines; records and physical lines are bounded at 1 MiB. Timing uses a 120 ms coalescing interval, a maximum 900 ms wait after acknowledged D-pad input, and a 60-second evidence age. Device cutoffs use the exploration's `/proc/uptime` proxy rounded upward plus 10 ms; failure leaves native focus unknown. The Prime cleanup-burst exception applies only to `PVFTV-321.0096-L (321009610)`. Unknown versions retain conservative window invalidation and visual fallback. Confirm clock behavior after suspend and label coverage on the deployment.
+
+Do not run a second UIAutomator collector against the same TV. An unexpected listener exit or unconfirmed cleanup latches failure; normal polling never respawns it repeatedly. Diagnose registration/ownership, stop the other collector through its own cleanup, then restart the controller. Cleanup never globally kills another client's UIAutomator. For a standalone native diagnostic, first stop autonomous collection (Take control cancels its playback/reader, or stop the controller worker). Merely pausing planning can leave an active playback collector running.
+
+### Structured media probe
+
+The preferred monitoring path consumes the **already-installed** `dev.tvprobe.mediasession/.ProbeService` used by the supplied capture. The source/APK and installer were not included in the supplied archives; this release does not install it or change notification-listener permissions. For a fresh TV, obtain the original probe source/APK and installation procedure before expecting this path to work.
+
+Read-only checks, using the actual authorized ADB serial:
+
+```bash
+adb -s YOUR_TV_SERIAL shell dumpsys activity service dev.tvprobe.mediasession/.ProbeService
+adb -s YOUR_TV_SERIAL exec-out run-as dev.tvprobe.mediasession cat files/events.jsonl
+```
+
+The service output must include structured JSON with `elapsedRealtimeMs`, `snapshot.listenerConnected=true` and `snapshot.sessions`; a running service alone is not enough. Journal export requires the probe's `run-as` access. The adapter also reads `events.previous.jsonl` when present; absence of that older file is normal. Callback payloads and composite snapshots are kept distinct. JSON parsing and byte limits reject truncated/malformed output; a missing probe backs off for 30 seconds and leaves structured identity unavailable.
+
+`check --observe` now returns `runtime` alongside native focus and the independent scene. Confirm actual Prime session tokens, runtime IDs and reported states on the device. DISPLAY_TITLE may be empty and the description generic; event identity still comes from pixels. Set `EXECUTOR_MEDIA_PROBE=false` to explicitly use the visual fallback, which requires visible live-playhead and advancing elapsed-timer evidence. Hidden controls may prevent fallback verification.
 
 A saved PNG tests perception without contacting the TV. Adding a complete saved Play request tests matching and actor output without executing its proposed action:
 
@@ -88,22 +105,25 @@ Export environment variables first for local Python; it does not automatically l
 | `EXECUTOR_MODEL_TIMEOUT_SECONDS` | 45 | Total deadline per inference, including waiting for the model slot. |
 | `EXECUTOR_ADB_TIMEOUT_SECONDS` | 10 | Per-subprocess deadline. |
 | `EXECUTOR_CANCEL_TIMEOUT_SECONDS` | 20 | Caller wait for confirmed cleanup before retryable failure. |
-| `EXECUTOR_MONITOR_INTERVAL_SECONDS` | 5 | Delay between checks; actual cadence includes capture/inference. |
+| `EXECUTOR_MONITOR_INTERVAL_SECONDS` | 5 | Delay between runtime checks; actual cadence includes acquisition. |
+| `EXECUTOR_MEDIA_PROBE` | true | Read the installed structured MediaSession probe. |
+| `EXECUTOR_RUNTIME_MAX_AGE_SECONDS` | 15 | Maximum structured evidence age and runtime-report expiry. |
+| `EXECUTOR_VISUAL_MONITOR_INTERVAL_SECONDS` | 30 | Periodic identity/completion capture; earlier on lost association. |
 | `EXECUTOR_COMPLETION_INTERVAL_SECONDS` | 15 | Minimum separation between explicit completion readings. |
 | `EXECUTOR_SETTLE_SECONDS` | 1 | Delay after input. |
 | `EXECUTOR_MAX_ACTIONS` | 30 | Total journaled input budget, including wake, launch and searches. Cleanup Stop is exempt. |
 
-Playback freshness is fixed at 15 seconds; lifecycle freshness is 120 seconds. Navigation captures cannot authorize input after 60 seconds. The larger model timeout is a transport bound, not permission to claim old images as current playback. If inference routinely exceeds 15 seconds, improve latency/visibility before expecting verification. Increasing a launch deadline cannot freshen old evidence.
+Playback freshness is fixed at 15 seconds; lifecycle freshness is 120 seconds. Navigation captures cannot authorize input after 60 seconds. Structured verification samples runtime again after inference and keeps its fresh timestamp separate from the older visual identity timestamp. An unresolved visual check may retain a continuous binding only up to the larger of 60 seconds or twice the visual interval. The visual-only fallback still cannot verify from images older than 15 seconds. Increasing a launch deadline cannot freshen old evidence.
 
 Captures are downscaled to at most 1280 pixels on the longest edge and sent as JPEGs. Invalid/oversized and dark blank/protected frames are rejected. HTTP responses are limited to 512 KiB. The database stores action/evidence metadata, not images or model reasoning.
 
 ## Validate on the target TV
 
-The exploration archive informed package-scoped launch/search, paired-opponent queries, focus interpretation, TVTheseus protocol and independent observation. It documents navigation experiments, not a validated production PLAY/VERIFY_PLAYBACK path. Local tests cover controlled ADB/model responses and real subprocess/HTTP-client code. All 100 supplied PNGs passed through image preprocessing: 97 were usable and three were rejected as blank/protected. This is not a model-accuracy benchmark. Hardware, account access, protected video and inference accuracy still need host validation.
+The original archive informed package-scoped launch/search, paired-opponent queries, focus interpretation, TVTheseus protocol and independent observation. The later capture 05 adds a successful manual search-results-to-player path, real action labels and runtime session transitions. Neither establishes autonomous production reliability. Local tests cover capture-record replay, controlled ADB/model responses and subprocess/HTTP-client code. The earlier 100 PNG preprocessing check (97 usable, three blank/protected) was not a model-accuracy benchmark. Hardware, account access, probe installation, protected video and inference accuracy still need host validation.
 
 1. Run `check --observe` on search results, details, a live player with visible identity/live indicator, and a finished event. Compare every field with the screen. Test adjacent wrong, replay and upcoming results. Replay archive PNGs through `--image` to assess known layouts.
 2. Use UI Play now for a currently live Teamarr event with a permitted Prime option. Check Activity, playback details and the job's `executor_job_id` token. Acceptance must precede independent verification.
-3. Read token status and compare actual content, live edge, sampled position progress and evidence times. Black frames/hidden identity must remain unverified; media-session `state=3` alone is insufficient.
+3. Compare token `runtime` with actual content, chosen Watch Live variant, session/ID, transport, separate visual/runtime timestamps and expiry. Verify stable polls do not capture/infer each time. Test buffering recovery, explicit pause/seek, changed IDs and behind-live playback. Position increments alone must never establish rendered-video progress or measured live lag.
 4. Cancel during search, inference, input and active playback. Take manual control; input must stay disabled until stop confirmation. Cancel an old token after a newer event starts; the newer event must continue.
 5. Test connection loss/restart. Successful playback should be re-observed without relaunching. Interrupted input should queue cleanup and never replay uncertain keys. Restore an older backup offline; it must start paused and finish cleanup before input.
 6. Observe an entire event and separate aggregate broadcast. Intermission, ads, buffering, nominal schedule end and one final game inside RedZone must not complete the broadcast. Explicit completion should end live eligibility without deleting the reservation.
@@ -122,6 +142,8 @@ The exploration archive informed package-scoped launch/search, paired-opponent q
 | `unsupported_routes` | No permitted Prime option. Other app adapters are not implemented. |
 | `target_unresolved`, `action_budget`, `navigation_timeout` | Diagnose visible focus/identity/live status, model decisions and account availability. |
 | `stale_navigation_focus` | Native focus changed during capture/inference or capture association is invalid; navigation recaptures before another input. Inspect native validity and window reasons. |
+| `native_focus.streamStatus=failed` | Diagnose the latched listener/ownership error and competing UIAutomator, then restart the controller. Do not loop new listeners. |
+| `runtime.source_health=unavailable`, unbound runtime | Check the installed media probe, listener connection, `run-as` export and fresh service snapshots. Do not infer event identity from a generic PrimeVideo title. |
 | `stop_unconfirmed`, `cancel_unconfirmed` | Cancellation retained; restore ADB and retry. Manual input remains gated. |
 
 See [operations](operations.md) for backup/restore and [API implementation](executor-api-handoff.md) for semantics/evidence policy. TVTheseus prompt attribution and license are in `third_party/tvtheseus-NOTICE.txt` and `third_party/tvtheseus-LICENSE.txt`.

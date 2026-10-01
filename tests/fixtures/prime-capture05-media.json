@@ -1,0 +1,743 @@
+{
+  "source": "search-to-play-05-analysis/media-events-original.jsonl",
+  "source_sha256": "e068187c38559d6c1db4a8ca1ded59923cda372f6baddd321001310868b3a63c",
+  "scope": "Supplied capture records; media playbackInfo/ratingType omitted. No model accuracy assertion.",
+  "records": [
+    {
+      "sequence": 1588,
+      "wallTimeMs": 1790816117840,
+      "elapsedRealtimeMs": 344550377,
+      "reason": "metadata_changed",
+      "eventPayload": {
+        "sessionToken": "661d15f",
+        "value": {
+          "keys": [
+            "android.media.metadata.AUTHOR",
+            "android.media.metadata.DISPLAY_TITLE",
+            "android.media.metadata.DURATION",
+            "android.media.metadata.MEDIA_ID",
+            "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+            "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+            "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+          ],
+          "entries": {
+            "android.media.metadata.AUTHOR": "PrimeVideo",
+            "android.media.metadata.DISPLAY_TITLE": "",
+            "android.media.metadata.DURATION": -1,
+            "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+            "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+            "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+            "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+          },
+          "description": {
+            "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+            "title": "PrimeVideo",
+            "subtitle": null,
+            "description": null,
+            "iconUri": null,
+            "iconBitmap": null,
+            "mediaUri": null,
+            "extras": null
+          }
+        }
+      },
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 0,
+              "stateName": "NONE",
+              "positionMs": 0,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344449048,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    },
+    {
+      "sequence": 1589,
+      "wallTimeMs": 1790816117849,
+      "elapsedRealtimeMs": 344550385,
+      "reason": "extras_changed",
+      "eventPayload": {
+        "sessionToken": "661d15f",
+        "value": {
+          "com.amazon.media.CONTENT_ID": "",
+          "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+          "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+          "com.amazon.media.MEDIA_LENGTH": -1
+        }
+      },
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 0,
+              "stateName": "NONE",
+              "positionMs": 0,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344449048,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    },
+    {
+      "sequence": 1590,
+      "wallTimeMs": 1790816118501,
+      "elapsedRealtimeMs": 344551037,
+      "reason": "playback_state_changed",
+      "eventPayload": {
+        "sessionToken": "661d15f",
+        "value": {
+          "state": 6,
+          "stateName": "BUFFERING",
+          "positionMs": 0,
+          "bufferedPositionMs": 0,
+          "speed": 1,
+          "updatedElapsedRealtimeMs": 344551017,
+          "actions": 1049455,
+          "activeQueueItemId": -1,
+          "errorMessage": null,
+          "extras": null,
+          "customActions": []
+        }
+      },
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 6,
+              "stateName": "BUFFERING",
+              "positionMs": 0,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344551017,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    },
+    {
+      "sequence": 1591,
+      "wallTimeMs": 1790816119614,
+      "elapsedRealtimeMs": 344552150,
+      "reason": "playback_state_changed",
+      "eventPayload": {
+        "sessionToken": "661d15f",
+        "value": {
+          "state": 6,
+          "stateName": "BUFFERING",
+          "positionMs": 344511154,
+          "bufferedPositionMs": 0,
+          "speed": 1,
+          "updatedElapsedRealtimeMs": 344552133,
+          "actions": 1049455,
+          "activeQueueItemId": -1,
+          "errorMessage": null,
+          "extras": null,
+          "customActions": []
+        }
+      },
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 6,
+              "stateName": "BUFFERING",
+              "positionMs": 344511154,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344552133,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    },
+    {
+      "sequence": 1592,
+      "wallTimeMs": 1790816120454,
+      "elapsedRealtimeMs": 344552990,
+      "reason": "playback_state_changed",
+      "eventPayload": {
+        "sessionToken": "661d15f",
+        "value": {
+          "state": 3,
+          "stateName": "PLAYING",
+          "positionMs": 344511154,
+          "bufferedPositionMs": 0,
+          "speed": 1,
+          "updatedElapsedRealtimeMs": 344552971,
+          "actions": 1049455,
+          "activeQueueItemId": -1,
+          "errorMessage": null,
+          "extras": null,
+          "customActions": []
+        }
+      },
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 3,
+              "stateName": "PLAYING",
+              "positionMs": 344511168,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344552985,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    },
+    {
+      "sequence": 1616,
+      "wallTimeMs": 1790816144848,
+      "elapsedRealtimeMs": 344577384,
+      "reason": "playback_state_changed",
+      "eventPayload": {
+        "sessionToken": "661d15f",
+        "value": {
+          "state": 6,
+          "stateName": "BUFFERING",
+          "positionMs": 344535213,
+          "bufferedPositionMs": 0,
+          "speed": 1,
+          "updatedElapsedRealtimeMs": 344577352,
+          "actions": 1049455,
+          "activeQueueItemId": -1,
+          "errorMessage": null,
+          "extras": null,
+          "customActions": []
+        }
+      },
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 6,
+              "stateName": "BUFFERING",
+              "positionMs": 344535213,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344577352,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    },
+    {
+      "sequence": 1617,
+      "wallTimeMs": 1790816145148,
+      "elapsedRealtimeMs": 344577685,
+      "reason": "playback_state_changed",
+      "eventPayload": {
+        "sessionToken": "661d15f",
+        "value": {
+          "state": 3,
+          "stateName": "PLAYING",
+          "positionMs": 344535281,
+          "bufferedPositionMs": 0,
+          "speed": 1,
+          "updatedElapsedRealtimeMs": 344577637,
+          "actions": 1049455,
+          "activeQueueItemId": -1,
+          "errorMessage": null,
+          "extras": null,
+          "customActions": []
+        }
+      },
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 3,
+              "stateName": "PLAYING",
+              "positionMs": 344535314,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344577670,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    },
+    {
+      "sequence": 1593,
+      "wallTimeMs": 1790816121392,
+      "elapsedRealtimeMs": 344553929,
+      "reason": "poll",
+      "eventPayload": null,
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 3,
+              "stateName": "PLAYING",
+              "positionMs": 344512107,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344553924,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    },
+    {
+      "sequence": 1633,
+      "wallTimeMs": 1790816161490,
+      "elapsedRealtimeMs": 344594027,
+      "reason": "poll",
+      "eventPayload": null,
+      "snapshot": {
+        "listenerConnected": true,
+        "sessions": [
+          {
+            "package": "com.amazon.firebat",
+            "sessionToken": "661d15f",
+            "metadata": {
+              "keys": [
+                "android.media.metadata.AUTHOR",
+                "android.media.metadata.DISPLAY_TITLE",
+                "android.media.metadata.DURATION",
+                "android.media.metadata.MEDIA_ID",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID"
+              ],
+              "entries": {
+                "android.media.metadata.AUTHOR": "PrimeVideo",
+                "android.media.metadata.DISPLAY_TITLE": "",
+                "android.media.metadata.DURATION": -1,
+                "android.media.metadata.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "com.amazon.alexa.externalmediaplayer.metadata.CONTENT_TYPE": "VIDEO",
+                "com.amazon.alexa.externalmediaplayer.metadata.IS_VIDEO_METADATA": "",
+                "com.amazon.alexa.externalmediaplayer.metadata.PLAYBACK_SOURCE_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78"
+              },
+              "description": {
+                "mediaId": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+                "title": "PrimeVideo",
+                "subtitle": null,
+                "description": null,
+                "iconUri": null,
+                "iconBitmap": null,
+                "mediaUri": null,
+                "extras": null
+              }
+            },
+            "sessionExtras": {
+              "com.amazon.media.CONTENT_ID": "",
+              "com.amazon.media.MEDIA_ID": "amzn1.dv.gti.4f17412d-50b4-4ec4-bd8d-617cbebeab78",
+              "com.amazon.media.MEDIA_ID_TYPE": "VIDEO",
+              "com.amazon.media.MEDIA_LENGTH": -1
+            },
+            "playbackState": {
+              "state": 3,
+              "stateName": "PLAYING",
+              "positionMs": 344551657,
+              "bufferedPositionMs": 0,
+              "speed": 1,
+              "updatedElapsedRealtimeMs": 344594013,
+              "actions": 1049455,
+              "activeQueueItemId": -1,
+              "errorMessage": null,
+              "extras": null,
+              "customActions": []
+            },
+            "queueTitle": null,
+            "queue": null,
+            "flags": 3
+          }
+        ]
+      },
+      "snapshotAtomic": false
+    }
+  ]
+}

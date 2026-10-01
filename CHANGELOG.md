@@ -1,8 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — Runtime grounding and hybrid navigation
+
+- Port capture 05's complete multiline event framing, independent stdout/stderr buffers and pending-record screenshot safeguards. Keep original channel/timing/window conformance. Latch unexpected listener failures and confirm owned remote-process cleanup instead of spawning repeated UIAutomator listeners.
+- Navigate action menus from observed visible ordering and current input labels. No fixed Watch Live index, item count or wrap rule. Fresh visual context validates Select; one short result Select opens the menu and does not establish playback proof. Keyboard/suggestion and non-live action labels can reject contradictory model activations.
+- Read the exploration's installed MediaSession probe and rotating journals. Associate visual event/route identity with boot/session/runtime IDs; monitor stable playback without per-poll screenshots or inference. Keep callback payloads separate from composite snapshots, runtime IDs separate from Teamarr IDs, and visual timestamps separate from transport timestamps.
+- Expose optional runtime diagnostics through the existing token getter. Detect buffering, interrupted continuity, source loss and identity changes without inferring event completion. Remove MediaSession position increments as rendered-video/live-edge proof; live-lag remains unmeasured. The fallback requires visible elapsed-timer progression.
+- Document the new evidence, decisions and gaps. The original probe source/APK/installer is absent from the archives; the adapter consumes an already-installed service. No new public endpoint, database migration or default activation of real playback.
 
 - Wake the device when the Take control remote connects or reconnects, using a wake-only key before controls become ready. Wake respects session ownership, expiry and the playback cancellation/input gate; screen viewing alone remains passive.
+
+Validation: **329 backend tests pass**, including original collector conformance, all 103 recovered capture-05 accessibility records, varied menu layouts, media callback/identity semantics, input-gate races and runtime monitoring. Changed Python lint passes; all nine API examples validate against synchronized models. No TV/model endpoint, probe installer, Docker deployment or autonomous reliability trial was exercised here.
 
 ## 0.9.1 — Native accessibility collector
 

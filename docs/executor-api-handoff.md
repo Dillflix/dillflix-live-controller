@@ -1,8 +1,8 @@
 # Playback API implementation guide
 
-Implemented in **dillflix-live-controller 0.9**, with native accessibility collection added in **0.9.1**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
+Implemented in **dillflix-live-controller 0.10.0**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
 
-**Implementation status:** the missing native collector has been ported with its timing, channel, window and screenshot-association safeguards. Native metadata reaches the actor and stale-input guard separately from visual focus readings. The [accessibility audit and implementation plan](accessibility-critical-path.md) documents the evidence and remaining unvalidated activation/playback stages. The three-operation contract remains unchanged.
+**Implementation status:** native collection now includes the later recorder's multiline framing, independent stdout/stderr, pending-record capture guards and failure-latched listener ownership. The controller uses observed menu ordering plus fresh focus labels, and binds visual event identity to structured runtime sessions for monitoring. See the [grounding policy, capture evidence and remaining validation](runtime-grounding.md). Autonomous target-TV reliability and reproducible media-probe installation remain unvalidated. The three-operation contract remains unchanged.
 
 The public contract has exactly three operations. Separate request recovery, current-device observation, content-ID lifecycle, input-authority/renewal, and Stop APIs remain unnecessary for this release.
 
@@ -54,6 +54,7 @@ GET reads durable records and applies freshness rules. It sends no input and mak
 | `observation` | Playback evidence attributable to this token; null before verification and after acknowledged cancellation. |
 | `observation.verified` | True only while acquired evidence remains current and matches the requested content, permitted route and live presentation. |
 | `observation_status` | `fresh`, `stale`, or `unavailable`, independently of HTTP success. |
+| `runtime` | Optional transport/source health, boot/session/media identity, visual association, last visual time, live-mode basis and callback diagnostics. `runtime_media_id` is not `content_id`; live-edge latency remains unmeasured. |
 | `content_status.effective_state` | `scheduled`, `live`, `ended`, `cancelled`, `delayed`, `suspended`, `postponed`, or `unknown`: the event/broadcast lifecycle. |
 | `content_status.observation` | Lifecycle fact, source, original acquisition/receipt times and optional visual evidence. |
 | `cancellation` | `none`, `requested`, or `acknowledged`, plus whether input in scope is quiescent. |
@@ -67,21 +68,25 @@ Polling every 2–5 seconds is sufficient for most callers. The embedded control
 
 ## Verification and completion
 
-The actor proposes one D-pad action at a time. It cannot supply arbitrary commands, coordinates, URLs, or global Home/settings actions. A separate observer receives only the screenshot and observation schema: no target, expected answer, actor reasoning, or prior success claims. Python checks its transcribed facts against the request.
+The controller handles established transitions and label-confirmed menu arrows; the actor proposes one D-pad action when navigation is unresolved. Neither can supply arbitrary commands, coordinates, URLs, or global Home/settings actions. A separate observer receives only the screenshot and observation schema: no target, expected answer, actor reasoning, or prior success claims. Python checks its transcribed facts against the request.
 
 The actor also receives capture-associated app-provided focus metadata, with separate input/accessibility channels and explicit unknown/historical states. Native changes during capture or inference invalidate pending navigation evidence. Revision checks happen under the physical input gate before dispatch; rejected actions are recaptured, not replayed. Native row/suggestion labels cannot substitute for event identity or activation/playback proof. The screenshot-only observer is kept separate to avoid feeding the expected native answer back into its visual reading.
 
-Before SELECT activates content, two captures must agree on the focused control. Both competitors must match structured team aliases. A visible league/date must agree. Explicit route/channel and language constraints must match. The focused content must be identified as live. Replay, upcoming, ended, start-over, purchase, sign-in, unclear focus and unrelated content are rejected. Ordinary navigation controls can be selected; Play/Watch/Resume cannot masquerade as menu navigation.
+Before SELECT activates content, two captures must agree on the focused control. Both competitors must match structured team aliases. A visible league/date must agree. The focused content must be identified as live. Opening a result with one short Select reveals its action menu and establishes no playback proof; missing route details can be learned there. Watch Live requires matching explicit route/channel and language constraints. Replay, upcoming, ended, Resume, Rapid Recap, Multiview, start-over, purchase, sign-in, unclear focus and unrelated content cannot authorize playback. Ordinary navigation controls can be selected; Play/Watch/Resume cannot masquerade as menu navigation.
 
-Launch success requires a previously confirmed live-content activation and two playback samples at least one second apart, with:
+Menus have no fixed Watch Live index, item count or starting focus. The observer supplies visible items in order; the controller moves one adjacent step and requires the expected fresh input-channel label. Missing/ambiguous/off-screen targets or unexpected transitions trigger visual navigation again. Select on Watch Live always gets fresh visual event/variant validation.
+
+The preferred verification path requires:
 
 - Prime Video still foreground;
-- independently observed identity matching the request;
-- visible live-edge evidence;
-- one active playing Android media session belonging to Prime Video;
-- an advancing visible elapsed timer or actually advancing sampled media position. Stationary media position is never extrapolated using wall-clock time.
+- a confirmed Watch Live dispatch, separately from opening the result;
+- independently observed player identity and route matching the request;
+- a fresh structured Prime PLAYING session corroborated as active;
+- consistent boot/session/runtime media identity across screenshot acquisition and a further runtime read after inference.
 
-Actor FINISH, successful ADB, app launch, audio, generic media metadata and elapsed navigation time cannot prove success. Black/protected frames, hidden identity/live controls, paused playback, ads and unsupported telemetry remain unverified. Read-only monitoring does not press keys to reveal controls. This conservative policy needs validation on the actual device and inference service.
+The association permits five-second runtime monitoring without per-poll inference, with visual checks every 30 seconds by default. Visual identity and transport timestamps remain separate. Unknown visual identity can retain the same binding only within a bounded visual-age window; positive contradictions withdraw it. Session/boot/ID changes, source loss, pause/seek/stop and uncovered history gaps require revalidation. Brief buffering is unverified transport, can recover on the same binding, and never implies event completion. Restart invalidates bindings; fresh explicit playhead-at-live evidence is needed to reassociate without another Watch Live dispatch.
+
+MediaSession position is not proof of rendered video, programme elapsed time or live lag. The visual-only fallback requires two matching samples at least one second apart, explicit visual live-playhead evidence, active Prime PLAYING and an advancing visible elapsed player timer. Actor FINISH, successful ADB, audio and generic titles cannot verify playback. Read-only monitoring never presses keys to reveal controls. The [detailed policy](runtime-grounding.md) distinguishes measured facts from remaining target-device validation.
 
 | Lifecycle source | Policy |
 | --- | --- |
@@ -124,6 +129,9 @@ Play, getter and Cancel therefore suffice. Physical remotes and unrelated ADB cl
 | `store.py` | Token acceptance, hashes, intent/fences, cancellation, journal, freshness and retirement. |
 | `runtime.py` | Single device worker, navigation deadline, preemption, stop, monitoring and completion. |
 | `adb.py` | Quoted package-scoped commands, bounded subprocesses, images, foreground/media telemetry. |
+| `accessibility.py`, `event_records.py` | Native channels, timing/window policy, multiline transport framing and listener ownership. |
+| `navigation.py` | Observed menu order, native focus reconciliation and deterministic adjacent moves. |
+| `media.py`, `monitoring.py` | Structured probe snapshots/callbacks, runtime identity epochs, visual binding and status diagnostics. |
 | `vision.py`, `verification.py` | Model transport, strict protocols, matching and evidence policy. |
 | `integration.py` | Controller adapters reading/writing the same durable token records. |
 | `check.py` | Configuration/live-screen/saved-PNG diagnostics that send no input. |

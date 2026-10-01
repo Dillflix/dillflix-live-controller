@@ -56,6 +56,7 @@ async def check(settings, *, observe=False, image=None, request=None):
             foreground=frame.foreground,
             media_sessions=frame.sessions,
             native_focus=frame.native_focus,
+            runtime=frame.runtime,
             native_focus_validity_after_observer=(
                 observation_validity(frame.native_focus, device.accessibility.snapshot()) if device else None
             ),
@@ -72,7 +73,7 @@ async def check(settings, *, observe=False, image=None, request=None):
             result["comparisons_timezone"] = "UTC"
             result["comparison"] = {
                 "activation_allowed": activation_allowed(scene, body, option, frame, "UTC"),
-                "single_playback_sample_matches": bool(playback_sample(scene, frame, body, "UTC")),
+                "single_playback_sample_matches": bool(playback_sample(scene, frame, body, "UTC", option)),
                 "completion_candidate": completed(scene, frame, body, "UTC"),
             }
             result["proposed_action_not_executed"] = await vision.decide(frame, body, option, [])
