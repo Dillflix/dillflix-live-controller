@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from .accessibility import PRIME
 
 PROBE = "dev.tvprobe.mediasession"
+JOURNAL_TAIL_BYTES = 512 * 1024
 STATES = {
     0: "none",
     1: "stopped",
@@ -122,10 +123,12 @@ def identity_key(sample):
         or s.get("identity_status") != "consistent"
         or not s.get("session_token")
         or not sample.get("boot_id")
+        or not sample.get("probe_instance")
     ):
         return None
     return (
         sample["boot_id"],
+        sample["probe_instance"],
         s["session_token"],
         s["runtime_media_id"],
         sample.get("identity_revision", 0),
@@ -146,6 +149,8 @@ class MediaTracker:
 
     def __init__(self):
         self.boot_id, self.latest_elapsed = None, None
+        self.probe_instance = None
+        self.last_sequence = None
         self.identity_revision, self.last_key = 0, None
         self.seen, self.events = deque(maxlen=2048), deque(maxlen=24)
         self.last_sample = None
@@ -156,6 +161,7 @@ class MediaTracker:
         history,
         *,
         boot_id,
+        probe_instance,
         started_at,
         finished_at,
         foreground,
@@ -167,13 +173,19 @@ class MediaTracker:
     ):
         sample = normalize(record)
         at = sample["device_elapsed_ms"]
-        restarted = self.boot_id != boot_id or (self.latest_elapsed is not None and at < self.latest_elapsed)
+        restarted = (
+            self.boot_id != boot_id
+            or self.probe_instance != probe_instance
+            or (self.latest_elapsed is not None and at < self.latest_elapsed)
+        )
         if restarted:
             self.identity_revision += 1
             self.seen.clear()
             self.events.clear()
             self.last_key = self.last_sample = None
+            self.last_sequence = None
         self.boot_id = boot_id
+        self.probe_instance = probe_instance
         # Compare elapsedRealtime to this device's boot clock, never UTC. The
         # finite command interval bounds how old/future the service dump can be.
         age_ms = (
@@ -189,6 +201,7 @@ class MediaTracker:
             sample["source_health"] = "stale"
         previous_elapsed = None if restarted else self.latest_elapsed
         known = set(self.seen)
+        history_gap = False
         for event in sorted(history, key=lambda r: r["elapsedRealtimeMs"]):
             timestamp = event["elapsedRealtimeMs"]
             if timestamp > at or (previous_elapsed is not None and timestamp < previous_elapsed):
@@ -198,6 +211,15 @@ class MediaTracker:
                 continue
             known.add(digest)
             self.seen.append(digest)
+            sequence = event.get("sequence")
+            if type(sequence) is int and sequence > 0:
+                if self.last_sequence is not None and sequence != self.last_sequence + 1:
+                    self.identity_revision += 1
+                    history_gap = True
+                self.last_sequence = sequence
+            reason = event.get("reason")
+            if reason in {"connected", "disconnected", "connect_error", "poll_error", "session_destroyed"}:
+                self.identity_revision += 1
             observed = normalize(event).get("session")
             if not observed:
                 if self.last_key is not None:
@@ -211,7 +233,6 @@ class MediaTracker:
             payload = event.get("eventPayload") or {}
             if not isinstance(payload, dict):
                 continue
-            reason = event.get("reason")
             if reason in {
                 "metadata_changed",
                 "extras_changed",
@@ -248,6 +269,7 @@ class MediaTracker:
         active = [v for v in legacy if v.get("package") == PRIME and v.get("active")]
         sample.update(
             boot_id=boot_id,
+            probe_instance=probe_instance,
             identity_revision=self.identity_revision,
             started_at=started_at,
             observed_at=(
@@ -258,6 +280,7 @@ class MediaTracker:
             active_confirmed=bool(s and len(active) == 1 and active[0].get("state") == s["state"]),
             recent_events=list(self.events),
             history_available=history_available,
+            history_gap=history_gap,
             position_meaning="application_reported_or_extrapolated_not_programme_time",
             live_edge="unmeasured",
         )

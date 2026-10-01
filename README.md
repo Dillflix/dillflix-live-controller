@@ -8,6 +8,8 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 
 **Version 0.10.0 uses runtime evidence in navigation and monitoring:** complete multiline native records from both output streams, observed menu order with label-confirmed movement, separate result/menu and Watch Live activations, and visual identity associated with structured MediaSession telemetry. Stable playback monitoring avoids per-poll screenshots/inference. See the [grounding policy and capture evidence](docs/runtime-grounding.md) and [media-probe dependency](docs/executor-setup.md#structured-media-probe). Target-TV autonomous reliability remains unvalidated.
 
+**Version 0.10.1 packages the supplied MediaSession probe source and original signed APK**, with explicit install/readiness commands, a verified source rebuild, and controller safeguards for probe restarts and journal gaps. See [probe setup](docs/executor-setup.md#structured-media-probe) and the [prioritized probe improvements](android/prime-media-probe/IMPROVEMENTS.md). Installation on the target TV remains untested here.
+
 ## What works
 
 - Opt-in Prime Video playback with package-scoped ADB search, configurable JSON/TVTheseus actor, independent vision observer, durable tokens, active cancellation, completion checks and read-only diagnostics.

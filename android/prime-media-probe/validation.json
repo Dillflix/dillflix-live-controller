@@ -1,0 +1,18 @@
+{
+  "validation": "Rebuilt supplied Java and manifest with the pinned toolchain; compared uncompressed APK payloads",
+  "source_changed": false,
+  "classes.dex": {
+    "original_sha256": "131342236805faa8fe74f2691d53dcf89263c4ada568e9d5ee660c6d886be56a",
+    "rebuilt_sha256": "131342236805faa8fe74f2691d53dcf89263c4ada568e9d5ee660c6d886be56a",
+    "equal": true
+  },
+  "AndroidManifest.xml": {
+    "original_sha256": "e092fbc4dd9218cbc2ebdf5e2bd24065871c2d110f0b3d1ea52437145a92e3b5",
+    "rebuilt_sha256": "e092fbc4dd9218cbc2ebdf5e2bd24065871c2d110f0b3d1ea52437145a92e3b5",
+    "equal": true
+  },
+  "original_apk_signature_verified": true,
+  "original_apk_signature_schemes": ["v1", "v2", "v3"],
+  "signing_key": "Original private key not supplied; rebuild used a separate local development key",
+  "device_installation_tested": false
+}

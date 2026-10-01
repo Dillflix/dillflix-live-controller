@@ -81,6 +81,7 @@ def test_partial_oversized_and_replaced_records_are_rejected_not_shortened_into_
 def update(tracker, record, **overrides):
     options = dict(
         boot_id="fixture-boot",
+        probe_instance="fixture-process",
         started_at="2026-10-01T00:55:00+00:00",
         finished_at="2026-10-01T00:55:01+00:00",
         foreground="com.amazon.firebat",
@@ -183,6 +184,8 @@ async def test_probe_adapter_reads_rotating_history_and_does_not_hide_a_callback
     commands = []
 
     async def shell(*args):
+        if args[0] == "sh":
+            return "123:456"
         if args[0] == "cat":
             return "12345678-1234-1234-1234-123456789abc\n" + str(dumped["elapsedRealtimeMs"] / 1000) + " 0\n"
         assert args == ("dumpsys", "activity", "service", "dev.tvprobe.mediasession/.ProbeService")
@@ -201,3 +204,4 @@ async def test_probe_adapter_reads_rotating_history_and_does_not_hide_a_callback
     assert not sample["active_confirmed"]  # Earlier dumpsys state disagrees; no atomicity claim.
     assert commands[0][:3] == ("exec-out", "run-as", "dev.tvprobe.mediasession")
     assert "events.previous.jsonl" in commands[0][-1] and "events.jsonl" in commands[0][-1]
+    assert "tail -c 524288" in commands[0][-1]

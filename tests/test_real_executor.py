@@ -219,6 +219,7 @@ class Device:
             "source_health": "fresh",
             "foreground": PACKAGE,
             "boot_id": "fixture-boot",
+            "probe_instance": "fixture-process",
             "identity_revision": 1,
             "active_confirmed": True,
             "observed_at": datetime.now(UTC).isoformat(),

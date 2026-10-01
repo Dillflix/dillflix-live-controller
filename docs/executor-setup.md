@@ -4,6 +4,8 @@ The executor is included in the controller image; there is no second service or 
 
 **Version 0.10.0** adds complete multiline native records, failure-latched listener cleanup, dynamic menu traversal and structured runtime monitoring. `scene.focus` remains independent vision-model output. See the [grounding policy and evidence](runtime-grounding.md), including the external media-probe dependency below. A successful API/test run does not establish autonomous TV reliability.
 
+**Version 0.10.1** includes the supplied probe source and signed APK, an explicit installer/readiness command, bounded journal reads, and probe-process/sequence continuity checks. Probe installation still needs target-TV validation.
+
 ## Configure and start
 
 Use one controller instance, one API worker and one persistent database per physical TV. Retain the data volume and ADB identity. Enable Fire TV debugging and authorize the controller's key using [screen setup](screen-mirroring.md). Prime Video must already be signed in with an appropriate profile/subscription; automation does not sign in, purchase, subscribe or change profiles.
@@ -75,7 +77,18 @@ Do not run a second UIAutomator collector against the same TV. An unexpected lis
 
 ### Structured media probe
 
-The preferred monitoring path consumes the **already-installed** `dev.tvprobe.mediasession/.ProbeService` used by the supplied capture. The source/APK and installer were not included in the supplied archives; this release does not install it or change notification-listener permissions. For a fresh TV, obtain the original probe source/APK and installation procedure before expecting this path to work.
+The preferred monitoring path consumes `dev.tvprobe.mediasession/.ProbeService` used by the supplied capture. The subsequently supplied Java/manifest and original signed APK are now bundled. Controller startup and Play do not install it or alter listener permissions; use the explicit command once for a fresh TV:
+
+```bash
+docker compose exec controller python -m controller.executor.probe verify-apk
+docker compose exec controller python -m controller.executor.probe check
+docker compose exec controller python -m controller.executor.probe install --grant-listener-access
+docker compose exec controller python -m controller.executor.probe check
+```
+
+`verify-apk` is offline. `check` reads without sending keys, starting UIAutomator or contacting a model. Installation verifies the pinned APK, updates it with `adb install -r`, optionally grants notification-listener access only with the explicit flag, requests rebind through the source's no-display activity, and waits up to 30 seconds for readiness. A signing conflict preserves the installed app and journals. No uninstall/data clearing is attempted. For local Python, export `SCREEN_ADB_SERIAL` or pass `--serial YOUR_TV_SERIAL`; `.env` is not loaded automatically.
+
+A ready result requires a fresh connected service snapshot, a readable PID/start time and parseable journal history. Zero Prime sessions can be healthy. This checks the observation path, not the chosen event, live playback or uninterrupted journal writing. Source/build provenance, signing limitations and more detailed commands are in the [probe README](../android/prime-media-probe/README.md); [proposed probe improvements](../android/prime-media-probe/IMPROVEMENTS.md) address its remaining health/identity limitations.
 
 Read-only checks, using the actual authorized ADB serial:
 
@@ -84,7 +97,9 @@ adb -s YOUR_TV_SERIAL shell dumpsys activity service dev.tvprobe.mediasession/.P
 adb -s YOUR_TV_SERIAL exec-out run-as dev.tvprobe.mediasession cat files/events.jsonl
 ```
 
-The service output must include structured JSON with `elapsedRealtimeMs`, `snapshot.listenerConnected=true` and `snapshot.sessions`; a running service alone is not enough. Journal export requires the probe's `run-as` access. The adapter also reads `events.previous.jsonl` when present; absence of that older file is normal. Callback payloads and composite snapshots are kept distinct. JSON parsing and byte limits reject truncated/malformed output; a missing probe backs off for 30 seconds and leaves structured identity unavailable.
+The service output must include structured JSON with `elapsedRealtimeMs`, `snapshot.listenerConnected=true` and `snapshot.sessions`; a running service alone is not enough. Journal export requires `run-as` access to this debuggable helper's own files, not Prime's private files. The adapter reads up to 512 KiB from each of `events.previous.jsonl` and `events.jsonl`; absence of the older file is normal. Callback payloads and composite snapshots are kept distinct. The probe suppresses unchanged poll records, so the journal is not a one-second heartbeat. JSON parsing rejects partial/oversized/malformed records. Observed sequence gaps withdraw continuity; a missing probe backs off for 30 seconds and leaves structured identity unavailable.
+
+The source's `sessionToken` is a process-local hash. The controller scopes it to boot ID and probe PID/start ticks and confirms the process is unchanged across the read. Verify that the deployment permits reading this process identity. A restart during acquisition, reconnect/destroy/error callback or detected journal sequence gap invalidates the old visual association. Original records lack service-instance IDs and dumps lack a sequence checkpoint, so tail-gap detection remains incomplete until the proposed probe changes are made.
 
 `check --observe` now returns `runtime` alongside native focus and the independent scene. Confirm actual Prime session tokens, runtime IDs and reported states on the device. DISPLAY_TITLE may be empty and the description generic; event identity still comes from pixels. Set `EXECUTOR_MEDIA_PROBE=false` to explicitly use the visual fallback, which requires visible live-playhead and advancing elapsed-timer evidence. Hidden controls may prevent fallback verification.
 
@@ -143,7 +158,10 @@ The original archive informed package-scoped launch/search, paired-opponent quer
 | `target_unresolved`, `action_budget`, `navigation_timeout` | Diagnose visible focus/identity/live status, model decisions and account availability. |
 | `stale_navigation_focus` | Native focus changed during capture/inference or capture association is invalid; navigation recaptures before another input. Inspect native validity and window reasons. |
 | `native_focus.streamStatus=failed` | Diagnose the latched listener/ownership error and competing UIAutomator, then restart the controller. Do not loop new listeners. |
-| `runtime.source_health=unavailable`, unbound runtime | Check the installed media probe, listener connection, `run-as` export and fresh service snapshots. Do not infer event identity from a generic PrimeVideo title. |
+| `runtime.source_health=unavailable`, unbound runtime | Run `controller.executor.probe check`; inspect listener connection, `run-as` export, process identity and fresh snapshots. Do not infer event identity from a generic PrimeVideo title. |
+| `probe_process_unknown`, `probe_process_changed` | Confirm the helper service is running and PID/start-time reads work; a restart during collection cannot preserve a binding. |
+| `probe_signature_mismatch` | Use the supplied original APK for its existing signer. A custom rebuild uses a different key unless deliberately preserved; the old app and traces remain intact. |
+| `probe_not_ready`, `probe_permission_unconfirmed` | Inspect notification-listener access and fresh service/journal reads. Successful package installation alone does not establish readiness. |
 | `stop_unconfirmed`, `cancel_unconfirmed` | Cancellation retained; restore ADB and retry. Manual input remains gated. |
 
 See [operations](operations.md) for backup/restore and [API implementation](executor-api-handoff.md) for semantics/evidence policy. TVTheseus prompt attribution and license are in `third_party/tvtheseus-NOTICE.txt` and `third_party/tvtheseus-LICENSE.txt`.

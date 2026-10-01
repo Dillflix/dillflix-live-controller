@@ -243,6 +243,7 @@ class RuntimeStatus(Strict):
     session_token: str | None
     runtime_media_id: str | None
     boot_id: str | None
+    probe_instance: str | None = None
     identity_revision: int | None
     transport: str
     binding: Literal["visually_associated", "unbound", "revalidation_required"]
@@ -253,6 +254,7 @@ class RuntimeStatus(Strict):
     position_ms: float | None
     position_meaning: str
     history_available: bool
+    history_gap: bool = False
     recent_events: list[dict] = Field(max_length=24)
 
 

@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.tvprobe.mediasession" android:versionCode="1" android:versionName="1.0">
+  <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="30" />
+  <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+  <application android:label="Media Session Probe" android:debuggable="true" android:allowBackup="false">
+    <activity android:name=".StartActivity" android:exported="true" android:theme="@android:style/Theme.NoDisplay" />
+    <service android:name=".ProbeService" android:label="Media Session Probe" android:exported="true" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
+    </service>
+  </application>
+</manifest>

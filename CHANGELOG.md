@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.1 — Supplied probe packaging and continuity safeguards
+
+- Bundle the subsequently supplied original MediaSession APK, Java and manifest with source/artifact/signer hashes. Retain the original signed APK; the adapted pinned build produces matching bytecode and compiled manifest with a separate development signature.
+- Add `python -m controller.executor.probe verify-apk|check|install`. Verify the artifact before installation, require an explicit listener-permission flag, request rebind and bound readiness waiting. Preserve existing app data/journals on signing conflicts; startup and Play do not install or grant permissions.
+- Scope the source's process-local session hash to probe PID/start ticks and device boot. Reject restarts during acquisition and withdraw continuity on reconnect/disconnect/error/destruction callbacks, including unchanged composite snapshots.
+- Read bounded tails from both rotating journals instead of allowing two roughly 8 MiB files to exceed ADB output limits. Detected sequence gaps invalidate the old association. Original records/dumps still lack the instance/checkpoint fields needed to prove complete history.
+- Add optional `runtime.probe_instance` and `runtime.history_gap` diagnostics; synchronize the API schema/examples. No new endpoints or migration.
+- Document source-backed priorities for explicit service/session IDs, sequence checkpoints, read/write health, final historical session evidence, timing and bounded record/export work. These probe modifications are proposed; the bundled Java/APK remains unchanged.
+
+Validation: **344 backend tests pass**; changed Python lint, APK checksum verification and all nine API examples pass. Original signature and equal rebuilt code/manifest payloads are verified. The Python wheel builds and contains the exact supplied APK. Target-TV installation, process-identity access, permission/restart behavior, model accuracy and Docker deployment were not exercised here.
+
 ## 0.10.0 — Runtime grounding and hybrid navigation
 
 - Port capture 05's complete multiline event framing, independent stdout/stderr buffers and pending-record screenshot safeguards. Keep original channel/timing/window conformance. Latch unexpected listener failures and confirm owned remote-process cleanup instead of spawning repeated UIAutomator listeners.

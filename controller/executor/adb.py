@@ -15,7 +15,7 @@ from uuid import uuid4
 from PIL import Image, ImageStat, UnidentifiedImageError
 
 from .accessibility import FocusCollector, associate_capture, observation_validity
-from .media import PROBE, MediaTracker, identity_key, records
+from .media import JOURNAL_TAIL_BYTES, PROBE, MediaTracker, identity_key, records
 from .models import ExecutorError
 
 PACKAGE = "com.amazon.firebat"
@@ -230,6 +230,12 @@ class AdbDevice:
                 output, errors = await asyncio.gather(*readers)
                 await process.wait()
             if process.returncode:
+                if args and args[0] == "install" and b"INSTALL_FAILED_UPDATE_INCOMPATIBLE" in output + errors:
+                    raise ExecutorError(
+                        "probe_signature_mismatch",
+                        "Installed probe has a different signing certificate; existing app and traces were preserved",
+                        retryable=False,
+                    )
                 code = (
                     "adb_unauthorized" if b"unauthorized" in errors.lower() + output.lower() else "adb_failed"
                 )
@@ -307,6 +313,23 @@ class AdbDevice:
         )
         return foreground(activity), media_sessions(media)
 
+    async def probe_instance(self):
+        # The source's sessionToken is a hash scoped to a process. Bind it to
+        # the exact probe PID/start time; never infer process continuity from it.
+        script = (
+            f'p=$(pidof {PROBE}); case "$p" in ""|*" "*) exit 1;; esac; '
+            'awk \'{print $1 ":" $22}\' /proc/"$p"/stat'
+        )
+        try:
+            identity = (await self.shell("sh", "-c", script)).strip()
+        except ExecutorError as error:
+            raise ExecutorError(
+                "probe_process_unknown", "Media probe PID/start time could not be read"
+            ) from error
+        if not re.fullmatch(r"[1-9]\d*:[1-9]\d*", identity):
+            raise ExecutorError("probe_process_unknown", "Media probe process identity is unavailable")
+        return identity
+
     async def runtime(self, *, device_state=None):
         started_at, started = datetime.now(UTC).isoformat(), time.monotonic()
         app, legacy = device_state if device_state is not None else await self.state()
@@ -329,6 +352,7 @@ class AdbDevice:
             if not re.fullmatch(r"[a-fA-F0-9-]{36}", boot_id) or not math.isfinite(seconds) or seconds < 0:
                 raise ValueError("Invalid boot clock")
             clock_received = time.monotonic()
+            instance_before = await self.probe_instance()
             dump = await self.shell("dumpsys", "activity", "service", PROBE + "/.ProbeService")
             values = records(dump)
             if not values:
@@ -336,14 +360,21 @@ class AdbDevice:
             record = values[-1]
             history, history_available = [], False
             try:
-                # Both rotating files preserve short callbacks between host
-                # polls. Read-only, bounded by run(); missing old file is normal.
-                script = 'for f in files/events.previous.jsonl files/events.jsonl; do if [ -r "$f" ]; then cat "$f"; fi; done'
+                # Each source journal rotates at ~8 MiB. Read bounded tails of
+                # both; a partial first/last line is discarded by records().
+                # Sequence gaps withdraw continuity instead of hiding lost callbacks.
+                script = (
+                    "for f in files/events.previous.jsonl files/events.jsonl; do "
+                    f'if [ -r "$f" ]; then tail -c {JOURNAL_TAIL_BYTES} "$f"; '
+                    "printf '\\n'; fi; done"
+                )
                 raw = await self.run("exec-out", "run-as", PROBE, "sh", "-c", shlex.quote(script))
                 history = await asyncio.to_thread(records, raw.decode(errors="replace"))
                 history_available = bool(history)
             except ExecutorError:
                 pass  # A live service snapshot remains useful without journal access.
+            if await self.probe_instance() != instance_before:
+                raise ExecutorError("probe_process_changed", "Media probe restarted during acquisition")
             # A callback can arrive after the service dump but before journal
             # acquisition finishes. Do not knowingly return the earlier state.
             # Both device elapsed time and wall time must place it in this read.
@@ -364,6 +395,7 @@ class AdbDevice:
                 record,
                 history,
                 boot_id=boot_id,
+                probe_instance=instance_before,
                 started_at=started_at,
                 finished_at=datetime.now(UTC).isoformat(),
                 foreground=app,
@@ -375,9 +407,11 @@ class AdbDevice:
             )
             sample["read_seconds"] = time.monotonic() - started
             return sample
-        except (ExecutorError, ValueError, IndexError, KeyError, TypeError):
+        except (ExecutorError, ValueError, IndexError, KeyError, TypeError) as error:
             self._probe_retry_at = time.monotonic() + 30
-            fallback["source_error"] = "media_probe_unavailable"
+            fallback["source_error"] = (
+                error.code if isinstance(error, ExecutorError) else "media_probe_unavailable"
+            )
             return fallback
 
     async def capture(self):

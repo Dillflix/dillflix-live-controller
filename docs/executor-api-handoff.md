@@ -1,8 +1,8 @@
 # Playback API implementation guide
 
-Implemented in **dillflix-live-controller 0.10.0**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
+Implemented in **dillflix-live-controller 0.10.1**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
 
-**Implementation status:** native collection now includes the later recorder's multiline framing, independent stdout/stderr, pending-record capture guards and failure-latched listener ownership. The controller uses observed menu ordering plus fresh focus labels, and binds visual event identity to structured runtime sessions for monitoring. See the [grounding policy, capture evidence and remaining validation](runtime-grounding.md). Autonomous target-TV reliability and reproducible media-probe installation remain unvalidated. The three-operation contract remains unchanged.
+**Implementation status:** native collection now includes the later recorder's multiline framing, independent stdout/stderr, pending-record capture guards and failure-latched listener ownership. The controller uses observed menu ordering plus fresh focus labels, and binds visual event identity to structured runtime sessions for monitoring. The supplied probe source/APK, verified rebuild and explicit installer/readiness CLI are included; restart and detected sequence-gap safeguards scope that binding. See the [grounding policy, capture evidence and remaining validation](runtime-grounding.md). Autonomous reliability and probe installation on the target TV remain unvalidated. The three-operation contract remains unchanged.
 
 The public contract has exactly three operations. Separate request recovery, current-device observation, content-ID lifecycle, input-authority/renewal, and Stop APIs remain unnecessary for this release.
 
@@ -135,6 +135,7 @@ Play, getter and Cancel therefore suffice. Physical remotes and unrelated ADB cl
 | `vision.py`, `verification.py` | Model transport, strict protocols, matching and evidence policy. |
 | `integration.py` | Controller adapters reading/writing the same durable token records. |
 | `check.py` | Configuration/live-screen/saved-PNG diagnostics that send no input. |
+| `probe.py`, `android/prime-media-probe/` | Pinned original APK, explicit installation/readiness, supplied source, rebuild and improvement proposal. |
 
 Controller coordination runs in a serialized, drained worker thread. Model HTTP uses asynchronous HTTPX, total deadlines, limited connections, bounded responses, no redirects and explicit schema validation. ADB uses bounded asynchronous subprocesses. There is no blocking HTTP on the event loop serving screens, manual input, feed/status work and web requests, and no loopback HTTP hop for the embedded integration.
 

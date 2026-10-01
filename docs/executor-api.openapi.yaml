@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Dillflix Playback Executor API
   version: 1.0.0
-  description: 'Implemented in dillflix-live-controller 0.10.0. Three operations: asynchronous Play, token status
+  description: 'Implemented in dillflix-live-controller 0.10.1. Three operations: asynchronous Play, token status
     including lifecycle, and Cancel including active stop and device intent fencing. Configure PLAYBACK_ADAPTER=prime-video
     and EXECUTOR_API_TOKEN. See executor-api-handoff.md and executor-setup.md.'
 servers:
@@ -788,6 +788,12 @@ components:
           - type: string
           - type: 'null'
           title: Boot Id
+        probe_instance:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+          title: Probe Instance
         identity_revision:
           anyOf:
           - type: integer
@@ -836,6 +842,10 @@ components:
           type: string
         history_available:
           title: History Available
+          type: boolean
+        history_gap:
+          default: false
+          title: History Gap
           type: boolean
         recent_events:
           items:
@@ -1055,6 +1065,8 @@ components:
           position_meaning: application_reported_or_extrapolated_not_programme_time
           history_available: true
           recent_events: []
+          probe_instance: 123:456
+          history_gap: false
       x-schema: PlaybackReport
     Ended:
       summary: Confirmed game completion despite stale playback evidence

@@ -1,0 +1,12 @@
+{
+  "source_archive_sha256": "7140a7b882f2e20f9db31035fd15c8f7db89d4d7bef98ac1c6b21b0a76dfce3f",
+  "apk_sha256": "24a71c8ed36864125b85b519b7cd125067c9214ac549d86f0fa22adb5c547392",
+  "certificate_sha256": "b718b48891fa342f4b2ae40f6371d47746df25cb8208e4b759519a2e2ec853e2",
+  "origin": "User supplied prime-media-probe source and APK; Java/manifest retained unchanged. Build wrapper adapted for repository output paths.",
+  "original_source_hashes": {
+    "ProbeService.java": "210b83ba87e9de46cd2909c75ef1362a901ab0fc4f683587cebc8a64a79320c5",
+    "StartActivity.java": "ad92da695bb5caa403811ffca9545842fb44bbab09e6c8e85a6938468cac7555",
+    "AndroidManifest.xml": "beb70a7f28641dffe1700a677f7f9571fe97a609498654ad58de3540a4c40daa",
+    "build.py": "75c6def8fad2e06518f3c481d953c04e002761d4c2a959fced79228848f2a45c"
+  }
+}

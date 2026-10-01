@@ -46,6 +46,7 @@ def status(runtime, binding, content_id, ttl):
         "session_token": session.get("session_token"),
         "runtime_media_id": session.get("runtime_media_id"),
         "boot_id": runtime.get("boot_id"),
+        "probe_instance": runtime.get("probe_instance"),
         "identity_revision": runtime.get("identity_revision"),
         "transport": session.get("transport", "unknown"),
         "binding": "visually_associated" if bound else "unbound",
@@ -56,5 +57,6 @@ def status(runtime, binding, content_id, ttl):
         "position_ms": session.get("position_ms"),
         "position_meaning": "application_reported_or_extrapolated_not_programme_time",
         "history_available": bool(runtime.get("history_available")),
+        "history_gap": bool(runtime.get("history_gap")),
         "recent_events": runtime.get("recent_events", [])[-24:],
     }
