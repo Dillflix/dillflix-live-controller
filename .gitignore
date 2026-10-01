@@ -20,5 +20,6 @@ backups/
 *.egg-info/
 /build/
 android/prime-media-probe/.build/
+android/prime-media-probe/.test-cache/
 android/prime-media-probe/dist/
 *.p12

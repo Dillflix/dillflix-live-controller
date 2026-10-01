@@ -16,6 +16,7 @@ from PIL import Image, ImageStat, UnidentifiedImageError
 
 from .accessibility import FocusCollector, associate_capture, observation_validity
 from .media import JOURNAL_TAIL_BYTES, PROBE, MediaTracker, identity_key, records
+from .media_v2 import advertised
 from .models import ExecutorError
 
 PACKAGE = "com.amazon.firebat"
@@ -352,28 +353,47 @@ class AdbDevice:
             if not re.fullmatch(r"[a-fA-F0-9-]{36}", boot_id) or not math.isfinite(seconds) or seconds < 0:
                 raise ValueError("Invalid boot clock")
             clock_received = time.monotonic()
-            instance_before = await self.probe_instance()
-            dump = await self.shell("dumpsys", "activity", "service", PROBE + "/.ProbeService")
-            values = records(dump)
-            if not values:
-                raise ValueError("No structured media snapshot")
-            record = values[-1]
-            history, history_available = [], False
-            try:
-                # Each source journal rotates at ~8 MiB. Read bounded tails of
-                # both; a partial first/last line is discarded by records().
-                # Sequence gaps withdraw continuity instead of hiding lost callbacks.
-                script = (
-                    "for f in files/events.previous.jsonl files/events.jsonl; do "
-                    f'if [ -r "$f" ]; then tail -c {JOURNAL_TAIL_BYTES} "$f"; '
-                    "printf '\\n'; fi; done"
-                )
-                raw = await self.run("exec-out", "run-as", PROBE, "sh", "-c", shlex.quote(script))
-                history = await asyncio.to_thread(records, raw.decode(errors="replace"))
-                history_available = bool(history)
-            except ExecutorError:
-                pass  # A live service snapshot remains useful without journal access.
-            if await self.probe_instance() != instance_before:
+            record = await self.probe_dump()
+            instance_before = None
+            if not advertised(record):
+                # Legacy dumps need external process attribution. V2 uses its
+                # explicit service/session IDs and does not depend on /proc PID access.
+                instance_before = await self.probe_instance()
+                record = await self.probe_dump()
+            acquisition_before = record if advertised(record) else None
+            history, history_available = await self.probe_history()
+            if acquisition_before is not None:
+                # Bracket file export with current service dumps. The final
+                # checkpoint defines the required interval, including a last
+                # accepted callback that has not reached disk yet.
+                record = await self.probe_dump()
+                if not advertised(record):
+                    raise ExecutorError("probe_schema_changed", "Probe schema changed during acquisition")
+                health = record.get("journalHealth")
+                if (
+                    record.get("schemaVersion") == 2
+                    and isinstance(health, dict)
+                    and record.get("serviceInstanceId") == acquisition_before.get("serviceInstanceId")
+                    and record.get("connectionEpoch") == acquisition_before.get("connectionEpoch")
+                    and type(health.get("latestProducedSequence")) is int
+                    and health["latestProducedSequence"] > 0
+                    and health.get("latestWrittenSequence") == health["latestProducedSequence"]
+                    and not any(
+                        r.get("serviceInstanceId") == record["serviceInstanceId"]
+                        and r.get("sequence") == health["latestProducedSequence"]
+                        for r in history
+                    )
+                ):
+                    # One bounded follow-up handles a write/rotation crossing
+                    # the first export. Re-bracket it; never trust a newer
+                    # checkpoint without its records or retry indefinitely.
+                    extra, available = await self.probe_history()
+                    history.extend(extra)
+                    history_available = history_available or available
+                    record = await self.probe_dump()
+                    if not advertised(record):
+                        raise ExecutorError("probe_schema_changed", "Probe schema changed during acquisition")
+            elif await self.probe_instance() != instance_before:
                 raise ExecutorError("probe_process_changed", "Media probe restarted during acquisition")
             # A callback can arrive after the service dump but before journal
             # acquisition finishes. Do not knowingly return the earlier state.
@@ -381,11 +401,12 @@ class AdbDevice:
             elapsed_seconds = time.monotonic() - clock_received
             upper = seconds * 1000 + elapsed_seconds * 1000 + 1000
             wall = record.get("wallTimeMs")
-            if type(wall) in (int, float):
+            if acquisition_before is None and type(wall) in (int, float):
                 newer = [
                     r
                     for r in history
-                    if record["elapsedRealtimeMs"] < r["elapsedRealtimeMs"] <= upper
+                    if not advertised(r)
+                    and record["elapsedRealtimeMs"] < r["elapsedRealtimeMs"] <= upper
                     and type(r.get("wallTimeMs")) in (int, float)
                     and wall <= r["wallTimeMs"] <= wall + elapsed_seconds * 1000 + 1000
                 ]
@@ -404,6 +425,7 @@ class AdbDevice:
                 elapsed_seconds=elapsed_seconds,
                 max_age=self.config.runtime_max_age,
                 history_available=history_available,
+                acquisition_before=acquisition_before,
             )
             sample["read_seconds"] = time.monotonic() - started
             return sample
@@ -413,6 +435,28 @@ class AdbDevice:
                 error.code if isinstance(error, ExecutorError) else "media_probe_unavailable"
             )
             return fallback
+
+    async def probe_history(self):
+        # Both files are bounded; the interval validator detects omitted,
+        # partial, rotated and conflicting records without assuming atomic export.
+        script = (
+            "for f in files/events.previous.jsonl files/events.jsonl; do "
+            f'if [ -r "$f" ]; then tail -c {JOURNAL_TAIL_BYTES} "$f"; '
+            "printf '\\n'; fi; done"
+        )
+        try:
+            raw = await self.run("exec-out", "run-as", PROBE, "sh", "-c", shlex.quote(script))
+            history = await asyncio.to_thread(records, raw.decode(errors="replace"))
+            return history, bool(history)
+        except ExecutorError:
+            return [], False
+
+    async def probe_dump(self):
+        dump = await self.shell("dumpsys", "activity", "service", PROBE + "/.ProbeService")
+        values = records(dump)
+        if not values:
+            raise ValueError("No structured media snapshot")
+        return values[-1]
 
     async def capture(self):
         await self.accessibility.start()

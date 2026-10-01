@@ -1,18 +1,26 @@
 {
-  "validation": "Rebuilt supplied Java and manifest with the pinned toolchain; compared uncompressed APK payloads",
+  "probe_version": "2.0.0",
   "source_changed": false,
+  "validation": "Rebuilt supplied Java/manifest with pinned toolchain and compared uncompressed payloads",
+  "host_core_tests": 19,
+  "host_checker_tests": 12,
+  "original_apk_signature_verified": true,
+  "original_apk_signature_schemes": [
+    "v1",
+    "v2",
+    "v3"
+  ],
+  "signer_matches_previous_apk": true,
+  "device_installation_tested": false,
+  "signing_key": "Supplied APK matches original signer. Local reproduction uses a different private development key; that rebuilt APK is not the bundled artifact.",
   "classes.dex": {
-    "original_sha256": "131342236805faa8fe74f2691d53dcf89263c4ada568e9d5ee660c6d886be56a",
-    "rebuilt_sha256": "131342236805faa8fe74f2691d53dcf89263c4ada568e9d5ee660c6d886be56a",
+    "original_sha256": "ff54417642aebfbf17ca9a648410d830702dca1a60e7abb5e0f03361aac0944f",
+    "rebuilt_sha256": "ff54417642aebfbf17ca9a648410d830702dca1a60e7abb5e0f03361aac0944f",
     "equal": true
   },
   "AndroidManifest.xml": {
-    "original_sha256": "e092fbc4dd9218cbc2ebdf5e2bd24065871c2d110f0b3d1ea52437145a92e3b5",
-    "rebuilt_sha256": "e092fbc4dd9218cbc2ebdf5e2bd24065871c2d110f0b3d1ea52437145a92e3b5",
+    "original_sha256": "7c5bfd5bee13d9d384422965446508679d964c4cf2b1102169fff46c97c29b6b",
+    "rebuilt_sha256": "7c5bfd5bee13d9d384422965446508679d964c4cf2b1102169fff46c97c29b6b",
     "equal": true
-  },
-  "original_apk_signature_verified": true,
-  "original_apk_signature_schemes": ["v1", "v2", "v3"],
-  "signing_key": "Original private key not supplied; rebuild used a separate local development key",
-  "device_installation_tested": false
+  }
 }

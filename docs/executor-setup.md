@@ -4,7 +4,7 @@ The executor is included in the controller image; there is no second service or 
 
 **Version 0.10.0** adds complete multiline native records, failure-latched listener cleanup, dynamic menu traversal and structured runtime monitoring. `scene.focus` remains independent vision-model output. See the [grounding policy and evidence](runtime-grounding.md), including the external media-probe dependency below. A successful API/test run does not establish autonomous TV reliability.
 
-**Version 0.10.1** includes the supplied probe source and signed APK, an explicit installer/readiness command, bounded journal reads, and probe-process/sequence continuity checks. Probe installation still needs target-TV validation.
+**Version 0.11.0** bundles probe v2.0.0 and migrates continuity decisions to its explicit IDs, collection/write health, acquisition times and sequence checkpoints. Probe installation and vendor behavior still need target-TV validation.
 
 ## Configure and start
 
@@ -77,29 +77,26 @@ Do not run a second UIAutomator collector against the same TV. An unexpected lis
 
 ### Structured media probe
 
-The preferred monitoring path consumes `dev.tvprobe.mediasession/.ProbeService` used by the supplied capture. The subsequently supplied Java/manifest and original signed APK are now bundled. Controller startup and Play do not install it or alter listener permissions; use the explicit command once for a fresh TV:
+The preferred path uses the bundled **probe v2.0.0**. Its APK has the same verified signer as the previously supplied probe, supporting an in-place update. Update the controller to **0.11.0** before installing v2 so identity, health and sequence checkpoints are interpreted correctly.
 
 ```bash
 docker compose exec controller python -m controller.executor.probe verify-apk
-docker compose exec controller python -m controller.executor.probe check
 docker compose exec controller python -m controller.executor.probe install --grant-listener-access
 docker compose exec controller python -m controller.executor.probe check
 ```
 
-`verify-apk` is offline. `check` reads without sending keys, starting UIAutomator or contacting a model. Installation verifies the pinned APK, updates it with `adb install -r`, optionally grants notification-listener access only with the explicit flag, requests rebind through the source's no-display activity, and waits up to 30 seconds for readiness. A signing conflict preserves the installed app and journals. No uninstall/data clearing is attempted. For local Python, export `SCREEN_ADB_SERIAL` or pass `--serial YOUR_TV_SERIAL`; `.env` is not loaded automatically.
+Installation is explicit, checksum-pinned and uses `adb install -r`, preserving app data/journals. Listener authorization is changed only with the explicit flag. The no-display activity requests rebind, followed by a bounded readiness check. Startup and Play never install or change permissions. A signing mismatch preserves the old installation; no uninstall/data clearing is attempted. For local Python, export `SCREEN_ADB_SERIAL` or pass `--serial YOUR_TV_SERIAL`.
 
-A ready result requires a fresh connected service snapshot, a readable PID/start time and parseable journal history. Zero Prime sessions can be healthy. This checks the observation path, not the chosen event, live playback or uninterrupted journal writing. Source/build provenance, signing limitations and more detailed commands are in the [probe README](../android/prime-media-probe/README.md); [proposed probe improvements](../android/prime-media-probe/IMPROVEMENTS.md) address its remaining health/identity limitations.
+Readiness validates current collection, writer state and the selected exported interval; empty Prime sessions can be healthy. It does not prove event identity, live playback or complete lifetime history. The standalone upstream `check.py` additionally flags any historical loss; integrated diagnostics retain those counters but allow a new checkpoint after recovery. See [probe integration, recovery semantics, build and signing](../android/prime-media-probe/README.md).
 
-Read-only checks, using the actual authorized ADB serial:
+V2 uses service UUID, connection epoch and session-instance ID, with token hash retained only for diagnostics. Service dumps bracket the bounded journal export, with at most one follow-up export/dump when a newly written checkpoint was missed. Missing fields, cached/incomplete snapshots, stale polls, registration failures, writer backlog/loss and missing sequences prevent continuity binding. A recovered sample cannot revive the pre-gap visual association. V2 requires no PID/start-ticks access; v1 retains its separate legacy safeguards and setup reports `upgrade_required`.
+
+Journal export uses `run-as` for the helper's own files, not Prime's private files. Each of the current/previous tails is bounded at 512 KiB; a missing previous file is normal. The v2 poll runs after roughly one second and suppresses unchanged snapshots, with a roughly 15-second heartbeat. Poll health advances independently. Raw read-only inspection:
 
 ```bash
 adb -s YOUR_TV_SERIAL shell dumpsys activity service dev.tvprobe.mediasession/.ProbeService
 adb -s YOUR_TV_SERIAL exec-out run-as dev.tvprobe.mediasession cat files/events.jsonl
 ```
-
-The service output must include structured JSON with `elapsedRealtimeMs`, `snapshot.listenerConnected=true` and `snapshot.sessions`; a running service alone is not enough. Journal export requires `run-as` access to this debuggable helper's own files, not Prime's private files. The adapter reads up to 512 KiB from each of `events.previous.jsonl` and `events.jsonl`; absence of the older file is normal. Callback payloads and composite snapshots are kept distinct. The probe suppresses unchanged poll records, so the journal is not a one-second heartbeat. JSON parsing rejects partial/oversized/malformed records. Observed sequence gaps withdraw continuity; a missing probe backs off for 30 seconds and leaves structured identity unavailable.
-
-The source's `sessionToken` is a process-local hash. The controller scopes it to boot ID and probe PID/start ticks and confirms the process is unchanged across the read. Verify that the deployment permits reading this process identity. A restart during acquisition, reconnect/destroy/error callback or detected journal sequence gap invalidates the old visual association. Original records lack service-instance IDs and dumps lack a sequence checkpoint, so tail-gap detection remains incomplete until the proposed probe changes are made.
 
 `check --observe` now returns `runtime` alongside native focus and the independent scene. Confirm actual Prime session tokens, runtime IDs and reported states on the device. DISPLAY_TITLE may be empty and the description generic; event identity still comes from pixels. Set `EXECUTOR_MEDIA_PROBE=false` to explicitly use the visual fallback, which requires visible live-playhead and advancing elapsed-timer evidence. Hidden controls may prevent fallback verification.
 
@@ -159,8 +156,10 @@ The original archive informed package-scoped launch/search, paired-opponent quer
 | `stale_navigation_focus` | Native focus changed during capture/inference or capture association is invalid; navigation recaptures before another input. Inspect native validity and window reasons. |
 | `native_focus.streamStatus=failed` | Diagnose the latched listener/ownership error and competing UIAutomator, then restart the controller. Do not loop new listeners. |
 | `runtime.source_health=unavailable`, unbound runtime | Run `controller.executor.probe check`; inspect listener connection, `run-as` export, process identity and fresh snapshots. Do not infer event identity from a generic PrimeVideo title. |
-| `probe_process_unknown`, `probe_process_changed` | Confirm the helper service is running and PID/start-time reads work; a restart during collection cannot preserve a binding. |
+| `probe_process_unknown`, `probe_process_changed` | Legacy v1 only: confirm PID/start-time access. V2 uses explicit instance IDs instead. |
 | `probe_signature_mismatch` | Use the supplied original APK for its existing signer. A custom rebuild uses a different key unless deliberately preserved; the old app and traces remain intact. |
+| `upgrade_required`, `unsupported_probe_schema` | Update to the supplied v2 APK and controller 0.11.0. An invalid advertised v2 record never falls back to hash identity. |
+| `runtime.history_status=incomplete` | Inspect problems, sequence checkpoints and writer health. Missing/queued records withdraw the association; recovery needs fresh visual live evidence. |
 | `probe_not_ready`, `probe_permission_unconfirmed` | Inspect notification-listener access and fresh service/journal reads. Successful package installation alone does not establish readiness. |
 | `stop_unconfirmed`, `cancel_unconfirmed` | Cancellation retained; restore ADB and retry. Manual input remains gated. |
 

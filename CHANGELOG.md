@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0 — Probe v2 integration and strict runtime continuity
+
+- Bundle the supplied probe v2.0.0 APK/source, schema and host tests. Verify its signature matches the previous supplied APK and the source rebuild matches DEX/compiled manifest; keep the supplied signer-compatible binary packaged.
+- Migrate runtime identity to boot/service UUID/connection epoch/session-instance/runtime-media IDs. Treat token hashes as diagnostics. Keep the legacy unversioned reader separate; invalid advertised v2 never falls back to it.
+- Validate original acquisition intervals, current registration/poll/read health, writer status, produced/written checkpoints, retention and complete exported sequence intervals. Check bounded journal exports between dumps, with one bounded follow-up for a missed newly written checkpoint. Cached/truncated/incomplete data, pending writes, gaps, conflicting duplicates and failure/loss increments withdraw prior continuity.
+- Keep callback identity/state separate from later snapshots. Retain historical session-removal evidence with original times; never use it as current playback or event completion. Fresh visual live evidence is required to associate again after a gap; historical losses remain visible.
+- Expose optional v2 diagnostics through token status and the setup CLI. Retain cheap stable monitoring, explicit installation/permission changes, signing-conflict preservation and unchanged Play/status/Cancel operations. No database migration.
+
+Validation: **387 controller tests**, **19 supplied JVM fault tests** and **12 supplied checker tests** pass. Changed controller Python lint, APK signature/checksum, equal rebuilt payloads and all nine OpenAPI examples pass. The Python wheel builds and includes the exact supplied v2 APK and migrated adapter. Target-TV upgrade, callbacks, permission/suspend behavior, model accuracy and Docker deployment remain untested here.
+
 ## 0.10.1 — Supplied probe packaging and continuity safeguards
 
 - Bundle the subsequently supplied original MediaSession APK, Java and manifest with source/artifact/signer hashes. Retain the original signed APK; the adapted pinned build produces matching bytecode and compiled manifest with a separate development signature.

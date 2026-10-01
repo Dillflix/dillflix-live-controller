@@ -1,6 +1,6 @@
 # Proposed improvements to the supplied probe
 
-These are source-informed proposals, not changes present in the bundled APK. The current integration preserves the supplied Java, manifest and signed APK. Controller-side mitigations are identified below. The first batch should improve observation integrity before adding more metadata or optimizing transport.
+**Status: implemented in the supplied probe v2.0.0; controller migration ships in 0.11.0.** The text below preserves the original proposal and rationale. Current behavior, signing verification, setup, acceptance coverage and remaining device checks are in [README.md](README.md), [SCHEMA.md](SCHEMA.md) and [validation.json](validation.json). Cursor-based export remains deferred. The bundled Java/manifest and APK match the supplied v2 release.
 
 The MediaSession probe complements the native accessibility collector. It cannot supply the event name inside a search card if Prime does not expose that name through this API. Focus timing, input/accessibility channel separation, Prime window bursts and screenshot association remain the existing collector's responsibility.
 

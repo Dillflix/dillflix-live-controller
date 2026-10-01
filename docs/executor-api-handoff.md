@@ -1,8 +1,8 @@
 # Playback API implementation guide
 
-Implemented in **dillflix-live-controller 0.10.1**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
+Implemented in **dillflix-live-controller 0.11.0**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
 
-**Implementation status:** native collection now includes the later recorder's multiline framing, independent stdout/stderr, pending-record capture guards and failure-latched listener ownership. The controller uses observed menu ordering plus fresh focus labels, and binds visual event identity to structured runtime sessions for monitoring. The supplied probe source/APK, verified rebuild and explicit installer/readiness CLI are included; restart and detected sequence-gap safeguards scope that binding. See the [grounding policy, capture evidence and remaining validation](runtime-grounding.md). Autonomous reliability and probe installation on the target TV remain unvalidated. The three-operation contract remains unchanged.
+**Implementation status:** native collection now includes the later recorder's multiline framing, independent stdout/stderr, pending-record capture guards and failure-latched listener ownership. The controller uses observed menu ordering plus fresh focus labels, and binds visual event identity to structured runtime sessions for monitoring. The supplied v2 source/APK, same-signer verification, matching rebuild and explicit installer/readiness CLI are included. Service/session IDs, connection epochs, strict collection/write health and checked sequence intervals scope the binding; invalid v2 never falls back to token hashes. See the [grounding policy, capture evidence and remaining validation](runtime-grounding.md). Autonomous reliability and probe installation on the target TV remain unvalidated. The three-operation contract remains unchanged.
 
 The public contract has exactly three operations. Separate request recovery, current-device observation, content-ID lifecycle, input-authority/renewal, and Stop APIs remain unnecessary for this release.
 
@@ -131,11 +131,11 @@ Play, getter and Cancel therefore suffice. Physical remotes and unrelated ADB cl
 | `adb.py` | Quoted package-scoped commands, bounded subprocesses, images, foreground/media telemetry. |
 | `accessibility.py`, `event_records.py` | Native channels, timing/window policy, multiline transport framing and listener ownership. |
 | `navigation.py` | Observed menu order, native focus reconciliation and deterministic adjacent moves. |
-| `media.py`, `monitoring.py` | Structured probe snapshots/callbacks, runtime identity epochs, visual binding and status diagnostics. |
+| `media.py`, `media_v2.py`, `monitoring.py` | Structured probe snapshots/callbacks, runtime identity epochs, visual binding and status diagnostics. |
 | `vision.py`, `verification.py` | Model transport, strict protocols, matching and evidence policy. |
 | `integration.py` | Controller adapters reading/writing the same durable token records. |
 | `check.py` | Configuration/live-screen/saved-PNG diagnostics that send no input. |
-| `probe.py`, `android/prime-media-probe/` | Pinned original APK, explicit installation/readiness, supplied source, rebuild and improvement proposal. |
+| `probe.py`, `android/prime-media-probe/` | Pinned supplied v2 APK, explicit installation/readiness, unchanged Java source, schema, rebuild and host tests. |
 
 Controller coordination runs in a serialized, drained worker thread. Model HTTP uses asynchronous HTTPX, total deadlines, limited connections, bounded responses, no redirects and explicit schema validation. ADB uses bounded asynchronous subprocesses. There is no blocking HTTP on the event loop serving screens, manual input, feed/status work and web requests, and no loopback HTTP hop for the embedded integration.
 

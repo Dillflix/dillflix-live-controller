@@ -12,6 +12,7 @@ from collections import deque
 from datetime import datetime, timedelta
 
 from .accessibility import PRIME
+from .media_v2 import MediaV2Tracker, advertised
 
 PROBE = "dev.tvprobe.mediasession"
 JOURNAL_TAIL_BYTES = 512 * 1024
@@ -46,17 +47,19 @@ def records(text):
     """Service dumps contain headers; rotating journals can end mid-record."""
     result = []
     for line in text.splitlines():
-        if len(line) > 256 * 1024:
+        if len(line.encode("utf-8")) > 256 * 1024:
             continue
         try:
             item = json.loads(line)
         except (ValueError, TypeError):
             continue
-        if (
-            isinstance(item, dict)
-            and isinstance(item.get("snapshot"), dict)
-            and number(item.get("elapsedRealtimeMs")) is not None
-            and isinstance(item["snapshot"].get("sessions"), list)
+        if isinstance(item, dict) and (
+            advertised(item)
+            or (
+                isinstance(item.get("snapshot"), dict)
+                and number(item.get("elapsedRealtimeMs")) is not None
+                and isinstance(item["snapshot"].get("sessions"), list)
+            )
         ):
             result.append(item)
     return result
@@ -121,10 +124,26 @@ def identity_key(sample):
         not s
         or sample.get("source_health") != "fresh"
         or s.get("identity_status") != "consistent"
-        or not s.get("session_token")
         or not sample.get("boot_id")
-        or not sample.get("probe_instance")
     ):
+        return None
+    if sample.get("schema_version") == 2:
+        if not (
+            sample.get("continuity_ready")
+            and sample.get("service_instance_id")
+            and sample.get("connection_epoch")
+            and s.get("session_instance_id")
+        ):
+            return None
+        return (
+            sample["boot_id"],
+            sample["service_instance_id"],
+            sample["connection_epoch"],
+            s["session_instance_id"],
+            s["runtime_media_id"],
+            sample["identity_revision"],
+        )
+    if not s.get("session_token") or not sample.get("probe_instance"):
         return None
     return (
         sample["boot_id"],
@@ -148,6 +167,7 @@ class MediaTracker:
     """Bounded callback history and session identity revision across polling."""
 
     def __init__(self):
+        self.v2 = MediaV2Tracker(session, STATES)
         self.boot_id, self.latest_elapsed = None, None
         self.probe_instance = None
         self.last_sequence = None
@@ -170,7 +190,23 @@ class MediaTracker:
         elapsed_seconds,
         max_age=10,
         history_available=True,
+        acquisition_before=None,
     ):
+        if advertised(record):
+            return self.v2.update(
+                record,
+                history,
+                boot_id=boot_id,
+                started_at=started_at,
+                finished_at=finished_at,
+                foreground=foreground,
+                legacy=legacy,
+                device_before_ms=device_before_ms,
+                elapsed_seconds=elapsed_seconds,
+                max_age=max_age,
+                history_available=history_available,
+                acquisition_before=acquisition_before,
+            )
         sample = normalize(record)
         at = sample["device_elapsed_ms"]
         restarted = (

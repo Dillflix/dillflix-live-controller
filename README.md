@@ -10,6 +10,8 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 
 **Version 0.10.1 packages the supplied MediaSession probe source and original signed APK**, with explicit install/readiness commands, a verified source rebuild, and controller safeguards for probe restarts and journal gaps. See [probe setup](docs/executor-setup.md#structured-media-probe) and the [prioritized probe improvements](android/prime-media-probe/IMPROVEMENTS.md). Installation on the target TV remains untested here.
 
+**Version 0.11.0 integrates the supplied probe v2.0.0 and migrates the controller to its explicit service/session identities, connection epochs, acquisition times, collection/write health and sequence checkpoints.** The supplied APK has the same verified signing certificate as v1. See [upgrade and diagnostics](docs/executor-setup.md#structured-media-probe). Real Fire TV validation remains outstanding.
+
 ## What works
 
 - Opt-in Prime Video playback with package-scoped ADB search, configurable JSON/TVTheseus actor, independent vision observer, durable tokens, active cancellation, completion checks and read-only diagnostics.

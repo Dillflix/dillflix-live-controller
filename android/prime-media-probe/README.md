@@ -1,58 +1,66 @@
-# Prime MediaSession probe
+# Prime MediaSession probe v2.0.0 integration
 
-This directory contains the supplied `dev.tvprobe.mediasession` source. `ProbeService.java`, `StartActivity.java` and `AndroidManifest.xml` are unchanged. The original signed APK is packaged at `controller/executor/assets/prime-media-probe.apk`, including in the controller's Python wheel and image build inputs. The build wrapper retains the original pinned Android/ECJ dependencies, uses streamed downloads, and writes a separate output APK.
+Controller **0.11.0** bundles the supplied v2.0.0 source/APK and consumes schema 2. The five Java files and Android manifest are unchanged from the upload. The supplied signed APK is packaged at `controller/executor/assets/prime-media-probe.apk` and included in the Python wheel. The three public operations remain Play, token status and Cancel.
 
-The probe observes Prime's published MediaSession metadata, extras, queues and transport state. It does not issue playback commands, read notification content, use an accessibility service or request network access. Native focus labels still come from the separately ported UIAutomator collector. Both sources contribute to [runtime grounding](../../docs/runtime-grounding.md).
+The probe reads Prime's published MediaSession metadata/state. It sends no playback commands, records no notification contents and requests neither accessibility nor network access. The separately ported accessibility collector continues to ground focus/navigation with its timing, channel, window and screenshot safeguards. These changes do not expand what Prime publishes about the contents of search-result cards.
 
-## Install or inspect
+## Upgrade and check
 
-The controller never installs the probe or grants its notification-listener access automatically. Run this explicit setup once against an authorized TV, using the controller's existing ADB identity. Python commands below run inside an updated controller container; for a local checkout, omit `docker compose exec controller` and use the project's Python environment with `SCREEN_ADB_SERIAL` exported, or pass `--serial YOUR_TV_SERIAL`.
+Update the controller checkout/image first:
 
 ```bash
+git pull --ff-only
+docker compose up -d --build
 docker compose exec controller python -m controller.executor.probe verify-apk
-docker compose exec controller python -m controller.executor.probe check
 docker compose exec controller python -m controller.executor.probe install --grant-listener-access
 docker compose exec controller python -m controller.executor.probe check
 ```
 
-`verify-apk` is offline. `check` reads foreground/media dumps, the service snapshot, process identity and journal tails without launching the probe or sending keys. `install` verifies the pinned APK before device changes, uses `adb install -r`, optionally grants listener access **only with the explicit flag**, and starts the source's no-display activity to request a listener rebind. It waits up to 30 seconds for readiness after installation/rebind; each ADB command also has a finite timeout. Local commands accept `--adb-timeout` up to 60 seconds if device installation needs a longer command budget.
+Installation verifies the pinned artifact, uses `adb install -r`, grants listener access only with the explicit flag, and requests rebind through the source's no-display activity. It waits up to 30 seconds for readiness; each ADB command also has a finite timeout. Startup and Play never install or change permissions. `check` sends no keys, starts no UIAutomator reader and contacts no model. `verify-apk` is offline.
 
-A ready result means a fresh connected service snapshot, a readable process identity and at least one parseable journal record. Zero Prime sessions is valid when Prime is not playing. Readiness does not establish correct event identity, live presentation, uninterrupted callbacks, rendered video or event completion. The original probe has no explicit journal-write/registration health fields; see the [proposed improvements](IMPROVEMENTS.md).
+The supplied v2 APK verifies under v1/v2/v3 signature schemes. Its certificate matches the previous supplied APK: `b718b48891fa342f4b2ae40f6371d47746df25cb8208e4b759519a2e2ec853e2`. This supports an in-place update preserving app data/journals. Keep existing capture exports. A differently signed installation produces `probe_signature_mismatch`; the installer never uninstalls or clears data. Actual Fire TV installation remains untested here.
 
-The adapter exports only this debuggable helper app's own journals through `run-as`; no root or access to Prime's private files is required. It reads at most 512 KiB from each of the current and previous journal files. A missing previous file is normal. Incomplete/oversized JSON records are discarded, and detected sequence gaps withdraw the current visual association. The service process must remain the same across acquisition, checked by PID/start ticks plus the device boot ID. If those process reads are unavailable on the deployment, structured binding stays unavailable; confirm with `check`.
+For local Python, omit the Docker prefix and use the project's environment with `SCREEN_ADB_SERIAL` exported, or pass `--serial YOUR_TV_SERIAL`. `.env` is not loaded automatically. `--adb-timeout` permits a command budget up to 60 seconds.
 
-No real TV or ADB executable was available for validating installation here. Follow [target-TV validation](../../docs/executor-setup.md#validate-on-the-target-tv), including rebind, permission loss, process restart and suspend/resume.
+## Controller interpretation
 
-## Rebuild
+`media_v2.py` strictly validates advertised v2 identity, checkpoint, health, completeness and acquisition fields. Invalid v2 cannot fall back to the token hash. Unversioned v1 remains a separate legacy adapter during rollout; setup reports `upgrade_required` instead of calling it v2-ready.
 
-Requirements: Linux x64, Python 3, Java 17+ including `keytool`, and access to the pinned Google/Maven downloads. Choose a persistent build cache on a filesystem that permits execution of Android build tools:
+The adapter obtains the device boot clock, a service dump, up to 512 KiB from each rotating journal, then a final dump. Service UUID/connection epoch must agree across export; v2 does not require PID/start-ticks access. The final produced sequence defines the interval to inspect. A last observation still pending on disk, or a callback arriving after export, leaves that acquisition unverified until a later complete sample. If the newest checkpoint is already written but absent from the first export, one bounded follow-up export and final dump may resolve the race. Persistent gaps remain unverified; there is no unbounded retry loop.
+
+| Fact | Rule |
+| --- | --- |
+| Session identity | Boot + service UUID + connection epoch + session-instance ID + agreeing runtime media ID + local revision. Token hash is diagnostic only. |
+| Current collection | Fresh original snapshot interval; uncached, successful and complete acquisition; successful current registration; recent successful read/poll in this connection epoch. |
+| Writer | Initialized/live, no closing/stalled/pending work, written checkpoint caught up to produced. Written high-water alone cannot establish continuity. |
+| Export | Every needed instance-scoped sequence is present, valid, nontruncated and represented in retention metadata. Identical duplicates are tolerated; conflicting duplicates, foreign records and gaps cannot fill an interval. |
+| Interruption | Changed identities, failure/loss counter increases, unavailable history, conflicting callback identity, pause/seek/stop and position discontinuities withdraw the prior binding. |
+| Removal | Preserve last-known metadata/state and its original acquisition time as historical diagnostics. Never populate a current session from history or infer event completion. |
+
+Callback payloads remain separate from later composite snapshots; identity and times are checked independently. Freshness uses the **start of snapshot acquisition**, not dump response time or wall-clock agreement. Snapshots remain non-atomic. Neither reported position nor poll/write timing proves decoded frames or measured live lag.
+
+The token getter adds schema/build/service/session/epoch diagnostics, separate collection/journal health, `history_status`, produced/written sequences, loss counters and bounded problem/removal details. `probe_instance` remains a legacy PID diagnostic. No database migration is needed.
+
+### Recovery after incomplete history
+
+`baseline` means a first checked checkpoint for this service/connection and makes no earlier-history claim. `covered` means the interval since the preceding checkpoint was validated. `incomplete` or `unavailable` prevents continuity binding. `history_gap` marks unproven history, including pending export; inspect `problems` and `journal_health` for the reason.
+
+A gap changes the local identity revision and withdraws the old association. Once collection/writing/export recovers, a **new** association requires fresh visual event/route identity and explicit live-playhead evidence. Historical failure counters remain visible; a successful later write cannot retroactively repair the old interval. Historical loss does not make a repaired service permanently unusable. The upstream standalone `check.py` flags any loss in the entire service lifetime; the integrated checker reports readiness at a new explicit checkpoint. Neither proves Android delivered every callback.
+
+Healthy empty sessions mean ready observation infrastructure, not playback. Stable associated playback retains inexpensive runtime polling and periodic visual checks. Completion still requires scoped visual evidence under the existing controller policy.
+
+## Build and validation
+
+Requirements: Linux x64, Python 3 and Java 17+. Pinned dependencies are Android API 30/build-tools 30.0.3 and ECJ 3.37.0. Use a cache filesystem permitting native executable tools:
 
 ```bash
 python3 android/prime-media-probe/build.py --cache /path/to/probe-build-cache
+python3 android/prime-media-probe/test.py --ecj /path/to/probe-build-cache/ecj.jar
+python3 -m unittest discover -s android/prime-media-probe/tests -p 'test_*.py' -v
 ```
 
-Output defaults to `android/prime-media-probe/dist/prime-media-probe.apk`; `--output` changes it. The bundled original APK is not overwritten. `.build/`, `dist/` and signing keys are excluded from Git. Preserve the cache's `development.p12` locally for subsequent updates of your own build. The wrapper uses the supplied development signing scheme; it does not contain the original signer's private key.
+Rebuild output is `android/prime-media-probe/dist/prime-media-probe.apk`, or `--output PATH`; the packaged supplied APK is never overwritten. `--keystore /private/path/development.p12` uses a locally held compatible development key. Without it, the cache gets a different development signer. Preserve your key privately. Custom installer artifacts require both `--apk PATH` and `--sha256 EXPECTED_HASH`.
 
-The integrated source was rebuilt with the pinned toolchain. Its `classes.dex` and compiled `AndroidManifest.xml` match the supplied APK byte-for-byte; hashes are in [validation.json](validation.json). The complete rebuilt APK differs because it is signed with a newly generated key and includes build-dependent archive/signing data. [provenance.json](provenance.json) records the supplied archive, source and original APK hashes.
+The supplied source/APK hashes were verified. Rebuilding produced identical `classes.dex` and compiled manifest; the complete locally signed APK differs and is not bundled. All **19 JVM fault tests and 12 checker tests** were rerun successfully. Controller tests add schema/checkpoint/export faults, mixed journals, callback disagreements, removals, and Play/monitor/revalidation coverage. See [provenance.json](provenance.json), [validation.json](validation.json), [upstream-build-manifest.json](upstream-build-manifest.json) and [SCHEMA.md](SCHEMA.md).
 
-For an explicitly chosen custom build:
-
-```bash
-python -m controller.executor.probe install --serial YOUR_TV_SERIAL \
-  --apk /path/to/custom-probe.apk --sha256 ITS_PRINTED_SHA256 \
-  --grant-listener-access
-```
-
-An existing installation with another signing certificate cannot be updated in place with that build. The installer reports `probe_signature_mismatch` and preserves the installed app and journals. It never uninstalls, clears data or attempts a signing workaround. Use the supplied APK for installations signed with the original certificate. A future modified-probe rollout needs either the original signing key retained by its owner or a deliberate installation migration with journal export first; private signing keys should not be uploaded to this repository.
-
-## Source contract and limits
-
-- Snapshot getters execute separately; `snapshotAtomic=false` is intentional. Callback payloads retain their own semantics and can differ from the accompanying snapshot.
-- Journal records contain `sequence`, wall/device times, reason, payload and snapshot. The service dump has a fresh snapshot and timestamps but **no sequence**. Sequence resets on process restart while old files remain.
-- `sessionToken` is the hexadecimal hash of the Android token, a process-local correlation marker. It is neither a globally unique session ID nor a content ID. The controller now scopes it to the probe process and boot, but only a probe change can remove hash-collision ambiguity.
-- The poll runs every second but suppresses unchanged snapshots. Journal silence is not a one-second heartbeat failure. Each file rotates after roughly 8 MiB; one previous file is retained. Large individual records can exceed that threshold.
-- `listenerConnected=true` alone does not prove callback registration, all session reads or disk writes succeeded. Whole-snapshot errors cannot bind; incomplete session identity cannot bind. More explicit health is proposed.
-- Metadata is limited to what Prime publishes. In the reviewed capture, the display title was empty and the description title generic. Event/route matching still uses independently observed pixels; runtime identity maintains that association.
-- Reported PLAYING/position and session disappearance cannot prove decoded frames, measured live lag or a completed event.
-
-Android reference: [MediaSessionManager](https://developer.android.com/reference/android/media/session/MediaSessionManager). The source uses the enabled notification listener as its MediaSession access path. The manifest requires Android's binding permission for the exported listener service.
+No TV/ADB endpoint or model endpoint was available here. Run [the supplied Fire TV trials](VALIDATION.md#required-fire-tv-checks) and [controller acceptance](../../docs/executor-setup.md#validate-on-the-target-tv): upgrade/rebind, normal playback, pause/seek, removal, restart, permission loss, suspend and a full search-to-play/end path. Cursor-based export remains deferred; two-file exports are checked, not assumed atomic.

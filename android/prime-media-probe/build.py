@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--cache", type=Path, default=ROOT / ".build")
 parser.add_argument("--output", type=Path, default=ROOT / "dist" / "prime-media-probe.apk")
+parser.add_argument("--keystore", type=Path, help="Existing private development key for a compatible update")
 args = parser.parse_args()
 CACHE = args.cache.resolve()
 CACHE.mkdir(parents=True, exist_ok=True)
@@ -86,8 +87,7 @@ run(
     ANDROID,
     "-d",
     CLASSES,
-    ROOT / "ProbeService.java",
-    ROOT / "StartActivity.java",
+    *sorted(ROOT.glob("*.java")),
 )
 run(
     "java",
@@ -108,7 +108,9 @@ run(SDK / "aapt", "package", "-f", "-M", ROOT / "AndroidManifest.xml", "-I", AND
 with zipfile.ZipFile(unsigned, "a", compression=zipfile.ZIP_DEFLATED) as archive:
     archive.write(DEX / "classes.dex", "classes.dex")
 run(SDK / "zipalign", "-f", "4", unsigned, aligned)
-key = CACHE / "development.p12"
+key = args.keystore.resolve() if args.keystore else CACHE / "development.p12"
+if args.keystore and not key.is_file():
+    raise SystemExit("Requested keystore does not exist")
 if not key.exists():
     run(
         "keytool",

@@ -244,6 +244,18 @@ class RuntimeStatus(Strict):
     runtime_media_id: str | None
     boot_id: str | None
     probe_instance: str | None = None
+    schema_version: int | None = None
+    probe_build: str | None = None
+    service_instance_id: str | None = None
+    connection_epoch: int | None = None
+    session_instance_id: str | None = None
+    collection_health: str | None = None
+    journal_health: str | None = None
+    history_status: str | None = None
+    latest_produced_sequence: int | None = None
+    latest_written_sequence: int | None = None
+    loss_counters: dict[str, int] = Field(default_factory=dict)
+    problems: list[str] = Field(default_factory=list, max_length=24)
     identity_revision: int | None
     transport: str
     binding: Literal["visually_associated", "unbound", "revalidation_required"]

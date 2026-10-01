@@ -31,6 +31,8 @@ class Device:
         return {
             "source_health": "fresh" if self.is_ready else "disconnected",
             "probe_instance": "123:456",
+            "schema_version": 2,
+            "continuity_ready": self.is_ready,
             "history_available": self.is_ready,
             "session": None,
             "session_count": 0,

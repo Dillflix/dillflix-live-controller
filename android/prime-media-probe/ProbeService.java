@@ -1,267 +1,386 @@
 package dev.tvprobe.mediasession;
 
+import static dev.tvprobe.mediasession.ProbeSupport.*;
 import android.content.ComponentName;
-import android.graphics.Bitmap;
-import android.media.MediaDescription;
 import android.media.MediaMetadata;
-import android.media.Rating;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Bundle;
-import android.os.Build;
 import android.os.Handler;
-import android.os.Looper;
-import android.os.Parcel;
+import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.service.notification.NotificationListenerService;
-import android.util.Base64;
 import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import java.io.File;
 import java.io.FileDescriptor;
-import java.io.FileOutputStream;
 import java.io.PrintWriter;
-import java.lang.reflect.Array;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
-/** Read-only observer. No playback commands, notification content handling, or network access. */
+/** Read-only observer. All observation ordering belongs to collector; disk work belongs to journal. */
 public class ProbeService extends NotificationListenerService {
-    private static final String TARGET = "com.amazon.firebat";
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Map<MediaSession.Token, Watch> watches = new HashMap<>();
+    private static final String TARGET="com.amazon.firebat";
+    private static final long POLL_MS=1000, HEARTBEAT_MS=15000, DUMP_TIMEOUT_MS=2000;
+    private final Clock clock=new Clock() {
+        public long wall() { return System.currentTimeMillis(); }
+        public long elapsed() { return SystemClock.elapsedRealtime(); }
+    };
+    private HandlerThread collectorThread;
+    private Handler collector;
     private MediaSessionManager manager;
-    private volatile boolean connected;
-    private long sequence;
-    private String lastPoll;
-    private final MediaSessionManager.OnActiveSessionsChangedListener listener = new MediaSessionManager.OnActiveSessionsChangedListener() {
-        @Override public void onActiveSessionsChanged(List<MediaController> sessions) {
-            refresh(sessions);
-            emit("sessions_changed", null);
-        }
-    };
-    private final Runnable poll = new Runnable() {
-        public void run() {
-            if (!connected) return;
-            try { refresh(sessions()); emit("poll", null); }
-            catch (Exception e) { emit("poll_error", error(e)); }
-            handler.postDelayed(this, 1000);
-        }
-    };
+    private AsyncJournal journal;
+    private String instance;
+    private Stamp createdAt, connectedAt, lastCallbackAt;
+    private final Lifetimes<MediaSession.Token> lifetimes=new Lifetimes<>();
+    private final Map<MediaSession.Token,Watch> watches=new LinkedHashMap<>();
+    private final Set<MediaSession.Token> destroyedTokens=new HashSet<>();
+    private final List<JSONObject> pendingRemovals=new ArrayList<>();
+    private final Operation activeRegistration=new Operation(), callbackRegistration=new Operation();
+    private final Operation sessionReads=new Operation(), pollHealth=new Operation(), cleanupHealth=new Operation();
+    private boolean connected, activeRegistered, closing;
+    private long connectionEpoch, callbackCount, lateCallbacks, suppressedPolls, lastRecordAt, nextPollDue;
+    private String lastSemantic;
+    private JSONObject collectorError;
+    private volatile String cachedDump;
 
+    private final MediaSessionManager.OnActiveSessionsChangedListener listener=new MediaSessionManager.OnActiveSessionsChangedListener() {
+        @Override public void onActiveSessionsChanged(List<MediaController> ignored) {
+            Stamp received=new Stamp(clock); callbackCount++; lastCallbackAt=received;
+            // Re-query on the collector so a delayed active-list callback cannot resurrect an old watch.
+            safely(new Runnable() { public void run() { observe("sessions_changed",null,received,false); } });
+        }
+    };
+    private final Runnable poll=new Runnable() {
+        @Override public void run() {
+            if (!connected || closing) return;
+            pollHealth.attempt(clock);
+            try {
+                ensureActiveRegistration();
+                Snapshot result=observe("poll",null,null,true);
+                if (result.success) pollHealth.success(clock);
+                else pollHealth.fail(clock,new IllegalStateException("Session acquisition incomplete"));
+                publish(result,null);
+            } catch (Exception e) {
+                pollHealth.fail(clock,e); collectorError=error(e);
+                record("poll_error",error(e),null,unknown("poll_error"));
+            } finally {
+                if (connected && !closing) { nextPollDue=clock.elapsed()+POLL_MS; collector.postDelayed(this,POLL_MS); }
+            }
+        }
+    };
     @Override public void onCreate() {
-        super.onCreate();
-        manager = (MediaSessionManager) getSystemService(MEDIA_SESSION_SERVICE);
+        super.onCreate(); instance=UUID.randomUUID().toString(); createdAt=new Stamp(clock);
+        manager=(MediaSessionManager)getSystemService(MEDIA_SESSION_SERVICE);
+        journal=new AsyncJournal(instance,clock,new AsyncJournal.Files(getFilesDir()),AsyncJournal.QUEUE_RECORDS);
+        collectorThread=new HandlerThread("PVProbe-collector"); collectorThread.start();
+        collector=new Handler(collectorThread.getLooper());
+        collector.post(new Runnable() { public void run() {
+            Snapshot initial=unknown("listener_not_connected");
+            record("service_created",obj("serviceCreatedAt",createdAt.json()),null,initial); publish(initial,null);
+        } });
     }
-    private ComponentName component() { return new ComponentName(this, ProbeService.class); }
-    private List<MediaController> sessions() { return manager.getActiveSessions(component()); }
+    private ComponentName component() { return new ComponentName(this,ProbeService.class); }
+    private void safely(Runnable work) {
+        try { work.run(); }
+        catch (Exception e) {
+            collectorError=error(e); Log.e("PVProbe","Collection failed",e);
+            Snapshot unavailable=unknown("collector_error");
+            record("collector_error",error(e),null,unavailable); publish(unavailable,null);
+        }
+    }
     @Override public void onListenerConnected() {
-        stopWatching();
-        connected = true;
-        try {
-            manager.addOnActiveSessionsChangedListener(listener, component(), handler);
-            refresh(sessions());
-            emit("connected", null);
-            handler.post(poll);
-        } catch (Exception e) { emit("connect_error", error(e)); }
+        collector.post(new Runnable() { public void run() { safely(new Runnable() { public void run() {
+            stopWatching("listener_reconnected"); connected=true; connectionEpoch++; connectedAt=new Stamp(clock);
+            ensureActiveRegistration(); observe("connected",null,null,false); collector.post(poll);
+        } }); } });
     }
     @Override public void onListenerDisconnected() {
-        stopWatching();
-        emit("disconnected", null);
+        collector.post(new Runnable() { public void run() { safely(new Runnable() { public void run() {
+            stopWatching("listener_disconnected");
+            Snapshot current=unknown("listener_disconnected"); flushRemovals(current);
+            record("disconnected",null,null,current); publish(current,null);
+        } }); } });
     }
-    @Override public void onDestroy() { stopWatching(); super.onDestroy(); }
-    private void stopWatching() {
-        connected = false;
-        handler.removeCallbacks(poll);
-        if (manager != null) {
-            try { manager.removeOnActiveSessionsChangedListener(listener); }
-            catch (RuntimeException ignored) { }
-        }
-        for (Watch w : watches.values()) w.controller.unregisterCallback(w.callback);
-        watches.clear();
-        lastPoll = null;
-    }
-    private void refresh(List<MediaController> sessions) {
-        Map<MediaSession.Token, MediaController> found = new HashMap<>();
-        if (sessions != null) for (MediaController c : sessions) {
-            if (TARGET.equals(c.getPackageName())) found.put(c.getSessionToken(), c);
-        }
-        for (MediaSession.Token t : new ArrayList<>(watches.keySet())) {
-            if (!found.containsKey(t)) {
-                Watch w = watches.remove(t);
-                w.controller.unregisterCallback(w.callback);
-            }
-        }
-        for (Map.Entry<MediaSession.Token, MediaController> e : found.entrySet()) {
-            if (!watches.containsKey(e.getKey())) watches.put(e.getKey(), new Watch(e.getValue()));
-        }
-    }
-    private class Watch {
-        final MediaController controller;
-        final MediaController.Callback callback;
-        Watch(MediaController c) {
-            controller = c;
-            callback = new MediaController.Callback() {
-                private void event(String name, Object payload) {
-                    emit(name, obj("sessionToken", token(controller), "value", payload));
-                }
-                @Override public void onMetadataChanged(MediaMetadata m) { event("metadata_changed", metadata(m)); }
-                @Override public void onPlaybackStateChanged(PlaybackState s) { event("playback_state_changed", state(s)); }
-                @Override public void onExtrasChanged(Bundle b) { event("extras_changed", value(b, 0)); }
-                @Override public void onQueueChanged(List<MediaSession.QueueItem> q) { event("queue_changed", queue(q)); }
-                @Override public void onQueueTitleChanged(CharSequence t) { event("queue_title_changed", value(t, 0)); }
-                @Override public void onSessionEvent(String name, Bundle b) {
-                    event("session_event", obj("name", name, "extras", value(b, 0)));
-                }
-                @Override public void onSessionDestroyed() { event("session_destroyed", null); }
-                @Override public void onAudioInfoChanged(MediaController.PlaybackInfo i) { event("audio_info_changed", info(i)); }
-            };
-            c.registerCallback(callback, handler);
-        }
-    }
-
-    private JSONObject snapshot() {
-        JSONArray result = new JSONArray();
-        try {
-            for (MediaController c : sessions()) {
-                if (!TARGET.equals(c.getPackageName())) continue;
-                try {
-                    result.put(obj("package", c.getPackageName(), "sessionToken", token(c),
-                        "metadata", metadata(c.getMetadata()), "sessionExtras", value(c.getExtras(), 0),
-                        "playbackState", state(c.getPlaybackState()), "queueTitle", value(c.getQueueTitle(), 0),
-                        "queue", queue(c.getQueue()), "flags", c.getFlags(), "ratingType", c.getRatingType(),
-                        "playbackInfo", info(c.getPlaybackInfo())));
-                } catch (Exception e) { result.put(obj("package", c.getPackageName(), "readError", error(e))); }
-            }
-            return obj("listenerConnected", connected, "sessions", result);
-        } catch (Exception e) { return obj("listenerConnected", connected, "error", error(e)); }
-    }
-    private static String token(MediaController c) {
-        // Process-local correlation marker only; never a content ID.
-        return Integer.toHexString(c.getSessionToken().hashCode());
-    }
-    private static Object metadata(MediaMetadata m) {
-        if (m == null) return JSONObject.NULL;
-        Parcel p = Parcel.obtain();
-        try {
-            // AOSP's MediaMetadata parcel starts with its Bundle. No hidden-API reflection.
-            // Report failures explicitly if a vendor changes this representation.
-            m.writeToParcel(p, 0);
-            p.setDataPosition(0);
-            Bundle b = p.readBundle(ProbeService.class.getClassLoader());
-            Object entries = value(b, 0);
-            JSONArray keys = new JSONArray();
-            for (String k : new TreeSet<>(m.keySet())) keys.put(k);
-            return obj("keys", keys, "entries", entries, "description", description(m.getDescription()));
-        } catch (Exception e) { return obj("decodeError", error(e), "descriptionText", String.valueOf(m.getDescription())); }
-        finally { p.recycle(); }
-    }
-    private static Object state(PlaybackState s) {
-        if (s == null) return JSONObject.NULL;
-        JSONArray custom = new JSONArray();
-        for (PlaybackState.CustomAction a : s.getCustomActions()) {
-            custom.put(obj("action", a.getAction(), "name", value(a.getName(), 0), "icon", a.getIcon(), "extras", value(a.getExtras(), 0)));
-        }
-        String[] names = {"NONE", "STOPPED", "PAUSED", "PLAYING", "FAST_FORWARDING", "REWINDING", "BUFFERING", "ERROR", "CONNECTING", "SKIPPING_TO_PREVIOUS", "SKIPPING_TO_NEXT", "SKIPPING_TO_QUEUE_ITEM"};
-        int n = s.getState();
-        return obj("state", n, "stateName", n >= 0 && n < names.length ? names[n] : "UNKNOWN",
-            "positionMs", s.getPosition(), "bufferedPositionMs", s.getBufferedPosition(), "speed", s.getPlaybackSpeed(),
-            "updatedElapsedRealtimeMs", s.getLastPositionUpdateTime(), "actions", s.getActions(),
-            "activeQueueItemId", s.getActiveQueueItemId(), "errorMessage", value(s.getErrorMessage(), 0),
-            "extras", value(s.getExtras(), 0), "customActions", custom);
-    }
-    private static Object description(MediaDescription d) {
-        if (d == null) return JSONObject.NULL;
-        return obj("mediaId", d.getMediaId(), "title", value(d.getTitle(), 0), "subtitle", value(d.getSubtitle(), 0),
-            "description", value(d.getDescription(), 0), "iconUri", value(d.getIconUri(), 0),
-            "iconBitmap", value(d.getIconBitmap(), 0), "mediaUri", Build.VERSION.SDK_INT >= 23 ? value(d.getMediaUri(), 0) : JSONObject.NULL,
-            "extras", value(d.getExtras(), 0));
-    }
-    private static Object queue(List<MediaSession.QueueItem> q) {
-        if (q == null) return JSONObject.NULL;
-        JSONArray a = new JSONArray();
-        for (MediaSession.QueueItem i : q) a.put(obj("queueId", i.getQueueId(), "description", description(i.getDescription())));
-        return a;
-    }
-    private static Object info(MediaController.PlaybackInfo i) {
-        if (i == null) return JSONObject.NULL;
-        return obj("playbackType", i.getPlaybackType(), "volumeControl", i.getVolumeControl(), "currentVolume", i.getCurrentVolume(),
-            "maxVolume", i.getMaxVolume(), "audioAttributes", String.valueOf(i.getAudioAttributes()));
-    }
-    private static Object value(Object v, int depth) {
-        if (v == null) return JSONObject.NULL;
-        if (depth > 16) return obj("type", v.getClass().getName(), "omitted", "nesting exceeds 16");
-        if (v instanceof CharSequence) return v.toString();
-        if (v instanceof Boolean || v instanceof Number) return v;
-        if (v instanceof Bundle) {
-            JSONObject out = new JSONObject();
+    @Override public void onDestroy() {
+        collector.post(new Runnable() { public void run() {
             try {
-                Bundle b = (Bundle) v;
-                for (String key : new TreeSet<>(b.keySet())) {
-                    try { put(out, key, value(b.get(key), depth + 1)); }
-                    catch (Exception e) { put(out, key, error(e)); }
-                }
-            } catch (Exception e) { put(out, "_bundleReadError", error(e)); }
-            return out;
-        }
-        if (v instanceof Bitmap) {
-            Bitmap b = (Bitmap) v;
-            return obj("type", "android.graphics.Bitmap", "width", b.getWidth(), "height", b.getHeight(), "pixelsOmitted", true);
-        }
-        if (v instanceof Rating) {
-            Rating r = (Rating) v;
-            return obj("type", "android.media.Rating", "style", r.getRatingStyle(), "rated", r.isRated(),
-                "heart", r.hasHeart(), "thumbUp", r.isThumbUp(), "stars", r.getStarRating(), "percent", r.getPercentRating());
-        }
-        if (v instanceof byte[]) return obj("type", "byte[]", "base64", Base64.encodeToString((byte[]) v, Base64.NO_WRAP));
-        if (v instanceof Iterable) {
-            JSONArray a = new JSONArray(); for (Object item : (Iterable<?>) v) a.put(value(item, depth + 1)); return a;
-        }
-        if (v.getClass().isArray()) {
-            JSONArray a = new JSONArray(); for (int n = 0; n < Array.getLength(v); n++) a.put(value(Array.get(v, n), depth + 1)); return a;
-        }
-        return obj("type", v.getClass().getName(), "text", String.valueOf(v));
+                closing=true; stopWatching("service_destroyed");
+                Snapshot current=unknown("service_destroyed"); flushRemovals(current);
+                record("service_destroyed",null,null,current); publish(current,null);
+            } finally { journal.close(); collectorThread.quitSafely(); }
+        } });
+        super.onDestroy();
     }
-    private static JSONObject error(Exception e) { return obj("errorType", e.getClass().getName(), "message", e.getMessage()); }
-    private static void put(JSONObject o, String k, Object v) {
-        try { o.put(k, v == null ? JSONObject.NULL : v); }
-        catch (Exception e) { try { o.put(k, String.valueOf(v)); } catch (Exception ignored) { } }
-    }
-    private static JSONObject obj(Object... pairs) {
-        JSONObject o = new JSONObject();
-        for (int i = 0; i < pairs.length; i += 2) put(o, (String) pairs[i], pairs[i + 1]);
-        return o;
-    }
-    private synchronized void emit(String reason, Object payload) {
-        JSONObject current = snapshot();
-        String comparison = current.toString();
-        if ("poll".equals(reason) && comparison.equals(lastPoll)) return;
-        lastPoll = comparison;
-        JSONObject entry = obj("sequence", ++sequence, "wallTimeMs", System.currentTimeMillis(),
-            "elapsedRealtimeMs", SystemClock.elapsedRealtime(), "reason", reason,
-            "eventPayload", payload, "snapshot", current, "snapshotAtomic", false);
-        File file = new File(getFilesDir(), "events.jsonl");
+    private void ensureActiveRegistration() {
+        if (!connected || activeRegistered) return;
+        activeRegistration.attempt(clock);
         try {
-            if (file.length() > 8 * 1024 * 1024) {
-                File old = new File(getFilesDir(), "events.previous.jsonl");
-                if (old.exists() && !old.delete()) throw new java.io.IOException("Cannot remove old trace");
-                if (!file.renameTo(old)) throw new java.io.IOException("Cannot rotate trace");
-            }
-            try (FileOutputStream out = new FileOutputStream(file, true)) {
-                out.write((entry.toString() + "\n").getBytes(StandardCharsets.UTF_8));
-            }
-            Log.i("PVProbe", "sequence=" + sequence + " reason=" + reason + " (full JSON in files/events.jsonl)");
-        } catch (Exception e) { Log.e("PVProbe", "Cannot write trace", e); }
+            manager.addOnActiveSessionsChangedListener(listener,component(),collector);
+            activeRegistered=true; activeRegistration.success(clock);
+        } catch (Exception e) { activeRegistration.fail(clock,e); }
     }
-    @Override protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
-        writer.println(obj("wallTimeMs", System.currentTimeMillis(), "elapsedRealtimeMs", SystemClock.elapsedRealtime(),
-            "snapshotAtomic", false, "snapshot", snapshot()).toString());
+    private void stopWatching(String cause) {
+        connected=false; collector.removeCallbacks(poll); nextPollDue=0;
+        if (manager!=null) {
+            cleanupHealth.attempt(clock);
+            try { manager.removeOnActiveSessionsChangedListener(listener); cleanupHealth.success(clock); }
+            catch (Exception e) { cleanupHealth.fail(clock,e); }
+        }
+        activeRegistered=false;
+        for (Watch watch:new ArrayList<>(watches.values())) remove(watch,cause,new Stamp(clock));
+        destroyedTokens.clear(); lastSemantic=null;
+    }
+    private void remove(Watch watch,String cause,Stamp at) {
+        if (watches.get(watch.controller.getSessionToken())!=watch) return;
+        watches.remove(watch.controller.getSessionToken());
+        JSONObject removed=lifetimes.remove(watch.controller.getSessionToken(),cause,at);
+        cleanupHealth.attempt(clock);
+        try { watch.controller.unregisterCallback(watch.callback); cleanupHealth.success(clock); }
+        catch (Exception e) { cleanupHealth.fail(clock,e); }
+        if (removed!=null) {
+            put(removed,"sessionToken",watch.tokenHash);
+            put(removed,"connectionEpoch",watch.epoch);
+            put(removed,"serviceInstanceId",instance); pendingRemovals.add(removed);
+        }
+    }
+    private void refresh(List<MediaController> list) {
+        Map<MediaSession.Token,MediaController> found=new LinkedHashMap<>();
+        if (list==null) throw new IllegalStateException("Active session list was null");
+        if (list.size()>128) throw new IllegalStateException("Active session enumeration exceeds 128");
+        for (MediaController c:list) if (TARGET.equals(c.getPackageName())) found.put(c.getSessionToken(),c);
+        if (found.size()>16) throw new IllegalStateException("Target session count exceeds 16");
+        for (Watch watch:new ArrayList<>(watches.values()))
+            if (!found.containsKey(watch.controller.getSessionToken())) remove(watch,"active_list_removed",new Stamp(clock));
+        destroyedTokens.retainAll(found.keySet());
+        for (Map.Entry<MediaSession.Token,MediaController> entry:found.entrySet()) {
+            if (destroyedTokens.contains(entry.getKey())) continue;
+            Watch watch=watches.get(entry.getKey());
+            if (watch==null) {
+                watch=new Watch(entry.getValue(),lifetimes.add(entry.getKey())); watches.put(entry.getKey(),watch);
+            }
+            watch.register();
+        }
+    }
+    private interface ReadValue { Object get(MediaCodec codec); }
+    private final class Watch {
+        final MediaController controller;
+        final Lifetime lifetime;
+        final MediaController.Callback callback;
+        final String tokenHash;
+        final long epoch;
+        final JSONObject lastChangeTimes=new JSONObject();
+        boolean registered;
+        String lastDataSignature;
+        Stamp lastObservedChange;
+        Watch(MediaController controller,Lifetime lifetime) {
+            this.controller=controller; this.lifetime=lifetime;
+            epoch=connectionEpoch;
+            tokenHash=Integer.toHexString(controller.getSessionToken().hashCode());
+            callback=new MediaController.Callback() {
+                @Override public void onMetadataChanged(final MediaMetadata m) { event("metadata_changed",new ReadValue() { public Object get(MediaCodec c) { return c.metadata(m); } }); }
+                @Override public void onPlaybackStateChanged(final PlaybackState s) { event("playback_state_changed",new ReadValue() { public Object get(MediaCodec c) { return c.state(s); } }); }
+                @Override public void onExtrasChanged(final Bundle b) { event("extras_changed",new ReadValue() { public Object get(MediaCodec c) { return c.value(b); } }); }
+                @Override public void onQueueChanged(final List<MediaSession.QueueItem> q) { event("queue_changed",new ReadValue() { public Object get(MediaCodec c) { return c.queue(q); } }); }
+                @Override public void onQueueTitleChanged(final CharSequence t) { event("queue_title_changed",new ReadValue() { public Object get(MediaCodec c) { return c.value(t); } }); }
+                @Override public void onSessionEvent(final String name,final Bundle b) { event("session_event",new ReadValue() { public Object get(MediaCodec c) { return obj("name",c.value(name),"extras",c.value(b)); } }); }
+                @Override public void onAudioInfoChanged(final MediaController.PlaybackInfo i) { event("audio_info_changed",new ReadValue() { public Object get(MediaCodec c) { return c.info(i); } }); }
+                @Override public void onSessionDestroyed() {
+                    final Stamp received=new Stamp(clock); callbackCount++; lastCallbackAt=received;
+                    safely(new Runnable() { public void run() {
+                        if (!lifetime.active) { lateCallbacks++; return; }
+                        destroyedTokens.add(controller.getSessionToken()); remove(Watch.this,"session_destroyed",received);
+                        observe("session_destroyed",obj("sessionInstanceId",lifetime.id,"sessionToken",tokenHash,"value",null),received,false);
+                    } });
+                }
+            };
+        }
+        void register() {
+            if (registered || !connected) return;
+            callbackRegistration.attempt(clock);
+            try { controller.registerCallback(callback,collector); registered=true; callbackRegistration.success(clock); }
+            catch (Exception e) { callbackRegistration.fail(clock,e); }
+        }
+        void event(final String name,final ReadValue supplier) {
+            final Stamp received=new Stamp(clock); callbackCount++; lastCallbackAt=received;
+            safely(new Runnable() { public void run() {
+                MediaCodec codec=new MediaCodec(); Object value;
+                try { value=supplier.get(codec); } catch (Exception e) { value=obj("readError",error(e)); }
+                JSONObject payload=obj("sessionInstanceId",lifetime.id,"sessionToken",tokenHash,"value",value,
+                    "serialization",codec.budget.json(),"historical",!lifetime.active);
+                if (lifetime.active) put(lastChangeTimes,name,received.json()); else lateCallbacks++;
+                observe(lifetime.active?name:"late_callback",lifetime.active?payload:obj("originalReason",name,"payload",payload),received,false);
+            } });
+        }
+    }
+    private final class Snapshot {
+        final JSONObject json; final String semantic; final boolean success;
+        Snapshot(JSONObject json,String semantic,boolean success) { this.json=json; this.semantic=semantic; this.success=success; }
+    }
+    private Snapshot unknown(String reason) {
+        Stamp at=new Stamp(clock);
+        JSONObject j=obj("listenerConnected",connected,"sessions",null,"error",obj("reason",reason),
+            "acquisitionStart",at.json(),"acquisitionEnd",at.json(),"complete",false);
+        return new Snapshot(j,reason,false);
+    }
+    private Snapshot capture() {
+        Stamp start=new Stamp(clock); sessionReads.attempt(clock);
+        try {
+            refresh(manager.getActiveSessions(component()));
+            JSONArray sessions=new JSONArray(), comparable=new JSONArray(); boolean complete=true;
+            for (Watch watch:watches.values()) {
+                JSONObject row=read(watch); sessions.put(row);
+                JSONObject semantic=copy(row); semantic.remove("acquisitionStart"); semantic.remove("acquisitionEnd");
+                semantic.remove("lastChangeTimes"); semantic.remove("lastObservedChangeAt"); comparable.put(semantic);
+                if (!row.optBoolean("dataComplete")) complete=false;
+            }
+            if (complete) sessionReads.success(clock);
+            else sessionReads.fail(clock,new IllegalStateException("Session acquisition incomplete: getter, decode, or serialization limit"));
+            JSONObject j=obj("listenerConnected",connected,"sessions",sessions,"complete",complete,
+                "acquisitionStart",start.json(),"acquisitionEnd",new Stamp(clock).json());
+            return new Snapshot(j,obj("listenerConnected",connected,"sessions",comparable).toString(),complete);
+        } catch (Exception e) {
+            sessionReads.fail(clock,e);
+            JSONObject j=obj("listenerConnected",connected,"sessions",null,"complete",false,"error",error(e),
+                "acquisitionStart",start.json(),"acquisitionEnd",new Stamp(clock).json());
+            return new Snapshot(j,error(e).toString(),false);
+        }
+    }
+    private void field(JSONObject row,JSONObject errors,String key,MediaCodec codec,ReadValue read) {
+        try { put(row,key,read.get(codec)); }
+        catch (Exception e) { put(errors,key,error(e)); }
+    }
+    private JSONObject read(final Watch watch) {
+        Stamp start=new Stamp(clock); final MediaController c=watch.controller;
+        MediaCodec codec=new MediaCodec(); JSONObject errors=new JSONObject();
+        JSONObject row=obj("package",TARGET,"sessionInstanceId",watch.lifetime.id,"sessionToken",watch.tokenHash,"connectionEpoch",watch.epoch);
+        // Capture core identity/state before optional queue/artwork/extras consume the construction budget.
+        // Reserve part of the shared budget for the separately published session-extra identifiers.
+        codec.budget.chars-=8192; codec.budget.nodes-=256;
+        field(row,errors,"metadata",codec,new ReadValue() { public Object get(MediaCodec b) { return b.metadata(c.getMetadata()); } });
+        field(row,errors,"playbackState",codec,new ReadValue() { public Object get(MediaCodec b) { return b.state(c.getPlaybackState()); } });
+        codec.budget.chars+=8192; codec.budget.nodes+=256;
+        field(row,errors,"sessionExtras",codec,new ReadValue() { public Object get(MediaCodec b) { return b.value(c.getExtras()); } });
+        field(row,errors,"queueTitle",codec,new ReadValue() { public Object get(MediaCodec b) { return b.value(c.getQueueTitle()); } });
+        field(row,errors,"queue",codec,new ReadValue() { public Object get(MediaCodec b) { return b.queue(c.getQueue()); } });
+        field(row,errors,"flags",codec,new ReadValue() { public Object get(MediaCodec b) { return c.getFlags(); } });
+        field(row,errors,"ratingType",codec,new ReadValue() { public Object get(MediaCodec b) { return c.getRatingType(); } });
+        field(row,errors,"playbackInfo",codec,new ReadValue() { public Object get(MediaCodec b) { return b.info(c.getPlaybackInfo()); } });
+        boolean succeeded=errors.length()==0 && codec.readErrors==0;
+        put(row,"readErrors",errors); put(row,"nestedReadErrors",codec.readErrors);
+        put(row,"readSucceeded",succeeded); put(row,"serialization",codec.budget.json());
+        put(row,"dataComplete",succeeded && codec.budget.omitted==0);
+        String signature=row.toString();
+        if (succeeded && !signature.equals(watch.lastDataSignature)) {
+            watch.lastDataSignature=signature; watch.lastObservedChange=new Stamp(clock);
+        }
+        put(row,"lastObservedChangeAt",Operation.json(watch.lastObservedChange));
+        put(row,"acquisitionStart",start.json()); put(row,"acquisitionEnd",new Stamp(clock).json());
+        put(row,"lastChangeTimes",copy(watch.lastChangeTimes));
+        if (succeeded) watch.lifetime.remember(row);
+        return row;
+    }
+    private Snapshot observe(String reason,Object payload,Stamp received,boolean isPoll) {
+        Snapshot current=capture(); flushRemovals(current);
+        if (isPoll && current.semantic.equals(lastSemantic) && clock.elapsed()-lastRecordAt<HEARTBEAT_MS) suppressedPolls++;
+        else record(isPoll && current.semantic.equals(lastSemantic)?"heartbeat":reason,payload,received,current);
+        lastSemantic=current.semantic; publish(current,null); return current;
+    }
+    private void flushRemovals(Snapshot current) {
+        for (JSONObject removed:pendingRemovals) record("session_removed",removed,null,current);
+        pendingRemovals.clear();
+    }
+    private JSONObject collectionHealth() {
+        boolean all=activeRegistered; JSONArray registration=new JSONArray();
+        for (Watch w:watches.values()) {
+            all &= w.registered;
+            registration.put(obj("sessionInstanceId",w.lifetime.id,"registrationCallSucceeded",w.registered));
+        }
+        return obj("listenerConnected",connected,"activeSessionsListenerRegistered",activeRegistered,"callbacksRegistered",all,
+            "registrationMeans","registration_call_returned_without_exception",
+            "activeRegistration",activeRegistration.json(),"callbackRegistration",callbackRegistration.json(),
+            "sessionRegistrations",registration,"sessionReads",sessionReads.json(),"poll",pollHealth.json(),
+            "lastSuccessfulSessionReadElapsedMs",sessionReads.lastSuccess==null?null:sessionReads.lastSuccess.elapsed,
+            "lastPollAttemptElapsedMs",pollHealth.lastAttempt==null?null:pollHealth.lastAttempt.elapsed,
+            "lastPollSuccessElapsedMs",pollHealth.lastSuccess==null?null:pollHealth.lastSuccess.elapsed,
+            "pollExpected",connected && !closing,"nextPollDueElapsedMs",nextPollDue==0?null:nextPollDue,
+            "pollOverdueMs",nextPollDue==0?null:Math.max(0,clock.elapsed()-nextPollDue),
+            "callbackCount",callbackCount,"lastCallbackReceivedAt",Operation.json(lastCallbackAt),
+            "lateCallbacks",lateCallbacks,"suppressedUnchangedPolls",suppressedPolls,
+            "cleanup",cleanupHealth.json(),"lastCollectorError",collectorError);
+    }
+    private JSONObject envelope(Snapshot snapshot) {
+        Stamp at=new Stamp(clock);
+        return obj("schemaVersion",SCHEMA,"probeBuild",BUILD,"serviceInstanceId",instance,"connectionEpoch",connectionEpoch,
+            "serviceCreatedAt",createdAt.json(),"connectionStartedAt",Operation.json(connectedAt),"wallTimeMs",at.wall,"elapsedRealtimeMs",at.elapsed,
+            "snapshotAtomic",false,"snapshot",snapshot.json,"collectionHealth",collectionHealth());
+    }
+    private void record(String reason,Object payload,Stamp received,Snapshot current) {
+        long seq=journal.next(); JSONObject row=envelope(current);
+        put(row,"sequence",seq); put(row,"reason",reason); put(row,"eventPayload",payload);
+        put(row,"callbackReceivedAt",Operation.json(received));
+        JSONObject health=journal.health();
+        put(row,"latestProducedSequence",seq); put(row,"latestWrittenSequence",health.opt("latestWrittenSequence"));
+        put(row,"journalHealth",health);
+        journal.offer(seq,row); lastRecordAt=clock.elapsed();
+        Log.i("PVProbe","instance="+instance+" sequence="+seq+" reason="+reason);
+    }
+    private JSONObject checkpoint() {
+        JSONObject health=journal.health();
+        return obj("serviceInstanceId",instance,"latestProducedSequence",health.opt("latestProducedSequence"),
+            "latestWrittenSequence",health.opt("latestWrittenSequence"),"capturedAt",new Stamp(clock).json());
+    }
+    private JSONObject publish(Snapshot current,JSONObject before) {
+        JSONObject row=envelope(current),after=checkpoint();
+        put(row,"checkpointBeforeSnapshot",before); put(row,"checkpointAfterSnapshot",after);
+        put(row,"latestProducedSequence",after.opt("latestProducedSequence"));
+        put(row,"latestWrittenSequence",after.opt("latestWrittenSequence")); put(row,"journalHealth",journal.health());
+        put(row,"snapshotIsCached",false); cachedDump=boundedDump(row).toString(); return row;
+    }
+    private JSONObject boundedDump(JSONObject row) {
+        if (row.toString().getBytes(StandardCharsets.UTF_8).length<=AsyncJournal.MAX_RECORD_BYTES) return row;
+        JSONObject small=copy(row); put(small,"snapshot",null); put(small,"recordTruncated",true);
+        put(small,"omissionReason","dump_byte_limit"); return small;
+    }
+    @Override protected void dump(FileDescriptor fd,PrintWriter writer,String[] args) {
+        final Stamp requested=new Stamp(clock);
+        final AtomicBoolean cancelled=new AtomicBoolean(); final CountDownLatch done=new CountDownLatch(1);
+        final AtomicReference<JSONObject> result=new AtomicReference<>();
+        final AtomicReference<JSONObject> failure=new AtomicReference<>();
+        collector.post(new Runnable() { public void run() {
+            try {
+                if (cancelled.get()) return;
+                JSONObject before=checkpoint(); Snapshot current=capture(); flushRemovals(current);
+                result.set(publish(current,before));
+            } catch (Exception e) { collectorError=error(e); failure.set(error(e)); }
+            finally { done.countDown(); }
+        } });
+        boolean completed=false;
+        try { completed=done.await(DUMP_TIMEOUT_MS,TimeUnit.MILLISECONDS); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        JSONObject row=result.get();
+        if (!completed || row==null) {
+            cancelled.set(true);
+            try { row=cachedDump==null?obj("schemaVersion",SCHEMA,"probeBuild",BUILD,"serviceInstanceId",instance,"snapshot",null):new JSONObject(cachedDump); }
+            catch (Exception e) { row=obj("schemaVersion",SCHEMA,"serviceInstanceId",instance,"snapshot",null); }
+            put(row,"snapshotIsCached",true); put(row,"collectorStalledOrBusy",!completed);
+            put(row,"journalHealth",journal.health());
+            put(row,"outOfBandCheckpoint",obj("latestProducedSequence",journal.produced(),"capturedAt",new Stamp(clock).json()));
+        }
+        put(row,"dumpTimedOut",!completed); put(row,"dumpFailed",completed && result.get()==null);
+        put(row,"dumpError",failure.get()); put(row,"dumpRequestedAt",requested.json());
+        put(row,"dumpResponseAt",new Stamp(clock).json()); writer.println(boundedDump(row).toString());
     }
 }

@@ -18,7 +18,7 @@ from .config import ExecutorConfig
 from .media import PROBE
 from .models import ExecutorError
 
-APK_SHA256 = "24a71c8ed36864125b85b519b7cd125067c9214ac549d86f0fa22adb5c547392"
+APK_SHA256 = "ef535a2073a2ce5ed67e732fc82267e6178e829894086f034ba8fef9b13591c0"
 SERVICE = PROBE + "/.ProbeService"
 ACTIVITY = PROBE + "/.StartActivity"
 
@@ -40,12 +40,26 @@ async def check(device):
         "package": PROBE,
         "ready": bool(
             runtime.get("source_health") == "fresh"
-            and runtime.get("probe_instance")
+            and runtime.get("schema_version") == 2
+            and runtime.get("continuity_ready")
             and runtime.get("history_available")
         ),
         "source_health": runtime.get("source_health"),
         "error": runtime.get("source_error"),
         "probe_instance": runtime.get("probe_instance"),
+        "schema_version": runtime.get("schema_version", 1),
+        "upgrade_required": runtime.get("source") == "media_probe" and runtime.get("schema_version") != 2,
+        "probe_build": runtime.get("probe_build"),
+        "service_instance_id": runtime.get("service_instance_id"),
+        "connection_epoch": runtime.get("connection_epoch"),
+        "session_instance_id": session.get("session_instance_id"),
+        "collection_health": runtime.get("collection_health"),
+        "journal_health": runtime.get("journal_health"),
+        "history_status": runtime.get("history_status"),
+        "latest_produced_sequence": runtime.get("latest_produced_sequence"),
+        "latest_written_sequence": runtime.get("latest_written_sequence"),
+        "loss_counters": runtime.get("loss_counters", {}),
+        "problems": runtime.get("problems", []),
         "journal_readable": bool(runtime.get("history_available")),
         "prime_session_count": runtime.get("session_count"),
         "transport": session.get("transport", "unknown"),
