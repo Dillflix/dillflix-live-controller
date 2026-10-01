@@ -4,6 +4,8 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 
 **Version 0.9 adds an integrated Prime Video executor: Play, status by token, and Cancel, with durable jobs, LLM-powered navigation, playback/completion evidence, and the same input gate as manual control.** The default remains simulated; real playback is opt-in with `PLAYBACK_ADAPTER=prime-video`. Start with [executor setup](docs/executor-setup.md) and the [implemented API guide](docs/executor-api-handoff.md). Automated tests use controlled ADB/model boundaries; actual Fire TV, account, inference-service, Docker/nginx and mobile compatibility require target-host validation.
 
+**Version 0.9.1 integrates the exploration's native accessibility collector:** separate focus channels, action timing, Prime window-burst handling, screenshot association and stale-input checks. Native metadata accompanies actor screenshots; the visual observer remains separate. Full search-to-play behavior on the target TV is still unvalidated. See the [evidence audit and implementation status](docs/accessibility-critical-path.md).
+
 ## What works
 
 - Opt-in Prime Video playback with package-scoped ADB search, configurable JSON/TVTheseus actor, independent vision observer, durable tokens, active cancellation, completion checks and read-only diagnostics.
@@ -186,7 +188,7 @@ Coverage includes database upgrades, persistent undo, configuration round trips,
 
 ## Real playback and remaining validation
 
-The [API implementation guide](docs/executor-api-handoff.md), [OpenAPI contract](docs/executor-api.openapi.yaml), and [setup/diagnostics guide](docs/executor-setup.md) document the completed three-operation integration. Play, token status (including lifecycle), and Cancel (including active stop/manual handoff) share the same durable worker and store. No separate recovery, device-observation, lifecycle lookup or authority API is required.
+The [API implementation guide](docs/executor-api-handoff.md), [OpenAPI contract](docs/executor-api.openapi.yaml), and [setup/diagnostics guide](docs/executor-setup.md) document the implemented three-operation infrastructure. Play, token status (including lifecycle), and Cancel (including active stop/manual handoff) share the same durable worker and store. Native collection and association are integrated in 0.9.1; critical-path label coverage and physical playback still need validation. See the [implementation status](docs/accessibility-critical-path.md). No separate recovery, device-observation, lifecycle lookup or authority API is required.
 
 See [the roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) for boundaries and remaining host validation. Run the target-TV procedure before relying on unattended navigation. Real model accuracy, Prime account availability, protected video visibility, physical mobile browsers, Docker/nginx and live endurance have not been validated in this development environment. Other streaming app adapters and independent sports-results providers remain future integrations.
 

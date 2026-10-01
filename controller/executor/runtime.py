@@ -76,6 +76,7 @@ class PlaybackExecutor:
                 pass
         if self.vision:
             await self.vision.close()
+        await self.device.close()
         if self.guard:
             self.guard.close()
             self.guard = None
@@ -203,8 +204,21 @@ class PlaybackExecutor:
             # Fail visibly; no uncontrolled device loop after an internal defect.
             log.exception("Playback executor stopped unexpectedly")
             self.stopping = True
+        finally:
+            await self.device.close()
 
     async def input(self, token, action, call, *, frame=None, cancelling=False):
+        def validate_age():
+            if frame:
+                age = (
+                    time.monotonic() - frame.captured_monotonic
+                    if frame.captured_monotonic is not None
+                    else (datetime.now(UTC) - frame.captured_at).total_seconds()
+                )
+                if not 0 <= age <= self.config.frame_max_age:
+                    self.device.invalidate_focus()
+                    raise ExecutorError("stale_navigation_frame", "Navigation evidence expired before input")
+
         async with self.input_lock:
             if not cancelling:
                 with self.db.transaction() as db:
@@ -215,16 +229,18 @@ class PlaybackExecutor:
                     raise ExecutorError(
                         "action_budget", "Playback reached its bounded input budget", retryable=False
                     )
-            if frame and (datetime.now(UTC) - frame.captured_at).total_seconds() > self.config.frame_max_age:
-                raise ExecutorError("stale_navigation_frame", "Navigation evidence expired before input")
+            validate_age()
             if frame:
                 foreground, _ = await self.device.state()
                 if foreground != PACKAGE:
                     raise ExecutorError("foreground_changed", "Application changed before input")
+            native_action = await self.device.prepare_input(action, frame=frame)
+            validate_age()  # Foreground/version/clock I/O must not extend frame lifetime.
             action_id = self.store.journal(
                 token, action, frame.sha256 if frame else None, cancelling=cancelling
             )
             if action_id is None:
+                self.device.invalidate_focus()
                 return
             task = asyncio.create_task(call())
             try:
@@ -240,12 +256,19 @@ class PlaybackExecutor:
                     except asyncio.CancelledError:
                         continue
                 self.store.journal_done(action_id, "interrupted_delivery")
+                self.device.invalidate_focus()
                 raise
             except Exception:
                 self.store.journal_done(action_id, "delivery_unconfirmed")
+                self.device.invalidate_focus()
                 raise
             else:
                 self.store.journal_done(action_id)
+            try:
+                await self.device.after_input(native_action)
+            except asyncio.CancelledError:
+                self.device.invalidate_focus()
+                raise
 
     async def cancel_one(self, token):
         with self.db.transaction() as db:
@@ -257,6 +280,16 @@ class PlaybackExecutor:
         if owns:
             await self.device.ready()
             await self.input(token, "STOP_PRIME", self.device.stop, cancelling=True)
+        else:
+            # Collection can start before the first journaled input. Cancel that
+            # reader too, but never close a newer token's observation stream.
+            async with self.input_lock:
+                with self.db.transaction() as db:
+                    owner = db.execute(
+                        "SELECT current_token FROM executor_devices WHERE device_id=?", (row["device_id"],)
+                    ).fetchone()
+                if not owner or owner[0] in (None, token):
+                    await self.device.close()
         self.store.acknowledge_cancel(token, owns)
 
     def context(self, row):
@@ -273,6 +306,8 @@ class PlaybackExecutor:
         age = (datetime.now(UTC) - frame.captured_at).total_seconds()
         if age > self.config.frame_max_age:
             raise ExecutorError("stale_observation", "Vision reading exceeded the observation age limit")
+        if navigation:
+            self.device.validate_frame(frame)
         with self.db.transaction() as db:
             self.store.allowed(db, token, navigation=navigation)
         return frame, scene
@@ -366,7 +401,13 @@ class PlaybackExecutor:
         history, feedback, repeated, prior_signature = [], None, 0, None
         proof = False
         for _ in range(self.config.max_actions):
-            frame, scene = await self.read_scene(token, navigation=True)
+            try:
+                frame, scene = await self.read_scene(token, navigation=True)
+            except ExecutorError as error:
+                if error.code != "stale_navigation_focus":
+                    raise
+                feedback = "Focus changed during observation. Use the newly captured screen."
+                continue
             if scene.blocker in {"signin", "purchase", "profile"}:
                 raise ExecutorError(
                     "needs_user_action",
@@ -387,7 +428,13 @@ class PlaybackExecutor:
                     continue
             if proof and playback_sample(scene, frame, request, timezone):
                 await asyncio.sleep(max(1, self.config.settle_seconds))
-                second = await self.read_scene(token, navigation=True)
+                try:
+                    second = await self.read_scene(token, navigation=True)
+                except ExecutorError as error:
+                    if error.code != "stale_navigation_focus":
+                        raise
+                    feedback = "Focus changed during playback confirmation. Observe again."
+                    continue
                 if playback_sample(second[1], second[0], request, timezone) and progression(
                     (frame, scene), second
                 ):
@@ -409,16 +456,29 @@ class PlaybackExecutor:
                     feedback = "Activation rejected: focus, live status, identity or permitted route was not established."
                     continue
                 # A second independent capture must agree on the focused action.
-                second_frame, second_scene = await self.read_scene(token, navigation=True)
+                try:
+                    second_frame, second_scene = await self.read_scene(token, navigation=True)
+                except ExecutorError as error:
+                    if error.code != "stale_navigation_focus":
+                        raise
+                    feedback = "Focus changed during activation validation. Observe again."
+                    continue
                 if second_scene.focus != scene.focus or not activation_allowed(
                     second_scene, request, option, second_frame, timezone
                 ):
                     feedback = "Focus changed or could not be confirmed. Observe and navigate again."
                     continue
                 frame = second_frame
-                proof = proof or scene.focus.role in {"event", "play_live"}
             self.store.phase(token, "verifying" if proof else "navigating")
-            await self.input(token, action, lambda: self.device.key(action), frame=frame)
+            try:
+                await self.input(token, action, lambda: self.device.key(action), frame=frame)
+            except ExecutorError as error:
+                if error.code != "stale_navigation_focus":
+                    raise
+                feedback = "Focus changed before input. No key was sent; observe again."
+                continue
+            # A rejected stale SELECT must not establish an activation history.
+            proof = proof or (action == "SELECT" and scene.focus.role in {"event", "play_live"})
             history.append((frame, action))
             await asyncio.sleep(self.config.settle_seconds)
         return False

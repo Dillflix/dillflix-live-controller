@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Dillflix Playback Executor API
   version: 1.0.0
-  description: 'Implemented in dillflix-live-controller 0.9.0. Three operations: asynchronous Play, token status
+  description: 'Implemented in dillflix-live-controller 0.9.1. Three operations: asynchronous Play, token status
     including lifecycle, and Cancel including active stop and device intent fencing. Configure PLAYBACK_ADAPTER=prime-video
     and EXECUTOR_API_TOKEN. See executor-api-handoff.md and executor-setup.md.'
 servers:

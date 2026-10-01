@@ -138,6 +138,21 @@ class Device:
     async def ready(self):
         pass
 
+    async def close(self):
+        pass
+
+    async def prepare_input(self, action, *, frame=None):
+        self.validate_frame(frame)
+
+    async def after_input(self, action):
+        pass
+
+    def validate_frame(self, frame):
+        pass
+
+    def invalidate_focus(self):
+        pass
+
     async def launch(self):
         self.actions.append("LAUNCH")
 
@@ -334,6 +349,49 @@ async def test_manual_input_waits_for_real_executor_stop_and_shares_gate(tmp_pat
         engine.device.stop_release.set()
         if task:
             await asyncio.gather(task, return_exceptions=True)
+        await manager.stop()
+        await service.stop()
+
+
+async def test_manual_wake_and_key_invalidate_native_focus_before_delivery(tmp_path):
+    from controller.device_input import WAKE_PACKET, Attach, Input
+    from controller.executor.accessibility import FocusState
+
+    service = Controller(settings(tmp_path))
+    engine = service.executor
+    engine.device, engine.vision = Device(), Vision()
+    focus = FocusState()
+    engine.device.invalidate_focus = focus.invalidate
+    manager = DeviceInput(service)
+    delivered = []
+
+    class Source:
+        async def send(self, packet):
+            assert manager.lock.locked() and engine.input_lock.locked()
+            assert not focus.snapshot()["usable"]
+            delivered.append(packet)
+
+    await engine.start()
+    try:
+        command = ManualControlCommand(
+            command_id="take", expected_revision=0, action="take", session_id="s" * 32, owner_token="o" * 32
+        )
+        await manager.command("living-room", command)
+        attach = Attach(session_id=command.session_id, owner_token=command.owner_token)
+        manager.connection = (asyncio.current_task(), attach)
+        packets = [WAKE_PACKET, Input(seq=1, key="right").encode()]
+        for packet in packets:
+            focus.begin_action("OBSERVE", 100)
+            focus.ingest(
+                "EventType: TYPE_VIEW_FOCUSED; EventTime: 101; "
+                "PackageName: com.amazon.firebat; Text: [Previously focused]"
+            )
+            assert focus.snapshot()["usable"]
+            async with manager.lock:
+                await manager.send_locked(Source(), packet, "living-room", attach)
+        assert delivered == packets
+    finally:
+        manager.connection = None
         await manager.stop()
         await service.stop()
 
@@ -781,3 +839,247 @@ elif args and args[0]=='shell':
     assert search[search.index("-d") + 1].startswith("amzn://pvde/search?phrase=Jets%20Lions")
     assert ";" not in search[search.index("-d") + 1]
     assert (tmp_path / "stopped").exists()
+
+
+async def test_native_focus_changed_while_waiting_for_shared_input_gate_sends_no_key(tmp_path):
+    from controller.executor.accessibility import FocusState, associate_capture
+    from controller.executor.adb import AdbDevice
+
+    service = Controller(settings(tmp_path))
+    engine = service.executor
+    state = FocusState()
+    state.begin_action("OBSERVE", 100)
+
+    def line(at, text):
+        return (
+            f"EventType: TYPE_VIEW_FOCUSED; EventTime: {at}; "
+            f"PackageName: com.amazon.firebat; ClassName: button; Text: [{text}]"
+        )
+
+    state.ingest(line(101, "Before"))
+
+    class NativeDevice(Device):
+        accessibility = state
+        validate_frame = AdbDevice.validate_frame
+
+        async def prepare_input(self, action, *, frame=None):
+            assert engine.input_lock.locked()
+            self.validate_frame(frame)
+            return self.accessibility.begin_action(action, 200)
+
+    engine.device, engine.vision = NativeDevice(), Vision()
+    report, _ = engine.store.submit(payload())
+    snapshot = state.snapshot()
+    frame = replace(
+        await engine.device.capture(), native_focus=associate_capture(snapshot, snapshot, snapshot)
+    )
+    await engine.input_lock.acquire()
+    task = asyncio.create_task(
+        engine.input(report["token"], "SELECT", lambda: engine.device.key("SELECT"), frame=frame)
+    )
+    await asyncio.sleep(0.01)
+    state.ingest(line(102, "External remote changed focus"))
+    engine.input_lock.release()
+    try:
+        with pytest.raises(ExecutorError) as error:
+            await task
+        assert error.value.code == "stale_navigation_focus"
+        assert engine.device.actions == []
+        with engine.db.transaction() as db:
+            assert db.execute("SELECT count(*) FROM executor_actions").fetchone()[0] == 0
+        snapshot = state.snapshot()
+        fresh = replace(frame, native_focus=associate_capture(snapshot, snapshot, snapshot))
+        await engine.input(report["token"], "RIGHT", lambda: engine.device.key("RIGHT"), frame=fresh)
+        assert engine.device.actions == ["RIGHT"]
+    finally:
+        await service.stop()
+
+
+async def test_native_focus_changed_during_observer_rejects_reading(tmp_path):
+    from controller.executor.accessibility import FocusState, associate_capture
+    from controller.executor.adb import AdbDevice
+
+    service = Controller(settings(tmp_path))
+    engine = service.executor
+    state = FocusState()
+    state.begin_action("OBSERVE", 100)
+    state.ingest("EventType: TYPE_VIEW_FOCUSED; EventTime: 101; PackageName: com.amazon.firebat; Text: [A]")
+
+    class NativeDevice(Device):
+        accessibility = state
+        validate_frame = AdbDevice.validate_frame
+
+        async def capture(self):
+            snapshot = state.snapshot()
+            return replace(
+                await super().capture(), native_focus=associate_capture(snapshot, snapshot, snapshot)
+            )
+
+    engine.device, engine.vision = NativeDevice(), Vision()
+    engine.vision.block = asyncio.Event()
+    report, _ = engine.store.submit(payload())
+    reading = asyncio.create_task(engine.read_scene(report["token"], navigation=True))
+    await engine.vision.entered.wait()
+    state.ingest("EventType: TYPE_VIEW_FOCUSED; EventTime: 102; PackageName: com.amazon.firebat; Text: [B]")
+    engine.vision.block.set()
+    try:
+        with pytest.raises(ExecutorError) as error:
+            await reading
+        assert error.value.code == "stale_navigation_focus"
+        assert engine.device.actions == []
+    finally:
+        await service.stop()
+
+
+@pytest.mark.parametrize("protocol", ["json", "tvtheseus"])
+async def test_native_metadata_reaches_actor_but_goal_blind_observer_remains_separate(tmp_path, protocol):
+    from controller.executor.accessibility import FocusState, associate_capture
+
+    state = FocusState()
+    state.begin_action("RIGHT", 100)
+    state.ingest(
+        "EventType: TYPE_VIEW_FOCUSED; EventTime: 101; PackageName: com.amazon.firebat; "
+        "ClassName: button; Text: [Native-only canary]; ContentDescription: [Search Suggestions] Native-only canary"
+    )
+    snapshot = state.snapshot()
+    frame = Frame(
+        b"jpeg", "hash", datetime.now(UTC), PACKAGE, [], associate_capture(snapshot, snapshot, snapshot)
+    )
+    calls = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        content = (
+            json.dumps(scene().model_dump())
+            if body["model"] == "observer"
+            else ("<answer>RIGHT</answer>" if protocol == "tvtheseus" else '{"action":"RIGHT"}')
+        )
+        return httpx.Response(
+            200, json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]}
+        )
+
+    client = VisionClient(
+        settings(tmp_path, actor_protocol=protocol).executor, transport=httpx.MockTransport(handle)
+    )
+    try:
+        await client.observe(frame)
+        request = payload()
+        assert await client.decide(frame, request, request["allowed_viewing_options"][0], []) == "RIGHT"
+    finally:
+        await client.close()
+    assert "Native-only canary" not in json.dumps(calls[0])
+    text = calls[1]["messages"][-1]["content"][1]["text"]
+    metadata = json.loads(text)["native_focus"]
+    assert metadata["source"] == "prime-accessibility"
+    assert metadata["descriptionContext"] == "Search Suggestions"
+    assert metadata["currentFocusEstablished"] is True
+    assert metadata["captureAssociation"]["status"] == "unchanged-during-capture"
+
+
+async def test_read_only_diagnostic_closes_native_reader_when_capture_fails(tmp_path, monkeypatch):
+    import controller.executor.check as diagnostic
+
+    class FailedDevice(Device):
+        closed = False
+
+        async def capture(self):
+            raise ExecutorError("protected_or_blank_frame", "fixture capture failed")
+
+        async def close(self):
+            self.closed = True
+
+    device = FailedDevice()
+    monkeypatch.setattr(diagnostic, "AdbDevice", lambda _: device)
+    with pytest.raises(ExecutorError):
+        await diagnostic.check(settings(tmp_path), observe=True)
+    assert device.closed and device.actions == []
+
+
+async def test_pre_input_io_cannot_extend_frame_lifetime(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import controller.executor.runtime as runtime
+
+    service = Controller(settings(tmp_path, frame_max_age=0.1))
+    engine = service.executor
+    now = [0.01]
+    monkeypatch.setattr(runtime, "time", SimpleNamespace(monotonic=lambda: now[0], time=time.time))
+
+    class SlowBoundary(Device):
+        async def prepare_input(self, action, *, frame=None):
+            now[0] = 0.2  # Device-clock I/O took the frame past its fixed lifetime.
+
+    engine.device, engine.vision = SlowBoundary(), Vision()
+    report, _ = engine.store.submit(payload())
+    frame = replace(await engine.device.capture(), captured_monotonic=0)
+    try:
+        with pytest.raises(ExecutorError) as error:
+            await engine.input(report["token"], "SELECT", lambda: engine.device.key("SELECT"), frame=frame)
+        assert error.value.code == "stale_navigation_frame"
+        assert engine.device.actions == []
+        with engine.db.transaction() as db:
+            assert db.execute("SELECT count(*) FROM executor_actions").fetchone()[0] == 0
+    finally:
+        await service.stop()
+
+
+async def test_focus_change_in_second_playback_sample_recaptures_without_reactivating(tmp_path, monkeypatch):
+    service = Controller(settings(tmp_path))
+    engine = service.executor
+    engine.device, engine.vision = Device(), Vision()
+    report, _ = engine.store.submit(payload())
+    with engine.db.transaction() as db:
+        row = dict(engine.store.get_row(db, report["token"]))
+    request, timezone = engine.context(row)
+    original = engine.read_scene
+    calls = 0
+
+    async def reading(token, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 4:  # Initial scene, Select confirmation, player, second player sample.
+            raise ExecutorError("stale_navigation_focus", "fixture focus changed during observer")
+        return await original(token, **kwargs)
+
+    monkeypatch.setattr(engine, "read_scene", reading)
+    try:
+        assert await engine.navigate_query(
+            report["token"], request, request["allowed_viewing_options"][0], "Jets Lions", timezone
+        )
+        assert calls == 6 and engine.device.actions == ["SELECT"]
+        assert engine.store.report(report["token"])["operation"]["state"] == "playing_verified"
+    finally:
+        await service.stop()
+
+
+@pytest.mark.parametrize("newer_owner", [False, True])
+async def test_cancel_before_first_input_closes_reader_but_old_cancel_preserves_new_owner(
+    tmp_path, newer_owner
+):
+    service = Controller(settings(tmp_path))
+    engine = service.executor
+
+    class ReaderDevice(Device):
+        closed = False
+        close_under_gate = False
+
+        async def close(self):
+            self.closed = True
+            self.close_under_gate = engine.input_lock.locked()
+
+    engine.device, engine.vision = ReaderDevice(), Vision()
+    first, _ = engine.store.submit(payload())
+    engine.store.request_cancel(CancelRequest(device_id="living-room", token=first["token"]))
+    if newer_owner:
+        newer, _ = engine.store.submit(payload(3))
+        engine.store.journal(newer["token"], "RIGHT", "newer-frame")
+    try:
+        await engine.cancel_one(first["token"])
+        assert engine.device.closed is (not newer_owner)
+        if not newer_owner:
+            assert engine.device.close_under_gate
+        assert engine.device.actions == []
+        assert engine.store.report(first["token"])["cancellation"]["state"] == "acknowledged"
+    finally:
+        await service.stop()

@@ -1,6 +1,8 @@
 # Playback API implementation guide
 
-Implemented in **dillflix-live-controller 0.9.0**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
+Implemented in **dillflix-live-controller 0.9**, with native accessibility collection added in **0.9.1**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
+
+**Implementation status:** the missing native collector has been ported with its timing, channel, window and screenshot-association safeguards. Native metadata reaches the actor and stale-input guard separately from visual focus readings. The [accessibility audit and implementation plan](accessibility-critical-path.md) documents the evidence and remaining unvalidated activation/playback stages. The three-operation contract remains unchanged.
 
 The public contract has exactly three operations. Separate request recovery, current-device observation, content-ID lifecycle, input-authority/renewal, and Stop APIs remain unnecessary for this release.
 
@@ -66,6 +68,8 @@ Polling every 2–5 seconds is sufficient for most callers. The embedded control
 ## Verification and completion
 
 The actor proposes one D-pad action at a time. It cannot supply arbitrary commands, coordinates, URLs, or global Home/settings actions. A separate observer receives only the screenshot and observation schema: no target, expected answer, actor reasoning, or prior success claims. Python checks its transcribed facts against the request.
+
+The actor also receives capture-associated app-provided focus metadata, with separate input/accessibility channels and explicit unknown/historical states. Native changes during capture or inference invalidate pending navigation evidence. Revision checks happen under the physical input gate before dispatch; rejected actions are recaptured, not replayed. Native row/suggestion labels cannot substitute for event identity or activation/playback proof. The screenshot-only observer is kept separate to avoid feeding the expected native answer back into its visual reading.
 
 Before SELECT activates content, two captures must agree on the focused control. Both competitors must match structured team aliases. A visible league/date must agree. Explicit route/channel and language constraints must match. The focused content must be identified as live. Replay, upcoming, ended, start-over, purchase, sign-in, unclear focus and unrelated content are rejected. Ordinary navigation controls can be selected; Play/Watch/Resume cannot masquerade as menu navigation.
 

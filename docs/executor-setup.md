@@ -2,6 +2,8 @@
 
 The executor is included in the controller image; there is no second service or repository. Version 0.9 implements autonomous Prime Video navigation, token APIs, completion observation, cancellation and shared manual ownership. Real playback is opt-in. The default simulator still tests watch-plan policy without controlling a TV.
 
+**Version 0.9.1** includes the native accessibility collector and its freshness/association safeguards. `scene.focus` remains vision-model output; separately acquired `native_focus` reaches the actor, diagnostics and stale-input checks. A successful API/test run does not establish a validated search-to-play path. See the [audit and implementation status](accessibility-critical-path.md).
+
 ## Configure and start
 
 Use one controller instance, one API worker and one persistent database per physical TV. Retain the data volume and ADB identity. Enable Fire TV debugging and authorize the controller's key using [screen setup](screen-mirroring.md). Prime Video must already be signed in with an appropriate profile/subscription; automation does not sign in, purchase, subscribe or change profiles.
@@ -65,6 +67,10 @@ docker compose exec controller python -m controller.executor.check --observe
 
 This checks ADB, foreground identity, image decoding, media-session parsing and observer output. It reports latency and transcribed evidence. It never launches, searches, selects, pauses, stops or updates controller state. Pause automation or hold manual control for a stable screen.
 
+It also starts and cleans up a read-only `uiautomator events` reader. `native_focus` reports both channels, usability/reason, app version, stream status, window evidence and screenshot association. `native_focus_validity_after_observer` shows whether that evidence changed while the model was running. An already stationary screen may emit no new focus event: `no_event` is an expected unknown, not permission to reuse an old label. The diagnostic never presses a key to manufacture a focus event. A saved PNG carries no native-focus evidence.
+
+Native collection is automatic in real mode and uses the same configured ADB destination. It adds no Node runtime dependency or separate service. The reader uses a 64 KiB line bound, a 120 ms coalescing interval, a maximum 900 ms wait after acknowledged D-pad input, and a 60-second native-evidence age limit. These are additional bounded waits within the existing navigation deadline. Device cutoffs use the exploration's `/proc/uptime` proxy rounded upward plus 10 ms; failure leaves native focus unknown. The Prime cleanup-burst exception applies only to `PVFTV-321.0096-L (321009610)`. Unknown versions retain conservative window invalidation and visual fallback. Confirm clock behavior after suspend and label coverage on the actual deployment.
+
 A saved PNG tests perception without contacting the TV. Adding a complete saved Play request tests matching and actor output without executing its proposed action:
 
 ```bash
@@ -115,6 +121,7 @@ The exploration archive informed package-scoped launch/search, paired-opponent q
 | `needs_user_action` | Resolve sign-in/profile/subscription dialog manually, then resume. |
 | `unsupported_routes` | No permitted Prime option. Other app adapters are not implemented. |
 | `target_unresolved`, `action_budget`, `navigation_timeout` | Diagnose visible focus/identity/live status, model decisions and account availability. |
+| `stale_navigation_focus` | Native focus changed during capture/inference or capture association is invalid; navigation recaptures before another input. Inspect native validity and window reasons. |
 | `stop_unconfirmed`, `cancel_unconfirmed` | Cancellation retained; restore ADB and retry. Manual input remains gated. |
 
 See [operations](operations.md) for backup/restore and [API implementation](executor-api-handoff.md) for semantics/evidence policy. TVTheseus prompt attribution and license are in `third_party/tvtheseus-NOTICE.txt` and `third_party/tvtheseus-LICENSE.txt`.

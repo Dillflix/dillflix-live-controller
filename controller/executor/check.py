@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..config import Settings
+from .accessibility import observation_validity
 from .adb import PACKAGE, AdbDevice, Frame, prepare_image
 from .models import ExecutorError, PlaybackRequest
 from .verification import activation_allowed, completed, playback_sample, prime_option
@@ -32,28 +33,32 @@ async def check(settings, *, observe=False, image=None, request=None):
     if config.mode != "prime-video":
         raise ValueError("Set PLAYBACK_ADAPTER=prime-video for vision diagnostics")
     started = time.monotonic()
-    if image:
-        # A file has no live acquisition time or media-session authority. It is
-        # useful for perception/actor testing only, never a playback attestation.
-        raw = Path(image).read_bytes()
-        if len(raw) > 12 * 1024 * 1024:
-            raise ValueError("Diagnostic image must be a PNG under 12 MiB")
-        jpeg = await asyncio.to_thread(prepare_image, raw)
-        frame = Frame(jpeg, hashlib.sha256(jpeg).hexdigest(), datetime.now(UTC), PACKAGE, [])
-        result["evidence_origin"] = "file_replay_not_live"
-    else:
-        device = AdbDevice(settings)
-        await device.ready()
-        frame = await device.capture()
-        result["evidence_origin"] = "live_capture"
-    vision = VisionClient(config)
+    device = vision = None
     try:
+        if image:
+            # A file has no live acquisition time, native focus, or media authority.
+            raw = Path(image).read_bytes()
+            if len(raw) > 12 * 1024 * 1024:
+                raise ValueError("Diagnostic image must be a PNG under 12 MiB")
+            jpeg = await asyncio.to_thread(prepare_image, raw)
+            frame = Frame(jpeg, hashlib.sha256(jpeg).hexdigest(), datetime.now(UTC), PACKAGE, [])
+            result["evidence_origin"] = "file_replay_not_live"
+        else:
+            device = AdbDevice(settings)
+            await device.ready()
+            frame = await device.capture()
+            result["evidence_origin"] = "live_capture"
+        vision = VisionClient(config)
         scene = await vision.observe(frame)
         result.update(
             scene=scene.model_dump(),
             image_sha256=frame.sha256,
             foreground=frame.foreground,
             media_sessions=frame.sessions,
+            native_focus=frame.native_focus,
+            native_focus_validity_after_observer=(
+                observation_validity(frame.native_focus, device.accessibility.snapshot()) if device else None
+            ),
             observer_seconds=round(time.monotonic() - started, 3),
         )
         if request:
@@ -74,7 +79,12 @@ async def check(settings, *, observe=False, image=None, request=None):
         result["total_seconds"] = round(time.monotonic() - started, 3)
         return result
     finally:
-        await vision.close()
+        try:
+            if vision:
+                await vision.close()
+        finally:
+            if device:
+                await device.close()
 
 
 def main():

@@ -4,6 +4,16 @@
 
 - Wake the device when the Take control remote connects or reconnects, using a wake-only key before controls become ready. Wake respects session ownership, expiry and the playback cancellation/input gate; screen viewing alone remains passive.
 
+## 0.9.1 — Native accessibility collector
+
+- Port the supplied exploration's native focus collector to asynchronous Python: separate input/accessibility channels, device-time action cutoffs, monotonic freshness, delayed/duplicate/unlabeled/cleared event handling, and version-scoped Prime virtual-node window bursts.
+- Keep a bounded UTF-8 event reader with reconnect invalidation, per-connection app-version discovery and cancellation-safe owned-process cleanup. Unknown versions do not receive the known-version window exception.
+- Bind native evidence around screenshot capture and finalization. Recheck revisions after observation and under the shared input gate; recapture after a change instead of sending the stale action. Manual input, including the remote's initial wake, invalidates native evidence. Failed/stale Select does not establish activation history.
+- Supply source-qualified native metadata to JSON and TVTheseus actors while keeping the goal-blind visual observer separate. Expose native channels, validity, window provenance and post-inference validity in read-only diagnostics. No API or database migration is required.
+- Correct the earlier completeness claim and inventory available search/focus evidence. Add a reproducible reference corpus generated from the unchanged JavaScript collector, plus subprocess, capture, inference and input-race checks.
+
+Validation: **290 backend tests pass**, including all **316 original-collector snapshots across 54 scenarios**. Python lint passes. These validate the port and controlled integration; no new target-TV capture, autonomous search-to-play trial, Docker build or inference-accuracy evaluation has been performed. The existing visual activation and playback criteria still need evaluation against the full real path.
+
 ## 0.9.0 — Integrated Prime Video executor
 
 - Implement Play, status by token, and Cancel in the controller, with an opt-in `prime-video` adapter and service bearer authentication. Preserve the complete Teamarr snapshot and every permitted viewing option. Separate recovery, lifecycle, authority and Stop endpoints remain deferred.
