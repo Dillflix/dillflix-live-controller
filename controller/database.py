@@ -3,6 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+from .leagues import DEFAULT_LEAGUES
 from .storage_lock import database_guard
 
 
@@ -11,8 +12,8 @@ def encode(value):
 
 
 class Database:
-    # Older releases must not silently ignore manual completion decisions.
-    SCHEMA_VERSION = 7
+    # Older releases must not silently ignore completion or discovery decisions.
+    SCHEMA_VERSION = 8
 
     def __init__(self, path):
         self.path = path
@@ -174,12 +175,14 @@ class Database:
         row = db.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
         if row is None:
             raise KeyError(device_id)
-        return {
+        device = {
             "manual_completions": {},
             "id": row["id"],
             "revision": row["revision"],
             **json.loads(row["payload"]),
         }
+        device["preferences"].setdefault("discovery_leagues", list(DEFAULT_LEAGUES))
+        return device
 
     @staticmethod
     def save_device(db, device):

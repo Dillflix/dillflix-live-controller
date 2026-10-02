@@ -2,6 +2,15 @@
 
 All examples use the initial device ID `living-room`. Event and observation timestamps include a UTC offset; internal job `ready_at`/`deadline_at` values are Unix seconds. Content IDs and entry IDs are opaque; clients must not parse or substitute them.
 
+`preferences.discovery_leagues` is a persisted list of up to 20 unique Teamarr
+league codes, edited through the existing revisioned rules/settings command.
+The default is `nfl`, `nhl`, `mlb`, `nba`, `cfl`, `uefa.champions`, `f1`.
+An empty list disables ordinary game/session discovery; other configured coverage
+sources remain. The feed still fetches leagues needed by saved commitments or
+current playback. This setting supports configuration transfer and undo. Legacy
+settings requests that omit the field preserve the current selection; legacy
+configuration imports default it to all seven leagues in their review.
+
 ## Watch-plan commands
 
 Send the current device revision from `/api/v1/overview` or `/state`:

@@ -212,7 +212,7 @@ def test_legacy_rules_receipt_still_recognizes_a_retry_after_upgrade(rig):
             for r in d["rules"]
         ],
         "team_ranks": d["team_ranks"],
-        "preferences": d["preferences"],
+        "preferences": {k: v for k, v in d["preferences"].items() if k != "discovery_leagues"},
     }
     receipt = {"command_id": original["command_id"], "revision": d["revision"] + 1, "accepted": True}
     with s.db.transaction() as db:

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0 — Configurable leagues and expanded Prime Video coverage
+
+- Add Settings controls for NFL, NHL, MLB, NBA, CFL, UEFA Champions League and Formula 1 discovery. Selection persists across restarts and supports configuration export/import and undo.
+- Send selected leagues explicitly to Teamarr; keep saved commitments and current playback discoverable even when their league is disabled. Filter discovery per device, preserve cursor-only pagination, and reject responses for a selection changed in flight.
+- Show readable Champions League and Formula 1 names. Consume Teamarr's individual racing sessions without inventing home/away teams or inferring live/completed status from the clock.
+- Upgrade existing databases to schema 8 with all seven leagues initially selected. Existing plans, settings, manual completions and playback records are retained. Viewing routes stay in Teamarr; this deployment accesses DAZN, Sportsnet and TSN exclusively through Prime Video.
+
 ## 0.11.1 — Manual event completion
 
 - Add **Mark event finished** to current playback and event details, with durable undo, command idempotency, and revision checks.

@@ -69,6 +69,7 @@ export interface Rule {
   kind: "event" | "session" | "broadcast" | null;
 }
 export interface Preferences {
+  discovery_leagues: string[];
   timezone: string;
   minimum_viewing_seconds: number;
   switch_cooldown_seconds: number;
@@ -184,6 +185,7 @@ export interface Overview {
     count?: number;
   };
   meta: {
+    league_choices: Record<string, string>;
     mode: "demo" | "teamarr";
     playback_adapter: string;
     status_simulated: boolean;

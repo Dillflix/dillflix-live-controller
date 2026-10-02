@@ -3,6 +3,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .leagues import DEFAULT_LEAGUES
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -38,6 +40,17 @@ class Preferences(StrictModel):
     minimum_viewing_seconds: int = Field(default=300, ge=0, le=3600)
     switch_cooldown_seconds: int = Field(default=30, ge=0, le=600)
     same_tier_switching: bool = False
+    discovery_leagues: list[str] = Field(default_factory=lambda: list(DEFAULT_LEAGUES), max_length=20)
+
+    @field_validator("discovery_leagues")
+    @classmethod
+    def valid_leagues(cls, value):
+        if len(value) != len(set(value)) or any(
+            not league or len(league) > 100 or not all(c.isalnum() or c in "._-" for c in league)
+            for league in value
+        ):
+            raise ValueError("Use unique Teamarr league codes")
+        return value
 
     @field_validator("timezone")
     @classmethod

@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+from .leagues import DEFAULT_LEAGUES
+
 BASE = datetime(2026, 10, 4, 7, tzinfo=UTC)  # Midnight Pacific on the sample day.
 
 
@@ -218,6 +220,7 @@ def default_device(mode):
             "minimum_viewing_seconds": 300,
             "switch_cooldown_seconds": 30,
             "same_tier_switching": False,
+            "discovery_leagues": list(DEFAULT_LEAGUES),
         },
         "force_switch": False,
         "failures": {},

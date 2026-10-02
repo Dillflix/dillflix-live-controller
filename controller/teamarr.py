@@ -53,7 +53,7 @@ class TeamarrClient:
             teams[team["key"]] = team
         return list(teams.values())
 
-    async def fetch_snapshot(self):
+    async def fetch_snapshot(self, leagues=None):
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         async with httpx.AsyncClient(
             timeout=20, headers=headers, transport=self.transport, follow_redirects=False
@@ -65,6 +65,13 @@ class TeamarrClient:
                     "end": (now + timedelta(days=3)).isoformat(),
                     "limit": 500,
                 }
+                if leagues is not None:
+                    if leagues:
+                        params["league"] = list(leagues)
+                    else:
+                        # Omitting league would restore Teamarr's defaults. Keep
+                        # other configured coverage sources but skip game discovery.
+                        params["source"] = ["nfl_redzone", "golf", "special_events"]
                 entries, cursors = {}, set()
                 schema_version = None
                 for page_number in range(100):

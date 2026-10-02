@@ -74,8 +74,12 @@ type Modal =
   | { type: "simulate"; result: SimulationResult }
   | { type: "playback" }
   | null;
-const leagueName = (code: string) =>
-  code === "pga" ? "Golf" : code.toUpperCase();
+const leagueLabels: Record<string, string> = {
+  pga: "Golf",
+  "uefa.champions": "UEFA Champions League",
+  f1: "Formula 1",
+};
+const leagueName = (code: string) => leagueLabels[code] || code.toUpperCase();
 const initialRule = (): Rule => ({
   id: commandId(),
   name: "",
@@ -462,10 +466,8 @@ function App() {
       ...allTeams.map((t) => t.league),
       ...Object.keys(d.team_ranks),
       ...d.rules.map((r) => r.league).filter((l) => l !== "all"),
-      "nfl",
-      "nhl",
-      "mlb",
-      "nba",
+      ...Object.keys(data.meta.league_choices),
+      ...d.preferences.discovery_leagues,
       "pga",
     ]),
   ].sort();
@@ -826,7 +828,11 @@ function App() {
                 <Tv size={17} />
                 {d.name}
               </div>
-              <span>{data.meta.playback_adapter === "simulator" ? "Playback simulator" : "Prime Video playback"}</span>
+              <span>
+                {data.meta.playback_adapter === "simulator"
+                  ? "Playback simulator"
+                  : "Prime Video playback"}
+              </span>
             </div>
           </aside>
           <main className="df-main">
@@ -1315,6 +1321,45 @@ function App() {
                   "Behavior for your living room.",
                 )}
                 <section className="df-panel">
+                  <h2>Leagues in your schedule</h2>
+                  <p className="df-subtitle">
+                    Choose the leagues to discover. Saved watch-plan entries and
+                    current playback stay protected when a league is turned off.
+                    New leagues appear after the next schedule refresh. RedZone,
+                    golf coverage, and special broadcasts are managed
+                    separately.
+                  </p>
+                  {Object.entries({
+                    ...data.meta.league_choices,
+                    ...Object.fromEntries(
+                      d.preferences.discovery_leagues.map((code) => [
+                        code,
+                        leagueName(code),
+                      ]),
+                    ),
+                  }).map(([code, name]) => (
+                    <div className="df-setting" key={code}>
+                      <strong>{name}</strong>
+                      <input
+                        type="checkbox"
+                        className="df-switch"
+                        aria-label={`Discover ${name}`}
+                        checked={d.preferences.discovery_leagues.includes(code)}
+                        disabled={busy}
+                        onChange={(e) =>
+                          preference({
+                            discovery_leagues: e.target.checked
+                              ? [...d.preferences.discovery_leagues, code]
+                              : d.preferences.discovery_leagues.filter(
+                                  (league) => league !== code,
+                                ),
+                          })
+                        }
+                      />
+                    </div>
+                  ))}
+                </section>
+                <section className="df-panel df-spacer">
                   <h2>Automatic switching</h2>
                   <div className="df-setting">
                     <div className="df-row-copy">
@@ -1839,7 +1884,9 @@ function App() {
                 <dd>
                   {playbackOffline
                     ? "Unavailable; reconnecting automatically"
-                    : data.meta.playback_adapter === "simulator" ? "Connected · simulator" : "Connected · Prime Video"}
+                    : data.meta.playback_adapter === "simulator"
+                      ? "Connected · simulator"
+                      : "Connected · Prime Video"}
                 </dd>
                 {d.executor_health?.last_contact_at && (
                   <>
@@ -1858,7 +1905,10 @@ function App() {
                   </>
                 )}
                 <dt>Verified at</dt>
-                <dd>{time(d.observed?.observed_at || null)}{d.observed?.simulated ? " · simulated" : ""}</dd>
+                <dd>
+                  {time(d.observed?.observed_at || null)}
+                  {d.observed?.simulated ? " · simulated" : ""}
+                </dd>
                 <dt>Reason</dt>
                 <dd>{d.reason}</dd>
                 {data.playback_job && (
@@ -2035,6 +2085,11 @@ function App() {
                     </p>
                   ))}
                 <p>
+                  Leagues to discover:{" "}
+                  {modal.preview.configuration.preferences.discovery_leagues
+                    .map(leagueName)
+                    .join(", ") || "None"}
+                  <br />
                   Minimum viewing:{" "}
                   {
                     modal.preview.configuration.preferences

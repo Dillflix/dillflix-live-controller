@@ -147,3 +147,16 @@ Version 0.10 retains the asynchronous native-focus reader's input/accessibility 
 The controller opens a visually confirmed result with one short Select, then navigates its menu using observed visible order and fresh input labels. Neither the Watch Live index nor the menu size is fixed. Unexpected labels or boundaries require renewed visual context; Select still validates the requested event/live variant. Opening the result does not count as live activation. The LLM handles unresolved layouts and card identity; labels alone never name the event inside a row.
 
 Structured v2 snapshots/callbacks bind the visually matched player to boot/service UUID/connection epoch/session-instance/runtime-ID identity after Watch Live. Two dumps bracket bounded journal export, and strict collection, writer and interval validation gates continuity. Token hashes are diagnostic only in v2; v1 has a separate legacy reader. Counter changes, gaps, restarts and contradictory callbacks withdraw the prior association. Recovery requires fresh visual live evidence while retaining historical losses. Stable monitoring avoids per-poll image/model work, with bounded-age visual rechecks. Original acquisition timestamps remain separate from visual timestamps and API read times. Historical removals never become current sessions or completion. See [runtime grounding](runtime-grounding.md). These are optional report fields, not additional APIs or database tables. Explicit setup installs the supplied same-signer v2 APK; startup and Play never grant permissions or install software.
+
+## League discovery
+
+Schema 8 fences releases that ignore `preferences.discovery_leagues`. Legacy
+records default to NFL, NHL, MLB, NBA, CFL, UEFA Champions League and F1. The
+setting uses the existing revisioned configuration commands, export/import and
+undo. Each device filters ordinary `games` discovery immediately; other source
+families remain configured in Teamarr. Saved/current targets remain available.
+Feed refreshes request the union of selections and leagues needed by pinned
+commitments, batching within Teamarr's 20-league limit. Every page is validated
+before atomic replacement. A selection changed during fetch discards that result.
+Cursor requests carry no filters. Zero selected leagues explicitly omits the
+`games` source rather than falling back to Teamarr's defaults.

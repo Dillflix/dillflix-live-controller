@@ -235,7 +235,7 @@ async def test_schema_six_hotfix_upgrade_preserves_completion_and_adds_executor_
         assert event(upgraded)["lifecycle"]["source"] == "manual_completion"
         with upgraded.db.transaction() as db:
             assert upgraded.db.device(db)["manual_completions"] == device["manual_completions"]
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 7
+            assert db.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
             for table in ("executor_jobs", "executor_devices", "executor_actions"):
                 assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     finally:

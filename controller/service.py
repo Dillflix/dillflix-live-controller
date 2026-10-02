@@ -13,6 +13,7 @@ from .content_status import ContentStatusAdapter, ContentStatusCoordinator, Simu
 from .coordinator import PlaybackCoordinator
 from .database import Database, encode
 from .fixtures import default_device, fixtures, make_team
+from .leagues import LEAGUE_NAMES
 from .maintenance import policy, prune
 from .manual_control import ManualControl
 from .planner import content_view, parse_time, preview_plan, priority, team_key
@@ -162,15 +163,20 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         checks = {row["content_id"]: row for row in db.execute("SELECT * FROM content_status")}
         pins = self.pinned_content_ids(db, device_id=device_id)
         completions = self.db.device(db, device_id)["manual_completions"]
+        leagues = set(self.db.device(db, device_id)["preferences"]["discovery_leagues"])
         return [
             content_view(
-                json.loads(r["snapshot"]),
-                r["active"],
+                snapshot,
+                r["active"] and (
+                    snapshot.get("source") != "games"
+                    or snapshot.get("competition") in leagues or r["id"] in pins
+                ),
                 self.content_lifecycle(
                     r, checks.get(r["id"]), now, real, r["id"] in pins, completions.get(r["id"])
                 ),
             )
             for r in db.execute("SELECT * FROM contents ORDER BY id")
+            for snapshot in [json.loads(r["snapshot"])]
         ]
 
     def overview(self, device_id="living-room"):
@@ -220,6 +226,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 "activity": activity,
                 "health": self.db.meta(db, "feed_health", {"state": "starting"}),
                 "meta": {
+                    "league_choices": LEAGUE_NAMES,
                     "mode": self.settings.mode,
                     "playback_adapter": self.settings.executor.mode,
                     "status_simulated": self.executor is None,
@@ -343,6 +350,10 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             }
 
     def import_configuration(self, device_id, request):
+        payload = request.model_dump(mode="json")
+        if "discovery_leagues" not in request.document.configuration.preferences.model_fields_set:
+            payload["document"]["configuration"]["preferences"].pop("discovery_leagues")
+
         def apply(db, d):
             d.update(request.document.configuration.model_dump())
             self.db.log(
@@ -358,7 +369,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             device_id,
             request.command_id,
             request.expected_revision,
-            request.model_dump(mode="json"),
+            payload,
             apply,
             history=(self.CONFIG_FIELDS, "Import configuration"),
         )
@@ -440,13 +451,25 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             "expected_revision": update.expected_revision,
             **update.model_dump(exclude={"command_id", "expected_revision"}),
         }
+        # Existing clients/receipts predate discovery settings. Hash their
+        # original payload and preserve today's selection when the field is absent.
+        if "discovery_leagues" not in update.preferences.model_fields_set:
+            data["preferences"].pop("discovery_leagues")
 
         def apply(db, device):
             if len({r["id"] for r in data["rules"]}) != len(data["rules"]):
                 raise HTTPException(422, "Rule IDs must be unique")
             if any(len(ranks) != len(set(ranks)) for ranks in data["team_ranks"].values()):
                 raise HTTPException(422, "Team rankings must not contain duplicate identities")
-            device.update({key: data[key] for key in ("rules", "team_ranks", "preferences")})
+            device.update(
+                rules=data["rules"], team_ranks=data["team_ranks"],
+                preferences={
+                    **data["preferences"],
+                    "discovery_leagues": data["preferences"].get(
+                        "discovery_leagues", device["preferences"]["discovery_leagues"]
+                    ),
+                },
+            )
             self.db.log(
                 db,
                 self.now(db).isoformat(),
@@ -610,13 +633,35 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             self.db.log(db, self.now(db).isoformat(), "Simulation updated", request.action, "simulation")
         return {"accepted": True}
 
+    def requested_leagues(self, db):
+        leagues = set()
+        for row in db.execute("SELECT id FROM devices"):
+            leagues.update(self.db.device(db, row["id"])["preferences"]["discovery_leagues"])
+        # A discovery setting must not orphan saved commitments or current playback.
+        pins = self.pinned_content_ids(db, for_lookup=True)
+        for row in db.execute("SELECT id,snapshot FROM contents"):
+            if row["id"] in pins:
+                snapshot = json.loads(row["snapshot"])
+                if snapshot.get("source") == "games":
+                    leagues.add(snapshot["competition"])
+        return sorted(leagues)
+
     async def refresh_catalog(self):
         if self.settings.mode != "teamarr":
             return
         try:
-            entries, schema = await self.client.fetch_snapshot()
             with self.db.transaction() as db:
-                self.replace_catalog(db, entries, "teamarr")
+                leagues = self.requested_leagues(db)
+            # Batch extra leagues retained by other devices/commitments within
+            # Teamarr's query limit, then publish the complete catalog atomically.
+            entries, schema = {}, None
+            for group in [leagues[i:i + 20] for i in range(0, len(leagues), 20)] or [[]]:
+                page, schema = await self.client.fetch_snapshot(leagues=group)
+                entries.update((item["id"], item) for item in page)
+            with self.db.transaction() as db:
+                if leagues != self.requested_leagues(db):
+                    return  # Settings changed in flight; wait for a fresh snapshot.
+                self.replace_catalog(db, list(entries.values()), "teamarr")
                 self.db.set_meta(db, "feed_schema_version", schema)
         except Exception as exc:
             log.warning("Teamarr refresh failed: %s", type(exc).__name__)
@@ -635,8 +680,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         if self.settings.mode != "teamarr":
             return
         with self.db.transaction() as db:
-            primary = {"nfl", "nhl", "mlb", "nba"}
-            leagues = sorted(primary) + sorted({t["league"] for t in self.db.teams(db)} - primary)[:16]
+            primary = set(self.requested_leagues(db)) - {"f1"}
+            leagues = sorted(primary) + sorted({t["league"] for t in self.db.teams(db)} - primary - {"f1"})[:16]
             health = self.db.meta(db, "team_directory_health", {"leagues": {}})
         for league in leagues:
             try:

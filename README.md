@@ -69,7 +69,7 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Keep your existing `.env` and `controller-data` volume. Version 0.11.1 upgrades to schema 7, retaining plans, settings, catalog, receipts, history, manual sessions and manual event completions alongside executor records and durable input fences. Both the 0.8.1 hotfix and 0.9–0.11 databases are supported. Real navigation stays off until configured using [executor setup](docs/executor-setup.md). The Compose bind default now permits access from another PC; use `CONTROLLER_BIND_ADDRESS=127.0.0.1` if access should go exclusively through host-local nginx. Refresh the browser after updating. Newer database schemas are rejected by older releases. See [CHANGELOG.md](CHANGELOG.md).
+Keep your existing `.env` and `controller-data` volume. Version 0.12.0 upgrades to schema 8, retaining plans, settings, catalog, receipts, history, manual sessions and manual event completions alongside executor records and durable input fences. Both the 0.8.1 hotfix and 0.9–0.11 databases are supported. Real navigation stays off until configured using [executor setup](docs/executor-setup.md). The Compose bind default now permits access from another PC; use `CONTROLLER_BIND_ADDRESS=127.0.0.1` if access should go exclusively through host-local nginx. Refresh the browser after updating. Newer database schemas are rejected by older releases. See [CHANGELOG.md](CHANGELOG.md).
 
 Configuration export under **Settings → Configuration backup** saves priorities, preferred teams, and switching/display preferences. Import shows a review before replacing those fields; it preserves the watch plan and automation mode. It is a configuration transfer, not a complete database backup, and contains no Teamarr credentials. Unresolved team IDs are retained with a warning so preferences survive temporary directory gaps.
 
@@ -119,9 +119,25 @@ docker compose up -d --build
 
 `TEAMARR_URL` is the server root, without `/api/v1`. It must be reachable **from inside the controller container**. A hostname such as `teamarr` works only on a Docker network shared with that service; `localhost` inside a container points to that container. `TEAMARR_TOKEN` optionally supplies a bearer token if your Teamarr proxy requires one.
 
-The adapter reads `GET /api/v1/events/feed`, covering the current time through three days ahead, with Teamarr's normal lookback semantics. It uses schema version 1. Its first request specifies the window and page size; subsequent requests use the opaque cursor alone. One expired snapshot is retried from the beginning.
+The adapter reads `GET /api/v1/events/feed`, covering the current time through three days ahead, with Teamarr's normal lookback semantics. It uses schema version 1. Its first request specifies the window, selected leagues and page size; subsequent requests use the opaque cursor alone. One expired snapshot is retried from the beginning.
 
-The team directory reads `GET /api/v1/cache/leagues/{league}/teams` on startup and hourly, independently of feed ingestion. It requests NFL, NHL, MLB, and NBA, plus up to 16 additional leagues already known from team data. It also remembers teams encountered in events. These are Teamarr's cached rosters; an unpopulated cache can return no teams. Failed or empty refreshes never delete known teams or preferences. Settings shows directory health separately from schedule health. Provider team IDs are used for matching; Teamarr's local cache row IDs are not.
+Choose **Settings → Leagues in your schedule** to enable or disable NFL, NHL,
+MLB, NBA, CFL, UEFA Champions League and Formula 1. All seven are enabled when
+upgrading from a release without league selection. Changes persist, are included
+in configuration export/import, and support **Undo last edit**. A new selection
+is fetched on the next scheduled refresh. Disabled leagues stop supplying new
+automatic candidates; saved watch-plan entries and current playback remain
+protected and their leagues continue to be fetched while needed. RedZone, golf
+coverage and special broadcasts retain their separate Teamarr configuration.
+
+Use the matching Teamarr update for NBA/CFL/Champions League/F1 routes. This
+installation accesses DAZN, Sportsnet and TSN exclusively through **Prime Video**,
+so every new league's configured route is `prime_video`. Formula 1 is delivered
+as separate provider-confirmed practice, qualifying, sprint and race sessions.
+Only sessions within the three-day discovery window appear; an empty league on
+a quiet week is expected. Their scheduled times do not establish live status.
+
+The team directory reads `GET /api/v1/cache/leagues/{league}/teams` on startup and hourly, independently of feed ingestion. It requests the selected leagues and leagues retained for commitments, excluding Formula 1, plus up to 16 additional leagues already known from team data. It also remembers teams encountered in events. These are Teamarr's cached rosters; an unpopulated cache can return no teams. Failed or empty refreshes never delete known teams or preferences. Settings shows directory health separately from schedule health. Provider team IDs are used for matching; Teamarr's local cache row IDs are not.
 
 Teamarr mode defaults to simulated playback. To control the TV, follow [Prime Video executor setup](docs/executor-setup.md). Unknown broadcast status remains unknown: a RedZone or golf schedule window alone cannot prove live eligibility. Failed feed refreshes retain the previous catalog and show degraded health; upstream fetch errors represented by Teamarr as successful empty feeds remain an upstream limitation.
 
