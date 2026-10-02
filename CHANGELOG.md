@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.1 — Manual event completion
+
+- Add **Mark event finished** to current playback and event details, with durable undo, command idempotency, and revision checks.
+- Preserve watch plans, configuration, and automation mode; clear only matching controller playback intent and observations, fence late results, and let active automation choose another live event. The command sends no physical TV stop command.
+- Keep completion decisions separate from Teamarr snapshots and asynchronous status evidence, including across refreshes, restarts, and retention.
+- Schema 7 protects manual completions and upgrades both the 0.8.1 deployment hotfix and the 0.9–0.11 executor schema without losing existing state. Real playback remains opt-in.
+
 ## 0.11.0 — Probe v2 integration and strict runtime continuity
 
 - Bundle the supplied probe v2.0.0 APK/source, schema and host tests. Verify its signature matches the previous supplied APK and the source rebuild matches DEX/compiled manifest; keep the supplied signer-compatible binary packaged.

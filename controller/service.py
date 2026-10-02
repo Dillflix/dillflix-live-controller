@@ -157,15 +157,18 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             },
         )
 
-    def items(self, db):
+    def items(self, db, device_id="living-room"):
         now, real = self.now(db), datetime.now(UTC)
         checks = {row["content_id"]: row for row in db.execute("SELECT * FROM content_status")}
-        pins = self.pinned_content_ids(db)
+        pins = self.pinned_content_ids(db, device_id=device_id)
+        completions = self.db.device(db, device_id)["manual_completions"]
         return [
             content_view(
                 json.loads(r["snapshot"]),
                 r["active"],
-                self.content_lifecycle(r, checks.get(r["id"]), now, real, r["id"] in pins),
+                self.content_lifecycle(
+                    r, checks.get(r["id"]), now, real, r["id"] in pins, completions.get(r["id"])
+                ),
             )
             for r in db.execute("SELECT * FROM contents ORDER BY id")
         ]
@@ -173,7 +176,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
     def overview(self, device_id="living-room"):
         with self.db.transaction() as db:
             device = self.db.device(db, device_id)
-            items = self.items(db)
+            items = self.items(db, device_id)
             plan_ids = {p["content_id"] for p in device["plan"]}
             retained = {device.get("desired"), (device.get("observed") or {}).get("content_id")}
             cards = []
@@ -204,7 +207,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             return {
                 "device": device,
                 "playback_job": latest_job,
-                "status_health": self.status_health(db, items),
+                "status_health": self.status_health(db, items, device_id),
                 "teams": self.db.teams(db),
                 "team_directory_health": self.db.meta(
                     db,
@@ -286,8 +289,11 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             row = self.db.undo_entry(db, device_id)
             before = json.loads(row["before_payload"])
             device.update(before)
-            if "plan" in before:
+            if "plan" in before or "manual_completions" in before:
                 device["force_switch"] = True
+            if "manual_completions" in before:
+                # Undo restores eligibility, never stale playback claims or evidence.
+                db.execute("UPDATE content_status SET next_check=0")
             db.execute("UPDATE edit_history SET undone_by=? WHERE id=?", (command.command_id, row["id"]))
             self.db.log(db, self.now(db).isoformat(), "Edit undone", row["description"], "undo", device_id)
 
@@ -358,7 +364,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         )
 
     def apply_plan(self, db, device, action, *, preview=False):
-        items = {i["content_id"]: i for i in self.items(db)}
+        items = {i["content_id"]: i for i in self.items(db, device["id"])}
         op = action["type"]
         content_id = action.get("content_id")
         if op == "play_now" and device.get("manual_control"):
@@ -423,7 +429,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             return {
                 "revision": device["revision"],
                 "entries": device["plan"],
-                **preview_plan(device, self.items(db), self.now(db)),
+                **preview_plan(device, self.items(db, device_id), self.now(db)),
             }
 
     def rules_command(self, device_id, update):
@@ -457,6 +463,53 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             data,
             apply,
             history=(self.CONFIG_FIELDS, "Edit priorities and settings"),
+        )
+
+    def completion_command(self, device_id, command):
+        def apply(db, device):
+            content_id = command.content_id
+            row = db.execute("SELECT snapshot FROM contents WHERE id=?", (content_id,)).fetchone()
+            if row is None:
+                raise HTTPException(404, "Content is not in the catalog")
+            device["manual_completions"].setdefault(content_id, datetime.now(UTC).isoformat())
+            db.execute(
+                "UPDATE jobs SET state='superseded' WHERE device_id=? AND content_id=? AND state='pending'",
+                (device_id, content_id),
+            )
+            was_desired = device.get("desired") == content_id
+            was_observed = (device.get("observed") or {}).get("content_id") == content_id
+            if was_desired:
+                device["intent_version"] += 1
+                device["desired"] = None
+            if was_observed:
+                device["observed"] = None
+                device["started_at"] = device["last_switch_at"] = None
+            if (device.get("recovery") or {}).get("content_id") == content_id:
+                device["recovery"] = None
+            if device.get("retry_playback") == content_id:
+                device["retry_playback"] = None
+            if (device.get("next_candidate") or {}).get("content_id") == content_id:
+                device["next_candidate"] = None
+            if was_desired or was_observed:
+                device["reason"] = "Event marked finished manually. Watch plan retained."
+                if not device.get("desired"):
+                    device["playback_state"] = "waiting"
+            self.db.log(
+                db,
+                self.now(db).isoformat(),
+                "Event marked finished",
+                json.loads(row["snapshot"])["title"],
+                "completion",
+                device_id,
+            )
+
+        return self.mutate(
+            device_id,
+            command.command_id,
+            command.expected_revision,
+            command.model_dump(),
+            apply,
+            history=(("manual_completions",), "Mark event finished"),
         )
 
     def automation_command(self, device_id, update):
@@ -530,6 +583,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 d.update(
                     {
                         "failures": {},
+                        "manual_completions": {},
                         "observed": None,
                         "desired": None,
                         "playback_state": "waiting",

@@ -13,6 +13,7 @@ from .executor.api import install_executor_api
 from .models import (
     AutomationUpdate,
     Command,
+    CompletionCommand,
     ConfigurationImport,
     ManualControlCommand,
     RulesUpdate,
@@ -44,7 +45,7 @@ def create_app(settings=None, *, start_workers=True):
             await screen.stop()
             await service.stop()
 
-    app = FastAPI(title="Dillflix Controller", version="0.11.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.11.1", lifespan=lifespan)
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
@@ -180,10 +181,14 @@ def create_app(settings=None, *, start_workers=True):
     def automation(device_id: str, update: AutomationUpdate):
         return service.automation_command(device_id, update)
 
+    @app.post("/api/v1/devices/{device_id}/completions")
+    def complete_event(device_id: str, command: CompletionCommand):
+        return service.completion_command(device_id, command)
+
     @app.post("/api/v1/devices/{device_id}/simulate")
     def simulate(device_id: str):
         with service.db.transaction() as db:
-            d, items = service.db.device(db, device_id), service.items(db)
+            d, items = service.db.device(db, device_id), service.items(db, device_id)
             d["force_switch"] = True
             decision = choose(d, items, service.now(db), datetime.now(UTC))
             alternatives = [

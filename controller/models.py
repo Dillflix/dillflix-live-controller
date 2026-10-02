@@ -98,6 +98,12 @@ class AutomationUpdate(StrictModel):
     mode: Literal["active", "paused"]
 
 
+class CompletionCommand(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+    content_id: str = Field(min_length=1, max_length=1000)
+
+
 class SimulationCommand(StrictModel):
     action: Literal["advance", "scenario", "disconnect", "reconnect"]
     minutes: int = Field(default=15, ge=1, le=1440)

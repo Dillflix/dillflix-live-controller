@@ -69,7 +69,7 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Keep your existing `.env` and `controller-data` volume. Version 0.9 upgrades to schema 6, retaining plans, settings, catalog, receipts, history and manual sessions while adding executor records and durable input fences. Real navigation stays off until configured using [executor setup](docs/executor-setup.md). The Compose bind default now permits access from another PC; use `CONTROLLER_BIND_ADDRESS=127.0.0.1` if access should go exclusively through host-local nginx. Refresh the browser after updating. Newer database schemas are rejected by older releases. See [CHANGELOG.md](CHANGELOG.md).
+Keep your existing `.env` and `controller-data` volume. Version 0.11.1 upgrades to schema 7, retaining plans, settings, catalog, receipts, history, manual sessions and manual event completions alongside executor records and durable input fences. Both the 0.8.1 hotfix and 0.9–0.11 databases are supported. Real navigation stays off until configured using [executor setup](docs/executor-setup.md). The Compose bind default now permits access from another PC; use `CONTROLLER_BIND_ADDRESS=127.0.0.1` if access should go exclusively through host-local nginx. Refresh the browser after updating. Newer database schemas are rejected by older releases. See [CHANGELOG.md](CHANGELOG.md).
 
 Configuration export under **Settings → Configuration backup** saves priorities, preferred teams, and switching/display preferences. Import shows a review before replacing those fields; it preserves the watch plan and automation mode. It is a configuration transfer, not a complete database backup, and contains no Teamarr credentials. Unresolved team IDs are retained with a warning so preferences survive temporary directory gaps.
 
@@ -173,6 +173,7 @@ Interactive request schemas are available at `/docs`; the generated OpenAPI docu
 | `POST /api/v1/devices/{id}/configuration/import/preview` | Validate and review an import without saving |
 | `POST /api/v1/devices/{id}/configuration/import` | Apply a reviewed configuration at its expected revision |
 | `POST /api/v1/devices/{id}/automation` | Pause or resume automation |
+| `POST /api/v1/devices/{id}/completions` | Manually mark an event finished for this device; undoable |
 | `POST /api/v1/devices/{id}/simulate` | Explain a selection without changing playback |
 | `GET /api/v1/devices/{id}/activity` | Recent decisions and actions |
 | `GET /api/v1/devices/{id}/jobs` | Recent playback requests, including original Teamarr payloads |

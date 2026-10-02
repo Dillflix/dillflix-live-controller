@@ -11,7 +11,8 @@ def encode(value):
 
 
 class Database:
-    SCHEMA_VERSION = 6
+    # Older releases must not silently ignore manual completion decisions.
+    SCHEMA_VERSION = 7
 
     def __init__(self, path):
         self.path = path
@@ -108,7 +109,9 @@ class Database:
                     observation TEXT, last_attempt TEXT, last_success TEXT,
                     error TEXT, failures INTEGER NOT NULL DEFAULT 0,
                     next_check REAL NOT NULL DEFAULT 0)""")
-            if version < 6:
+            # The deployed 0.8.1 hotfix used schema 6 without executor tables.
+            # Ensure both schema-6 variants upgrade safely, preserving all records.
+            if version < 7:
                 db.execute("""CREATE TABLE IF NOT EXISTS executor_jobs (
                     token TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE,
                     device_id TEXT NOT NULL, intent INTEGER NOT NULL, content_id TEXT NOT NULL,
@@ -171,7 +174,12 @@ class Database:
         row = db.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
         if row is None:
             raise KeyError(device_id)
-        return {"id": row["id"], "revision": row["revision"], **json.loads(row["payload"])}
+        return {
+            "manual_completions": {},
+            "id": row["id"],
+            "revision": row["revision"],
+            **json.loads(row["payload"]),
+        }
 
     @staticmethod
     def save_device(db, device):

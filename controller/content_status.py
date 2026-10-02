@@ -168,15 +168,43 @@ def lifecycle_view(observation, check, now, ttl):
 
 class ContentStatusCoordinator:
     @staticmethod
-    def pinned_content_ids(db):
+    def pinned_content_ids(db, *, device_id=None, for_lookup=False):
         ids = set()
-        for row in db.execute("SELECT payload FROM devices"):
-            device = json.loads(row[0])
-            ids.update(entry["content_id"] for entry in device["plan"])
-            ids.update((device.get("desired"), (device.get("observed") or {}).get("content_id")))
+        for row in db.execute("SELECT id,payload FROM devices"):
+            if device_id is not None and row["id"] != device_id:
+                continue
+            device = json.loads(row["payload"])
+            pins = {entry["content_id"] for entry in device["plan"]}
+            pins.update((device.get("desired"), (device.get("observed") or {}).get("content_id")))
+            if for_lookup:
+                pins.difference_update(device.get("manual_completions", {}))
+            ids.update(pins)
         return ids - {None}
 
-    def content_lifecycle(self, row, check, now, real, pinned):
+    def content_lifecycle(self, row, check, now, real, pinned, completed_at=None):
+        if completed_at:
+            # Device-scoped human intent takes precedence over provider/cache results,
+            # including a status lookup already in flight when the user completed it.
+            return {
+                "state": "ended",
+                "last_known_state": "ended",
+                "stale": False,
+                "observed_at": completed_at,
+                "received_at": None,
+                "valid_until": None,
+                "effective_valid_until": None,
+                "source": "manual_completion",
+                "timestamp_basis": "manual",
+                "simulated": False,
+                "tracked": pinned,
+                "refresh": {
+                    "state": "manual",
+                    "last_attempt": None,
+                    "last_success": None,
+                    "next_check_at": None,
+                    "error": None,
+                },
+            }
         observation = json.loads(check["observation"]) if check and check["observation"] else None
         if (
             observation
@@ -201,13 +229,16 @@ class ContentStatusCoordinator:
                 observation.update(source="teamarr_feed", simulated=False)
         return {**lifecycle_view(observation, check, real, self.settings.status_ttl), "tracked": pinned}
 
-    def status_health(self, db, items):
-        pins = self.pinned_content_ids(db)
+    def status_health(self, db, items, device_id="living-room"):
+        pins = self.pinned_content_ids(db, device_id=device_id)
         lifecycles = [item["lifecycle"] for item in items if item["content_id"] in pins]
         errors = sum(item["refresh"]["state"] == "error" for item in lifecycles)
         stale = sum(item["stale"] and item["state"] not in TERMINAL for item in lifecycles)
         unknown = sum(item["state"] == "unknown" for item in lifecycles)
-        checked = sum(item["refresh"]["last_attempt"] is not None for item in lifecycles)
+        checked = sum(
+            item["refresh"]["last_attempt"] is not None or item["source"] == "manual_completion"
+            for item in lifecycles
+        )
         return {
             "state": "idle"
             if not pins
@@ -317,7 +348,7 @@ class ContentStatusCoordinator:
                 max(30, 8 * self.settings.status_lookup_timeout + 15),
             ):
                 return
-            pins = self.pinned_content_ids(db)
+            pins = self.pinned_content_ids(db, for_lookup=True)
             requests = []
             # Cap work per pass. Due checks sort before future checks, preventing starvation.
             rows = db.execute(

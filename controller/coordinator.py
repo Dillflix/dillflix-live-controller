@@ -29,7 +29,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 d["reason"] = "Playback service unavailable; waiting for recovery. Watch plan retained."
                 self.db.save_device(db, d)
                 return True
-            items = self.items(db)
+            items = self.items(db, d["id"])
             indexed = {i["content_id"]: i for i in items}
             now = self.now(db)
             decision = choose(d, items, now, real)
@@ -223,7 +223,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             if not job or job["state"] != "pending" or not self.owns_device(db, job["device_id"]):
                 return False
             d = self.db.device(db, job["device_id"])
-            items = self.items(db)
+            items = self.items(db, d["id"])
             decision = choose(d, items, self.now(db), datetime.now(UTC))
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)
             if (

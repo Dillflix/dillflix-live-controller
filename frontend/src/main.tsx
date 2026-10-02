@@ -472,6 +472,18 @@ function App() {
   const observed = find(d.observed?.content_id || null),
     desired = find(d.desired),
     protectedEvent = d.plan.some((p) => p.content_id === observed?.content_id);
+  const currentEvent = d.playback_state === "navigating" ? desired : observed;
+  const completeEvent = (event: Content) =>
+    void mutate(
+      () =>
+        api(devicePath + "/completions", {
+          command_id: commandId(),
+          expected_revision: d.revision,
+          content_id: event.content_id,
+        }),
+      `${event.title} marked finished. Use Undo last edit to reverse this.`,
+      true,
+    );
   const playbackOffline = d.executor_health?.state === "offline";
   const recoveryWaiting =
     d.playback_state === "unverified" &&
@@ -875,6 +887,17 @@ function App() {
                 )}
               </div>
               <div className="df-playing-controls">
+                {currentEvent &&
+                  !["ended", "cancelled"].includes(
+                    currentEvent.lifecycle.state,
+                  ) && (
+                    <Button
+                      disabled={busy}
+                      onClick={() => completeEvent(currentEvent)}
+                    >
+                      Mark event finished
+                    </Button>
+                  )}
                 <Button
                   onClick={togglePause}
                   disabled={busy || !!d.manual_control}
@@ -1700,12 +1723,14 @@ function App() {
                 <dd>{time(modalEvent.expected_end_time)} · estimate only</dd>
                 <dt>Status source</dt>
                 <dd>
-                  {modalEvent.lifecycle.timestamp_basis === "feed_received"
-                    ? "Cached Teamarr status; provider freshness is unknown"
-                    : modalEvent.lifecycle.timestamp_basis === "fixture"
-                      ? "Simulated event lifecycle"
-                      : modalEvent.lifecycle.source ||
-                        "Awaiting status evidence"}
+                  {modalEvent.lifecycle.timestamp_basis === "manual"
+                    ? "Marked finished by you"
+                    : modalEvent.lifecycle.timestamp_basis === "feed_received"
+                      ? "Cached Teamarr status; provider freshness is unknown"
+                      : modalEvent.lifecycle.timestamp_basis === "fixture"
+                        ? "Simulated event lifecycle"
+                        : modalEvent.lifecycle.source ||
+                          "Awaiting status evidence"}
                 </dd>
                 <dt>Observation time</dt>
                 <dd>
@@ -1714,16 +1739,22 @@ function App() {
                     : "Not supplied"}
                 </dd>
                 <dt>Status valid until</dt>
-                <dd>{time(modalEvent.lifecycle.effective_valid_until)}</dd>
+                <dd>
+                  {modalEvent.lifecycle.timestamp_basis === "manual"
+                    ? "Until you undo the manual completion"
+                    : time(modalEvent.lifecycle.effective_valid_until)}
+                </dd>
                 {modalEvent.lifecycle.tracked && (
                   <>
                     <dt>Status lookup</dt>
                     <dd>
-                      {modalEvent.lifecycle.refresh.error ||
-                        (modalEvent.lifecycle.refresh.last_success
-                          ? "Last checked " +
-                            time(modalEvent.lifecycle.refresh.last_success)
-                          : "Waiting for first check")}
+                      {modalEvent.lifecycle.timestamp_basis === "manual"
+                        ? "Manual completion takes precedence"
+                        : modalEvent.lifecycle.refresh.error ||
+                          (modalEvent.lifecycle.refresh.last_success
+                            ? "Last checked " +
+                              time(modalEvent.lifecycle.refresh.last_success)
+                            : "Waiting for first check")}
                     </dd>
                   </>
                 )}
@@ -1751,6 +1782,16 @@ function App() {
                 entries may take precedence during overlap.
               </div>
               <div className="df-dialog-actions">
+                {!["ended", "cancelled"].includes(
+                  modalEvent.lifecycle.state,
+                ) && (
+                  <Button
+                    disabled={busy}
+                    onClick={() => completeEvent(modalEvent)}
+                  >
+                    Mark event finished
+                  </Button>
+                )}
                 {modalEvent.watch_entry_id ? (
                   <Button
                     onClick={() => remove(modalEvent.watch_entry_id!)}

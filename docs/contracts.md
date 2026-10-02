@@ -312,3 +312,9 @@ No token/digest is returned. Automation stays paused for the session. Ownership 
 Allowed keys: `up`, `down`, `left`, `right`, `select`, `back`, `home`, `menu`, `play_pause`, `backspace`. Text is 1–200 printable ASCII characters. Additional fields, keys or combined key/text inputs are rejected. Messages are bounded to 4,096 characters. Each socket uses strictly increasing positive integer sequences; duplicates are rejected before delivery. Inputs are serialized, with eight commands/second replenishment and a ten-command burst allowance. No persisted input queue or reconnect replay exists.
 
 The response `{"type":"sent","seq":1}` acknowledges transport delivery only. It does not verify a visible app response. An error is `{"type":"error","message":"…"}` followed by closure. Failed/uncertain commands must not be blindly retried. Start a new connection with sequence 1 after reviewing the device screen. Browser hidden/disconnect closes the input transport without ending ownership; takeover, release and deadline revoke it. Raw key/text input is not written to activity or command receipts.
+
+## Manual event completion
+
+`POST /api/v1/devices/{device_id}/completions` takes `command_id`, `expected_revision`, and the opaque `content_id`. It uses the same idempotency and revision checks as other user commands. Unknown content returns 404. The response is the standard accepted command receipt.
+
+Completion is scoped to the device and overrides lifecycle projection to `ended` with source `manual_completion`, timestamp basis `manual`, and no expiry. It preserves the original source snapshot, viewing options, watch-plan entries, configuration, and automation mode. Matching pending navigation is superseded and matching desired/observed playback is cleared; unrelated requests and physical TV playback are unaffected. Active automation can select another live event. The existing undo endpoint reverses completion intent without restoring old playback claims.

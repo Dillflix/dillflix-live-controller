@@ -43,6 +43,7 @@ def prune(database, settings, owner):
         devices = [database.device(db, row[0]) for row in db.execute("SELECT id FROM devices")]
         contents, requests, commands = set(), set(), set()
         for d in devices:
+            contents.update(d.get("manual_completions", {}))
             contents.update(p["content_id"] for p in d["plan"])
             contents.add(d.get("desired"))
             observed = d.get("observed") or {}
@@ -53,6 +54,7 @@ def prune(database, settings, owner):
             if row["undone_by"]:
                 commands.add((row["device_id"], row["undone_by"]))
             for field in ("before_payload", "after_payload"):
+                contents.update(json.loads(row[field]).get("manual_completions", {}))
                 contents.update(p["content_id"] for p in json.loads(row[field]).get("plan", []))
         for row in db.execute("SELECT observation FROM simulated_devices WHERE observation IS NOT NULL"):
             observed = json.loads(row[0])
