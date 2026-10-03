@@ -37,6 +37,7 @@ import {
 import { api, ApiError, commandId } from "./api";
 import { TeamRanking } from "./TeamRanking";
 import { ConfigurationTools } from "./ConfigurationTools";
+import { DiagnosticsTools } from "./DiagnosticsTools";
 import { ScreenPanel } from "./ScreenPanel";
 import type {
   Action,
@@ -1300,6 +1301,36 @@ function App() {
                   "Activity",
                   "Selections, switches, manual choices, and recovery.",
                 )}
+                <section className="df-panel">
+                  <h3>Playback monitoring</h3>
+                  <p>{d.reason}</p>
+                  <p>
+                    Controller: {d.playback_state} · Executor:{" "}
+                    {d.executor_health?.state ?? "not reported"}
+                  </p>
+                  {data.playback_job && (
+                    <p>
+                      Request: {data.playback_job.state} ·{" "}
+                      {data.playback_job.progress ?? "No progress reported"}
+                      {data.playback_job.deadline_at
+                        ? ` · Deadline ${time(new Date(data.playback_job.deadline_at * 1000).toISOString())}`
+                        : ""}
+                    </p>
+                  )}
+                  {data.playback_job?.error && (
+                    <p role="alert">{data.playback_job.error}</p>
+                  )}
+                  <DiagnosticsTools
+                    devicePath={devicePath}
+                    onError={setError}
+                  />
+                  <p>
+                    Includes recent decisions, jobs, cancellation, playback
+                    evidence, and player health. Player RPC history requires the
+                    updated player service. Content titles and device
+                    identifiers may be included.
+                  </p>
+                </section>
                 <section className="df-panel">
                   {data.activity.map((item) => (
                     <div className="df-activity" key={item.sequence}>

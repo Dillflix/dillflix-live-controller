@@ -1,6 +1,8 @@
 # Mount the directory: restarting Prime Player replaces the socket inode.
 services:
   controller:
+    group_add:
+      - "${PRIME_PLAYER_SOCKET_GID:-10001}"
     environment:
       PRIME_PLAYER_SOCKET: /run/prime-player/player.sock
       PLAYBACK_ADAPTER: prime-player

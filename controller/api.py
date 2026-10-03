@@ -94,6 +94,40 @@ def create_app(settings=None, *, start_workers=True):
     def overview():
         return service.overview()
 
+    @app.get("/api/v1/devices/{device_id}/diagnostics")
+    async def diagnostics(device_id: str):
+        from .prime_player.diagnostics import collect, redact
+
+        bundle = await asyncio.to_thread(collect, settings.database, device_id)
+        bundle["controller_health"] = health()
+        bundle["prime_player"] = {"state": "not_configured"}
+        if service.executor:
+            try:
+                # This is read-only and bypasses healthy-session validation so a
+                # failed runtime can still explain its failure. No device query.
+                player = service.executor.player
+                bundle["prime_player"] = {
+                    "state": "available",
+                    "health": await player.rpc("health", budget=5),
+                }
+                try:
+                    bundle["prime_player"]["service_diagnostics"] = await player.rpc("diagnostics", budget=5)
+                except Exception as exc:
+                    bundle["prime_player"]["service_diagnostics_error"] = type(exc).__name__
+            except Exception as exc:
+                bundle["prime_player"] = {
+                    "state": "unavailable",
+                    "error": type(exc).__name__,
+                    "detail": str(exc)[:500],
+                }
+        return JSONResponse(
+            redact(bundle),
+            headers={
+                "Content-Disposition": 'attachment; filename="dillflix-diagnostics.json"',
+                "Cache-Control": "no-store",
+            },
+        )
+
     @app.get("/api/v1/maintenance")
     def maintenance():
         return service.maintenance_status()

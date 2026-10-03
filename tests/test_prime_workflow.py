@@ -218,6 +218,9 @@ async def test_nonplaying_status_never_completes_event(tmp_path, state):
         assert report["prime_player"]["playback_status"]["state"] == state
         assert not report["observation"]["verified"]
         assert report["content_status"]["effective_state"] == "unknown"
+        assert report["observation_status"]["error"]["code"] == "prime_playback_unverified"
+        with workflow.db.transaction() as db:
+            assert db.execute("SELECT 1 FROM activity WHERE message='Playback monitoring lost verification'").fetchone()
         assert len([c for c in workflow.player.calls if c[0] == "play"]) == 1
     finally:
         await cleanup(controller)

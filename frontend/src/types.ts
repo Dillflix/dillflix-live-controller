@@ -96,6 +96,11 @@ export interface Device {
     input_ready?: boolean;
   } | null;
   intent_version: number;
+  input_handoff?: {
+    through_intent_version: number;
+    error?: string;
+    last_attempt_at?: string;
+  } | null;
   desired: string | null;
   observed: {
     content_id: string;

@@ -64,10 +64,32 @@ class ManualControl:
                 self.db.save_device(db, device)
         if not handoff:
             return
-        self.playback.cancel_device(device_id, handoff["through_intent_version"])
+        try:
+            self.playback.cancel_device(device_id, handoff["through_intent_version"])
+        except Exception as exc:
+            detail = str(exc)[:500] or type(exc).__name__
+            with self.db.transaction() as db:
+                device = self.db.device(db, device_id)
+                current = device.get("input_handoff")
+                if current and current["through_intent_version"] == handoff["through_intent_version"]:
+                    if current.get("error") != detail:
+                        self.db.log(
+                            db,
+                            datetime.now(UTC).isoformat(),
+                            "Manual handoff blocked",
+                            detail,
+                            "manual_control",
+                            device_id,
+                        )
+                    current.update(error=detail, last_attempt_at=datetime.now(UTC).isoformat())
+                    self.db.save_device(db, device)
+            raise
         with self.db.transaction() as db:
             device = self.db.device(db, device_id)
-            if device.get("input_handoff") != handoff:
+            if (
+                not device.get("input_handoff")
+                or device["input_handoff"]["through_intent_version"] != handoff["through_intent_version"]
+            ):
                 return  # Another takeover established a newer barrier during I/O.
             device["input_handoff"] = None
             if device.get("manual_control"):

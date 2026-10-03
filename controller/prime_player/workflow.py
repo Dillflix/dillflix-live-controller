@@ -238,6 +238,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         with self.db.transaction() as db:
             row = self.store.allowed(db, token)
             report = json.loads(row["report"])
+            previously_verified = bool((report.get("observation") or {}).get("verified"))
             workflow = report["prime_player"]
             launch = workflow.get("launch_outcome") or {}
             if (
@@ -297,11 +298,35 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 )
             elif report["observation"]:
                 report["observation"]["verified"] = False
+            reason = (
+                None
+                if verified
+                else (
+                    str(status.get("error"))[:500]
+                    if status.get("error")
+                    else "Prime playback evidence is stale"
+                    if not fresh
+                    else "Prime playback is not verified: " + str(status.get("state", "unknown"))
+                )
+            )
             report["observation_status"] = {
                 "state": "fresh" if verified else "unavailable",
                 "checked_at": utc(),
-                "error": None,
+                "error": None if verified else ExecutorError("prime_playback_unverified", reason).detail(),
             }
+            if previously_verified and not verified:
+                self.db.log(
+                    db, utc(), "Playback monitoring lost verification", reason, "recovery", row["device_id"]
+                )
+            elif verified and not previously_verified and report["operation"]["finished_at"]:
+                self.db.log(
+                    db,
+                    utc(),
+                    "Prime playback verified",
+                    "Current attempt-bound playback is playing",
+                    "verified",
+                    row["device_id"],
+                )
             # Even explicit player Ended is not a sports-event completion fact.
             # Leave content_status to Teamarr/manual lifecycle evidence.
             self.store.write(
@@ -331,6 +356,15 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             with self.db.transaction() as db:
                 row = self.store.get_row(db, token)
                 report = json.loads(row["report"])
+                if report["observation"] and report["observation"].get("verified"):
+                    self.db.log(
+                        db,
+                        utc(),
+                        "Playback monitoring unavailable",
+                        error.message,
+                        "recovery",
+                        row["device_id"],
+                    )
                 if report["observation"]:
                     report["observation"]["verified"] = False
                 report["observation_status"] = {

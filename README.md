@@ -1,5 +1,7 @@
 # Dillflix Controller
 
+For incident exports and persistent player/controller boot services, see [diagnostics and recovery](docs/diagnostics.md).
+
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
 **0.14.0 integrates [Dillflix Prime Player](https://github.com/Dillflix/dillflix-prime-player)** for search, live playback and current status. The controller retains scheduling, durable intent and Play/status/Cancel APIs, with label matching and an optional text LLM for ambiguous results. Automated playback and manual input use the same acknowledged service ownership boundary.

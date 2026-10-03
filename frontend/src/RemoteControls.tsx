@@ -507,7 +507,12 @@ export function RemoteControls({
             {simulated ? " Automated event playback remains simulated." : ""}
           </p>
           {device.manual_control?.input_ready === false && (
-            <p role="status">Waiting for playback to stop before enabling the remote.</p>
+            <p role="status">
+              {device.input_handoff?.error
+                ? `Manual handoff is blocked: ${device.input_handoff.error}`
+                : "Waiting for Prime Player to acknowledge cancellation before enabling the remote."}{" "}
+              See Activity to export diagnostics.
+            </p>
           )}
         </>
       )}
