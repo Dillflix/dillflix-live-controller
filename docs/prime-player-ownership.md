@@ -2,7 +2,7 @@
 
 Requires Prime Player 0.1.0a5 / API 4 on the same host, with the same Fire TV serial as `SCREEN_ADB_SERIAL`. Prime Player owns runtime mutations and manual writes. The remote waits for its acknowledged cancellation barrier before enabling input. Keys, wake and bounded ASCII text use its receipt; screen mirroring is unchanged.
 
-This is an opt-in manual gateway integration. It does not replace planner search/matching/playback with Prime Player. Use `PLAYBACK_ADAPTER=simulator` while testing the external service. The legacy `prime-video` executor is rejected when this socket is configured because it can independently mutate/stop Prime.
+This gateway is shared with automated `prime-player` playback. Set `PLAYBACK_ADAPTER=simulator` only when testing manual service integration without automated real playback. No direct ADB input fallback is used with a configured socket. See [workflow setup](prime-player.md).
 
 ## Host process
 

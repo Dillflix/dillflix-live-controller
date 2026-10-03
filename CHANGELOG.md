@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.0 — Prime Player execution replaces the native screenshot executor
+
+- Use Prime Player API 4 / 0.1.0a5 for search, live launch, attempt-bound monitoring, cancellation and scoped stop. Preserve controller scheduling, durable tokens, opaque Teamarr IDs and all permitted source routes.
+- Match playable live result labels deterministically or with a bounded text LLM, supporting abstention and retained selection evidence. Structured competitor metadata in Prime is not required.
+- Share one asynchronous RPC transport and service ownership contract with manual input. Interrupt remote search out of band, reject late results and stale owners, and never replay an uncertain Play or Stop.
+- Report input quiescence separately from native stop confirmation. Player stopped/switched/ended cannot complete a sports event.
+- Remove the screenshot navigator, native accessibility and MediaSession collectors, bundled APK/Java sources, vision prompts, obsolete dependencies/settings, fixtures and setup instructions. Screen mirroring and the manual remote remain supported.
+- Preserve database history and restore fences. Existing `prime-video` configuration must migrate to `prime-player`; cancel outstanding old work before upgrading. Update socket/model settings using `docs/prime-player.md`.
+- Controller and actual API 4 host-service contract tests use controlled runtime boundaries. Physical-device, live model and deployment acceptance remain pending.
+
 ## 0.13.1 — Prime Player manual ownership
 
 - Add opt-in API 4 service handoff before manual input, including wake and text.

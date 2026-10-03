@@ -2,19 +2,13 @@
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
-**Version 0.9 adds an integrated Prime Video executor: Play, status by token, and Cancel, with durable jobs, LLM-powered navigation, playback/completion evidence, and the same input gate as manual control.** The default remains simulated; real playback is opt-in with `PLAYBACK_ADAPTER=prime-video`. Start with [executor setup](docs/executor-setup.md) and the [implemented API guide](docs/executor-api-handoff.md). Automated tests use controlled ADB/model boundaries; actual Fire TV, account, inference-service, Docker/nginx and mobile compatibility require target-host validation.
+**0.14.0 integrates [Dillflix Prime Player](https://github.com/Dillflix/dillflix-prime-player)** for search, live playback and current status. The controller retains scheduling, durable intent and Play/status/Cancel APIs, with label matching and an optional text LLM for ambiguous results. Automated playback and manual input use the same acknowledged service ownership boundary.
 
-**Version 0.9.1 integrates the exploration's native accessibility collector:** separate focus channels, action timing, Prime window-burst handling, screenshot association and stale-input checks. Native metadata accompanies actor screenshots; the visual observer remains separate. Full search-to-play behavior on the target TV is still unvalidated. See the [evidence audit and implementation status](docs/accessibility-critical-path.md).
-
-**Version 0.10.0 uses runtime evidence in navigation and monitoring:** complete multiline native records from both output streams, observed menu order with label-confirmed movement, separate result/menu and Watch Live activations, and visual identity associated with structured MediaSession telemetry. Stable playback monitoring avoids per-poll screenshots/inference. See the [grounding policy and capture evidence](docs/runtime-grounding.md) and [media-probe dependency](docs/executor-setup.md#structured-media-probe). Target-TV autonomous reliability remains unvalidated.
-
-**Version 0.10.1 packages the supplied MediaSession probe source and original signed APK**, with explicit install/readiness commands, a verified source rebuild, and controller safeguards for probe restarts and journal gaps. See [probe setup](docs/executor-setup.md#structured-media-probe) and the [prioritized probe improvements](android/prime-media-probe/IMPROVEMENTS.md). Installation on the target TV remains untested here.
-
-**Version 0.11.0 integrates the supplied probe v2.0.0 and migrates the controller to its explicit service/session identities, connection epochs, acquisition times, collection/write health and sequence checkpoints.** The supplied APK has the same verified signing certificate as v1. See [upgrade and diagnostics](docs/executor-setup.md#structured-media-probe). Real Fire TV validation remains outstanding.
+Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 4 / 0.1.0a5 or newer, and a shared Unix socket. The screenshot navigator, accessibility/MediaSession collectors and bundled probe have been removed. See [setup and acceptance](docs/prime-player.md) and [API semantics](docs/executor-api-handoff.md). Target-TV and deployment acceptance remain pending.
 
 ## What works
 
-- Opt-in Prime Video playback with package-scoped ADB search, configurable JSON/TVTheseus actor, independent vision observer, durable tokens, active cancellation, completion checks and read-only diagnostics.
+- Live Prime playback using service results, deterministic or LLM label matching, durable tokens, scoped cancellation/stop, and current attempt monitoring.
 
 - **Take control** with a selectable duration (including 4 hours, up to 24 hours), mobile D-pad, focused keyboard shortcuts, and text entry. Extend the session, resume automation, or finish with automation paused. Sessions survive restarts; other browsers must explicitly take over. See [manual control](docs/manual-control.md).
 - An optional live device-screen panel with inline phone video, fullscreen, automatic reconnect, shared capture across viewers, and cleanup when the panel or tab is hidden. See [screen setup](docs/screen-mirroring.md).
@@ -216,7 +210,7 @@ Coverage includes database upgrades, persistent undo, configuration round trips,
 
 ## Real playback and remaining validation
 
-The [API implementation guide](docs/executor-api-handoff.md), [OpenAPI contract](docs/executor-api.openapi.yaml), and [setup/diagnostics guide](docs/executor-setup.md) document the implemented three-operation infrastructure. Play, token status (including lifecycle), and Cancel (including active stop/manual handoff) share the same durable worker and store. Native collection and association are integrated in 0.9.1; critical-path label coverage and physical playback still need validation. See the [implementation status](docs/accessibility-critical-path.md). No separate recovery, device-observation, lifecycle lookup or authority API is required.
+The [API guide](docs/executor-api-handoff.md), [OpenAPI contract](docs/executor-api.openapi.yaml), and [setup guide](docs/prime-player.md) cover Play, token status and Cancel. Cancellation acknowledges input quiescence independently of native stop confirmation. Player stopping, switching or ending never proves that the sports event has finished. Teamarr and explicit manual completion supply lifecycle evidence.
 
 See [the roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) for boundaries and remaining host validation. Run the target-TV procedure before relying on unattended navigation. Real model accuracy, Prime account availability, protected video visibility, physical mobile browsers, Docker/nginx and live endurance have not been validated in this development environment. Other streaming app adapters and independent sports-results providers remain future integrations.
 
@@ -225,4 +219,4 @@ Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillfl
 
 ## Prime Player manual ownership (optional)
 
-With Prime Player API 4 / 0.1.0a5, set `PRIME_PLAYER_SOCKET` to its Unix socket to require an acknowledged service handoff before remote input. Wake, keys and text then go through Prime Player. There is no direct-input fallback when configured. See [setup and validation](docs/prime-player-ownership.md). This integrates the manual gateway; the automated planner/playback adapter is unchanged.
+With Prime Player API 4 / 0.1.0a5, set `PRIME_PLAYER_SOCKET` to its Unix socket to require an acknowledged service handoff before remote input. Wake, keys and text then go through Prime Player. There is no direct-input fallback when configured. See [setup and validation](docs/prime-player-ownership.md). The same gateway is used by the `prime-player` workflow. Simulator mode can also use the service for manual input.

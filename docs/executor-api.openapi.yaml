@@ -2,9 +2,8 @@ openapi: 3.1.0
 info:
   title: Dillflix Playback Executor API
   version: 1.0.0
-  description: 'Implemented in dillflix-live-controller 0.11.0. Three operations: asynchronous Play, token status
-    including lifecycle, and Cancel including active stop and device intent fencing. Configure PLAYBACK_ADAPTER=prime-video
-    and EXECUTOR_API_TOKEN. See executor-api-handoff.md and executor-setup.md.'
+  description: Controller 0.14.0. Play, status by token and Cancel through Prime Player API 4. Configure PLAYBACK_ADAPTER=prime-player
+    and EXECUTOR_API_TOKEN.
 servers:
 - url: /
   description: Same origin as the configured controller deployment
@@ -105,10 +104,10 @@ paths:
     post:
       operationId: cancelPlayback
       summary: Cancel navigation and stop owned active playback, or fence a device for manual control
-      description: 'One Cancel API, two mutually exclusive scopes. Persist cancellation before stopping/draining
-        input. Return 200 only after confirmed quiescence and active stop/already-inactive. Retry is idempotent.
-        On timeout/503 cancellation is unconfirmed: manual input stays disabled and the controller retries. A device
-        fence covers late Play deliveries whose token was never received. No authority or renewal endpoints.'
+      description: Persist cancellation before draining input. A 200 response acknowledges input quiescence. active_playback
+        separately reports stopped, already_inactive, not_current or unknown. Page exit alone is unknown. Unconfirmed
+        barriers remain durable obligations and return 503. Stops are scoped and never replayed after uncertain
+        delivery.
       requestBody:
         required: true
         content:
@@ -151,73 +150,6 @@ components:
       scheme: bearer
       description: Server-side scoped service credential, separate from playback tokens and browser owner_token.
   schemas:
-    CancelRequest:
-      additionalProperties: false
-      properties:
-        device_id:
-          const: living-room
-          title: Device Id
-          type: string
-        token:
-          anyOf:
-          - maxLength: 200
-            minLength: 1
-            type: string
-          - type: 'null'
-          default: null
-          title: Token
-        through_intent_version:
-          anyOf:
-          - maximum: 9007199254740991
-            minimum: 0
-            type: integer
-          - type: 'null'
-          default: null
-          title: Through Intent Version
-      required:
-      - device_id
-      title: CancelRequest
-      type: object
-    CancelResult:
-      additionalProperties: false
-      properties:
-        device_id:
-          const: living-room
-          title: Device Id
-          type: string
-        token:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Token
-        through_intent_version:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Through Intent Version
-        input_quiescent:
-          const: true
-          title: Input Quiescent
-          type: boolean
-        active_playback:
-          enum:
-          - stopped
-          - already_inactive
-          title: Active Playback
-          type: string
-        acknowledged_at:
-          format: date-time
-          title: Acknowledged At
-          type: string
-      required:
-      - device_id
-      - token
-      - through_intent_version
-      - input_quiescent
-      - active_playback
-      - acknowledged_at
-      title: CancelResult
-      type: object
     Cancellation:
       additionalProperties: false
       properties:
@@ -231,6 +163,15 @@ components:
         input_quiescent:
           title: Input Quiescent
           type: boolean
+        active_playback:
+          default: unknown
+          enum:
+          - stopped
+          - already_inactive
+          - unknown
+          - not_current
+          title: Active Playback
+          type: string
       required:
       - state
       - input_quiescent
@@ -542,6 +483,41 @@ components:
       - evidence
       title: PlaybackObservation
       type: object
+    RouteAttempt:
+      additionalProperties: false
+      properties:
+        attempt:
+          title: Attempt
+          type: integer
+        viewing_option_id:
+          title: Viewing Option Id
+          type: string
+        phase:
+          title: Phase
+          type: string
+        started_at:
+          format: date-time
+          title: Started At
+          type: string
+        finished_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Finished At
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorDetail'
+          - type: 'null'
+      required:
+      - attempt
+      - viewing_option_id
+      - phase
+      - started_at
+      - finished_at
+      - error
+      title: RouteAttempt
+      type: object
     PlaybackReport:
       additionalProperties: false
       properties:
@@ -586,11 +562,13 @@ components:
             type: string
           - type: 'null'
           title: Retained Until
-        runtime:
+        prime_player:
           anyOf:
-          - $ref: '#/components/schemas/RuntimeStatus'
+          - additionalProperties: true
+            type: object
           - type: 'null'
           default: null
+          title: Prime Player
       required:
       - schema_version
       - token
@@ -686,6 +664,75 @@ components:
       - deadline_at
       title: PlaybackRequest
       type: object
+    CancelRequest:
+      additionalProperties: false
+      properties:
+        device_id:
+          const: living-room
+          title: Device Id
+          type: string
+        token:
+          anyOf:
+          - maxLength: 200
+            minLength: 1
+            type: string
+          - type: 'null'
+          default: null
+          title: Token
+        through_intent_version:
+          anyOf:
+          - maximum: 9007199254740991
+            minimum: 0
+            type: integer
+          - type: 'null'
+          default: null
+          title: Through Intent Version
+      required:
+      - device_id
+      title: CancelRequest
+      type: object
+    CancelResult:
+      additionalProperties: false
+      properties:
+        device_id:
+          const: living-room
+          title: Device Id
+          type: string
+        token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+        through_intent_version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Through Intent Version
+        input_quiescent:
+          const: true
+          title: Input Quiescent
+          type: boolean
+        active_playback:
+          enum:
+          - stopped
+          - already_inactive
+          - unknown
+          - not_current
+          title: Active Playback
+          type: string
+        acknowledged_at:
+          format: date-time
+          title: Acknowledged At
+          type: string
+      required:
+      - device_id
+      - token
+      - through_intent_version
+      - input_quiescent
+      - active_playback
+      - acknowledged_at
+      title: CancelResult
+      type: object
     Problem:
       additionalProperties: false
       properties:
@@ -715,236 +762,6 @@ components:
       - code
       - retryable
       title: Problem
-      type: object
-    RouteAttempt:
-      additionalProperties: false
-      properties:
-        attempt:
-          title: Attempt
-          type: integer
-        viewing_option_id:
-          title: Viewing Option Id
-          type: string
-        phase:
-          title: Phase
-          type: string
-        started_at:
-          format: date-time
-          title: Started At
-          type: string
-        finished_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Finished At
-        error:
-          anyOf:
-          - $ref: '#/components/schemas/ErrorDetail'
-          - type: 'null'
-      required:
-      - attempt
-      - viewing_option_id
-      - phase
-      - started_at
-      - finished_at
-      - error
-      title: RouteAttempt
-      type: object
-    RuntimeStatus:
-      additionalProperties: false
-      properties:
-        source:
-          title: Source
-          type: string
-        source_health:
-          title: Source Health
-          type: string
-        observed_at:
-          format: date-time
-          title: Observed At
-          type: string
-        valid_until:
-          format: date-time
-          title: Valid Until
-          type: string
-        foreground:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Foreground
-        session_token:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Session Token
-        runtime_media_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Runtime Media Id
-        boot_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Boot Id
-        probe_instance:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-          title: Probe Instance
-        schema_version:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          default: null
-          title: Schema Version
-        probe_build:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-          title: Probe Build
-        service_instance_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-          title: Service Instance Id
-        connection_epoch:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          default: null
-          title: Connection Epoch
-        session_instance_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-          title: Session Instance Id
-        collection_health:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-          title: Collection Health
-        journal_health:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-          title: Journal Health
-        history_status:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-          title: History Status
-        latest_produced_sequence:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          default: null
-          title: Latest Produced Sequence
-        latest_written_sequence:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          default: null
-          title: Latest Written Sequence
-        loss_counters:
-          additionalProperties:
-            type: integer
-          title: Loss Counters
-          type: object
-        problems:
-          items:
-            type: string
-          maxItems: 24
-          title: Problems
-          type: array
-        identity_revision:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Identity Revision
-        transport:
-          title: Transport
-          type: string
-        binding:
-          enum:
-          - visually_associated
-          - unbound
-          - revalidation_required
-          title: Binding
-          type: string
-        bound_content_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Bound Content Id
-        last_visual_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Last Visual At
-        live_mode:
-          enum:
-          - watch_live_selected
-          - visually_at_live
-          - unknown
-          title: Live Mode
-          type: string
-        live_edge:
-          const: unmeasured
-          default: unmeasured
-          title: Live Edge
-          type: string
-        position_ms:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Position Ms
-        position_meaning:
-          title: Position Meaning
-          type: string
-        history_available:
-          title: History Available
-          type: boolean
-        history_gap:
-          default: false
-          title: History Gap
-          type: boolean
-        recent_events:
-          items:
-            additionalProperties: true
-            type: object
-          maxItems: 24
-          title: Recent Events
-          type: array
-      required:
-      - source
-      - source_health
-      - observed_at
-      - valid_until
-      - foreground
-      - session_token
-      - runtime_media_id
-      - boot_id
-      - identity_revision
-      - transport
-      - binding
-      - bound_content_id
-      - last_visual_at
-      - live_mode
-      - position_ms
-      - position_meaning
-      - history_available
-      - recent_events
-      title: RuntimeStatus
       type: object
   examples:
     StartPlayback:
@@ -1094,7 +911,7 @@ components:
           evidence:
             method: device_observation
             evidence_id: obs-example-042
-            summary: Synthetic example of matched content identity and live presentation
+            summary: Prime verified live resolution and current attempt-bound playback progression
             confidence: null
             captured_at: '2026-09-30T20:00:10Z'
         observation_status:
@@ -1116,45 +933,6 @@ components:
           state: none
           input_quiescent: false
         retained_until: null
-        runtime:
-          source: media_probe
-          source_health: fresh
-          observed_at: '2026-09-30T20:00:10Z'
-          valid_until: '2026-09-30T20:00:25Z'
-          foreground: com.amazon.firebat
-          session_token: synthetic-session
-          runtime_media_id: synthetic-runtime-media-id
-          boot_id: synthetic-boot
-          identity_revision: 4
-          transport: playing
-          binding: visually_associated
-          bound_content_id: example-content-001
-          last_visual_at: '2026-09-30T20:00:08Z'
-          live_mode: watch_live_selected
-          live_edge: unmeasured
-          position_ms: 344511168
-          position_meaning: application_reported_or_extrapolated_not_programme_time
-          history_available: true
-          recent_events: []
-          probe_instance: null
-          history_gap: false
-          schema_version: 2
-          probe_build: 2.0.0
-          service_instance_id: 750a8eb1-77a4-4ca2-8263-04d5dc5b0e4c
-          connection_epoch: 1
-          session_instance_id: s1
-          collection_health: fresh
-          journal_health: healthy
-          history_status: covered
-          latest_produced_sequence: 42
-          latest_written_sequence: 42
-          loss_counters:
-            droppedRecords: 0
-            writeFailures: 0
-            rotationFailures: 0
-            oversizedRecords: 0
-            lossRangeDetailsEvicted: 0
-          problems: []
       x-schema: PlaybackReport
     Ended:
       summary: Confirmed game completion despite stale playback evidence
@@ -1190,7 +968,7 @@ components:
           evidence:
             method: device_observation
             evidence_id: obs-example-042
-            summary: Synthetic example of matched content identity and live presentation
+            summary: Prime verified live resolution and current attempt-bound playback progression
             confidence: null
             captured_at: '2026-09-30T20:00:10Z'
         observation_status:
@@ -1205,19 +983,13 @@ components:
           observation:
             content_id: example-content-001
             state: ended
-            source: prime_video_visual
+            source: teamarr_feed
             simulated: false
-            timestamp_basis: device_observed
-            observed_at: '2026-09-30T22:05:00Z'
+            timestamp_basis: feed_received
+            observed_at: null
             received_at: '2026-09-30T22:05:01Z'
             valid_until: '2026-09-30T22:07:00Z'
-            evidence:
-              method: device_observation
-              evidence_id: final-example-001
-              summary: 'Synthetic example: two readings at least 15 seconds apart show FINAL for this exact game'
-              confidence: null
-              decision: confirmed
-              captured_at: '2026-09-30T22:05:00Z'
+            evidence: null
           checked_at: '2026-09-30T22:05:01Z'
           error: null
         cancellation:

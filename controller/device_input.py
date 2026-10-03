@@ -12,7 +12,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import Field, ValidationError
 
 from .models import StrictModel
-from .prime_ownership import PrimeOwnership, PrimeInput
+from .prime_ownership import PrimeInput, PrimeOwnership
 from .screen_capture import AdbCapture, CaptureError
 from .screen_install import SERVER_VERSION
 
@@ -110,8 +110,8 @@ class DeviceInput:
         self.connection = None
         self.monitor = None
         socket_path = getattr(service.settings, "prime_player_socket", "")
-        if socket_path and service.executor:
-            raise ValueError("PRIME_PLAYER_SOCKET cannot share a device with the legacy prime-video executor")
+        if service.executor and socket_path != service.settings.executor.prime_socket:
+            raise ValueError("Automation and manual control must use the same PRIME_PLAYER_SOCKET")
         self.prime = PrimeOwnership(socket_path, service.settings.screen_adb_serial) if socket_path else None
 
     def start(self):
@@ -135,6 +135,8 @@ class DeviceInput:
         async with self.lock:
             task = self.revoke_locked()
         await self.drain(task)
+        if self.prime:
+            await self.prime.close()
 
     async def expire(self):
         async with self.lock:
@@ -167,7 +169,9 @@ class DeviceInput:
                     session = self.service.db.device(db, device_id).get("manual_control")
                 if session and session["session_id"] == command.session_id:
                     with self.service.db.transaction() as db:
-                        self.service.check_manual_owner(db, self.service.db.device(db, device_id), command.session_id, command.owner_token)
+                        self.service.check_manual_owner(
+                            db, self.service.db.device(db, device_id), command.session_id, command.owner_token
+                        )
                     await self.prime.release(command.session_id)
             result = self.service.manual_command(device_id, command)
             task = None
@@ -291,13 +295,16 @@ class DeviceInput:
         if self.service.executor:
             async with self.service.executor.input_lock:
                 self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
-                self.service.executor.device.invalidate_focus()
                 await source.send(packet)
         else:
             await source.send(packet)
 
     async def run(self, websocket, device_id, attach):
-        source = PrimeInput(self.prime, attach.session_id) if self.prime else self.source_factory(self.service.settings)
+        source = (
+            PrimeInput(self.prime, attach.session_id)
+            if self.prime
+            else self.source_factory(self.service.settings)
+        )
         try:
             await self.connect_source(websocket, source)
             # Startup can outlast ownership/deadline. Recheck at the write boundary,
@@ -353,4 +360,3 @@ class DeviceInput:
             except asyncio.CancelledError:
                 await cleanup
                 raise
-

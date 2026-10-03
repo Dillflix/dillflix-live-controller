@@ -1,7 +1,0 @@
-TVTheseus native text prompt and answer-tag protocol
-https://github.com/Lqf-HFNJU/TVTheseus
-Revision: 5cca8bfbd8279bda4685e8755ea5946f32613651
-Source: TVWorld/TVWorld_N/models/utils.py
-Apache-2.0; license included in tvtheseus-LICENSE.txt.
-Modifications: app-scoped action allowlist, literal Fire TV direction descriptions, Python transport and guarded dispatch.
-Exploration reference: user-provided prime-video-agent-exploration-full.zip, September 2026.

@@ -1,6 +1,8 @@
 # Architecture and delivery scope
 
-The controller integrates deterministic selection, persistent user intent and an opt-in Prime Video executor. The planner never interprets screenshots or chooses streaming apps; `controller/executor/` owns navigation and evidence. Public APIs remain Play, token status and Cancel. See [implementation](executor-api-handoff.md) and [deployment](executor-setup.md).
+The controller owns scheduling, persistent intent, result matching and durable Play/status/Cancel tokens. Prime Player owns application execution and runtime evidence. `controller/prime_player/` implements bounded asynchronous service RPCs and label matching; `controller/executor/` contains the shared token API, store and worker. There is one real execution path. See [workflow and setup](prime-player.md).
+
+Teamarr remains the catalog and event-lifecycle dependency. Player stopping, switching or ending never proves sports-event completion. The controller does not collect screenshots, accessibility labels or MediaSession state for execution. Screen streaming is a separate view-only feature.
 
 ## Responsibilities
 
@@ -12,7 +14,9 @@ The controller integrates deterministic selection, persistent user intent and an
 | `controller/coordinator.py` | Stage playback intent, deliver/inspect requests, validate results, enforce deadlines, retry cancellation, and reconcile observations |
 | `controller/recovery.py` | Compare coverage routes, track playback evidence recovery, and probe an unavailable playback service |
 | `controller/playback.py` | Adapter protocol and persistent simulator |
-| `controller/executor/` | Real Prime navigation, token APIs/store, async ADB/model transport, cancellation and evidence |
+| `controller/executor/` | Durable tokens, public API, worker scheduling and cancellation obligations |
+| `controller/prime_player/` | Async service client, label matching, launch/status orchestration and read-only diagnostics |
+| `controller/prime_ownership.py` | Service ownership receipts and manual input bridge |
 | `controller/content_status.py` | Independent lifecycle lookup contract, evidence validation/persistence, freshness projection, and refresh worker |
 | `controller/database.py` | Versioned SQLite migrations, records, edit history, activity, command receipts, and leases |
 | `controller/maintenance.py` | Retain recent history while preserving user and recovery references |
@@ -114,7 +118,6 @@ This screen feed does not write to the catalog, watch plan, jobs, observed playb
 
 ## Production work remaining
 
-- Validate the integrated collector, observed-order action menus and runtime-bound monitoring in autonomous target-TV runs. The supplied capture 05 establishes one manual path and useful label/media semantics; it does not cover all variants or event endings. See [grounding and remaining gaps](runtime-grounding.md). Probe source/APK and explicit install/check tooling are now packaged; validate installation, v2 identity/checkpoint behavior, restart/rebind, permission loss and suspend on the TV.
 - Continue validating the actual household catalog, coverage routes, images, timezones, and proxy behavior after successful initial Teamarr testing.
 - Validate the implemented real executor against the target TV and inference service. An independent authoritative results provider for unplayed/out-of-window content remains future work.
 - Verify the implemented coverage handoff and prolonged-outage policies against real provider route changes, executor navigation, and device heartbeat evidence.
@@ -140,13 +143,9 @@ Playback ticks now run in a drained worker thread and serialize with manual hand
 
 Taking control records a durable `input_handoff` fence and sets the session's `input_ready=false`. Manual authorization waits until `cancel_device()` confirms all autonomous input through that intent has stopped and matching active playback is cancelled. Failures retain the barrier across restart and session release; worker ticks and remote reconnect retry it. Release/expiry drains the manual transport while still paused, then restores automation. The simulator stores the device cancellation watermark independently of job history and rejects late requests at/below it.
 
-With `PLAYBACK_ADAPTER=prime-video`, every autonomous physical action rechecks durable input ownership and acquires the same `asyncio.Lock` as manual input. Cancellation drains in-flight ADB work, stops the owned Prime app and confirms inactivity before granting manual input. The [three-operation implementation](executor-api-handoff.md) needs no separate authority/renewal API. Physical remotes, other ADB clients and ws-scrcpy are outside this gate.
+With `PLAYBACK_ADAPTER=prime-player`, automatic operations include the service's current automatic ownership envelope. A durable cancellation fence rejects late controller results. If a request is interrupted, an out-of-band service cancellation interrupts the remote operation before the local mutation lock is released. Scoped stop is dispatched at most once; uncertain delivery is fenced and retained as unknown, never replayed as another Back action. The manual gateway then obtains its own acknowledged receipt before wake, keys or text. Release drains input and acknowledges automatic ownership before resuming the planner. Physical remotes remain external actors.
 
-Version 0.10 retains the asynchronous native-focus reader's input/accessibility channels, action/device-time boundaries, evidence revisions and version-scoped window provenance. Independent stdout/stderr framing preserves complete multiline records and includes pending transport in screenshot validity. Unexpected listener exit latches failure; cleanup checks the owned remote PID/start time and never kills another collector. Screenshots carry `native_focus` separately from the goal-blind `Scene.focus`. Revisions are checked after observation and inside the shared input gate. Cancel/Stop drains the reader. No event is unknown evidence, not proof of no movement.
-
-The controller opens a visually confirmed result with one short Select, then navigates its menu using observed visible order and fresh input labels. Neither the Watch Live index nor the menu size is fixed. Unexpected labels or boundaries require renewed visual context; Select still validates the requested event/live variant. Opening the result does not count as live activation. The LLM handles unresolved layouts and card identity; labels alone never name the event inside a row.
-
-Structured v2 snapshots/callbacks bind the visually matched player to boot/service UUID/connection epoch/session-instance/runtime-ID identity after Watch Live. Two dumps bracket bounded journal export, and strict collection, writer and interval validation gates continuity. Token hashes are diagnostic only in v2; v1 has a separate legacy reader. Counter changes, gaps, restarts and contradictory callbacks withdraw the prior association. Recovery requires fresh visual live evidence while retaining historical losses. Stable monitoring avoids per-poll image/model work, with bounded-age visual rechecks. Original acquisition timestamps remain separate from visual timestamps and API read times. Historical removals never become current sessions or completion. See [runtime grounding](runtime-grounding.md). These are optional report fields, not additional APIs or database tables. Explicit setup installs the supplied same-signer v2 APK; startup and Play never grant permissions or install software.
+Native stop confirmation is separate from input quiescence. The Cancel response reports `stopped`, `already_inactive`, `not_current`, or `unknown`; page exit alone remains unknown. Current playback verification uses the saved service session, attempt, resolved title ID and original observation age. The optional text LLM chooses among eligible labels; it does not establish playback state.
 
 ## League discovery
 

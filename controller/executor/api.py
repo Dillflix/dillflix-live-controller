@@ -123,7 +123,7 @@ def install_executor_api(app, service):
             result = await service.executor.cancel(command)
         except TimeoutError as error:
             raise ExecutorError(
-                "cancel_unconfirmed", "Cancellation is retained but stop is not yet confirmed"
+                "cancel_unconfirmed", "Cancellation is retained but input quiescence is not yet confirmed"
             ) from error
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
 

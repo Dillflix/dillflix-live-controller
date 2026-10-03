@@ -191,7 +191,7 @@ def prepare_restore(path, prior):
             Database.set_meta(db, f"manual-owner:{d['id']}", None)
             d["input_handoff"] = (
                 {"through_intent_version": d["intent_version"]}
-                if Database.meta(db, "playback_adapter") == "prime-video"
+                if Database.meta(db, "playback_adapter") not in (None, "simulator")
                 else None
             )
             Database.save_device(db, d)

@@ -1,4 +1,4 @@
-"""Validated wire requests and goal-blind perception contracts."""
+"""Validated playback API requests and durable reports."""
 
 from datetime import UTC, datetime
 from typing import Literal
@@ -71,68 +71,6 @@ class CancelRequest(Strict):
         if (self.token is None) == (self.through_intent_version is None):
             raise ValueError("Supply exactly one of token or through_intent_version")
         return self
-
-
-class Identity(Strict):
-    title: str | None
-    teams: list[str] = Field(max_length=4)
-    competition: str | None
-    date_text: str | None
-    provider: str | None
-    language: str | None
-    kind: Literal["game", "broadcast", "session", "unknown"]
-
-
-class Focus(Strict):
-    label: str | None
-    role: Literal["navigation", "event", "play_live", "replay", "start_over", "purchase", "signin", "unknown"]
-    identity: Identity | None
-    availability: Literal["live", "replay", "upcoming", "ended", "unknown"]
-    live_text: str | None
-
-
-class Player(Strict):
-    identity: Identity
-    live_edge: bool | None
-    live_text: str | None
-    transport: Literal["playing", "paused", "buffering", "ad", "unknown"]
-    position_seconds: float | None = Field(ge=0)
-
-
-class MenuItem(Strict):
-    label: str = Field(min_length=1, max_length=500)
-    provider: str | None
-    language: str | None
-
-
-class ActionMenu(Strict):
-    identity: Identity | None
-    availability: Literal["live", "replay", "upcoming", "ended", "unknown"]
-    live_text: str | None
-    layout: Literal["vertical", "horizontal", "unknown"]
-    # Visible items in screen order only. This is not an inventory of the menu.
-    items: list[MenuItem] = Field(max_length=40)
-
-
-class Completion(Strict):
-    identity: Identity | None
-    scope: Literal["game", "broadcast", "session", "unknown"]
-    final_text: str | None
-
-
-class Scene(Strict):
-    surface: Literal["search", "browse", "details", "live_choice", "player", "unknown"]
-    search_state: Literal["listings", "no_results", "loading", "empty", "unknown"]
-    current_query: str | None
-    blocker: Literal["none", "signin", "purchase", "profile", "error", "unknown"]
-    focus: Focus
-    player: Player | None
-    completion: Completion
-    action_menu: ActionMenu | None = None
-
-
-class Decision(Strict):
-    action: Literal["UP", "DOWN", "LEFT", "RIGHT", "SELECT", "BACK", "WAIT", "FINISH"]
 
 
 class ErrorDetail(Strict):
@@ -232,42 +170,7 @@ class ContentStatus(Strict):
 class Cancellation(Strict):
     state: Literal["none", "requested", "acknowledged"]
     input_quiescent: bool
-
-
-class RuntimeStatus(Strict):
-    source: str
-    source_health: str
-    observed_at: datetime
-    valid_until: datetime
-    foreground: str | None
-    session_token: str | None
-    runtime_media_id: str | None
-    boot_id: str | None
-    probe_instance: str | None = None
-    schema_version: int | None = None
-    probe_build: str | None = None
-    service_instance_id: str | None = None
-    connection_epoch: int | None = None
-    session_instance_id: str | None = None
-    collection_health: str | None = None
-    journal_health: str | None = None
-    history_status: str | None = None
-    latest_produced_sequence: int | None = None
-    latest_written_sequence: int | None = None
-    loss_counters: dict[str, int] = Field(default_factory=dict)
-    problems: list[str] = Field(default_factory=list, max_length=24)
-    identity_revision: int | None
-    transport: str
-    binding: Literal["visually_associated", "unbound", "revalidation_required"]
-    bound_content_id: str | None
-    last_visual_at: datetime | None
-    live_mode: Literal["watch_live_selected", "visually_at_live", "unknown"]
-    live_edge: Literal["unmeasured"] = "unmeasured"
-    position_ms: float | None
-    position_meaning: str
-    history_available: bool
-    history_gap: bool = False
-    recent_events: list[dict] = Field(max_length=24)
+    active_playback: Literal["stopped", "already_inactive", "unknown", "not_current"] = "unknown"
 
 
 class PlaybackReport(Strict):
@@ -284,7 +187,7 @@ class PlaybackReport(Strict):
     content_status: ContentStatus
     cancellation: Cancellation
     retained_until: datetime | None
-    runtime: RuntimeStatus | None = None
+    prime_player: dict | None = None
 
 
 class CancelResult(Strict):
@@ -292,7 +195,7 @@ class CancelResult(Strict):
     token: str | None
     through_intent_version: int | None
     input_quiescent: Literal[True]
-    active_playback: Literal["stopped", "already_inactive"]
+    active_playback: Literal["stopped", "already_inactive", "unknown", "not_current"]
     acknowledged_at: datetime
 
 
