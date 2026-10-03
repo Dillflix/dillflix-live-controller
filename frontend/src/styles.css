@@ -1555,3 +1555,20 @@ select:focus-visible {
     justify-content: center;
   }
 }
+
+.df-discovery-brief {
+  display: block;
+  margin: 1rem 0;
+}
+.df-discovery-brief textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 7rem;
+  margin-top: 0.5rem;
+  padding: 0.65rem;
+  font: inherit;
+  resize: vertical;
+  border: 1px solid var(--df-border, #d8dee8);
+  border-radius: 0.5rem;
+}

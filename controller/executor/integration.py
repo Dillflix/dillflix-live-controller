@@ -20,6 +20,8 @@ class IntegratedPlaybackAdapter:
             "intent_version": report["intent_version"],
             "content_id": report["content_id"],
             "state": report["operation"]["state"],
+            "phase": report["operation"]["phase"],
+            "prime_player": report.get("prime_player"),
             "observation": report["observation"],
             "reason": (report["operation"]["error"] or {}).get("message"),
         }

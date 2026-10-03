@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from ..content_status import source_observation
 from ..database import encode
 from ..planner import parse_time
-from .models import ExecutorError, PlaybackRequest
+from .models import ExecutorError, intent_adapter
 
 
 def utc():
@@ -27,7 +27,7 @@ class ExecutorStore:
         return row
 
     def submit(self, request):
-        body = PlaybackRequest.model_validate(request).model_dump(mode="json")
+        body = intent_adapter.validate_python(request).model_dump(mode="json")
         digest = hashlib.sha256(encode(body).encode()).hexdigest()
         with self.db.transaction() as db:
             prior = db.execute(
@@ -90,17 +90,17 @@ class ExecutorStore:
             )
             for old in db.execute(
                 "SELECT * FROM executor_jobs WHERE device_id=? AND cancel_requested=0 AND retired_at IS NULL "
-                "AND state IN ('accepted','navigating','playing_verified')",
+                "AND state IN ('accepted','navigating','playing_verified','completed')",
                 (body["device_id"],),
             ).fetchall():
                 report = json.loads(old["report"])
                 report["cancellation"] = {"state": "requested", "input_quiescent": False}
-                if old["state"] != "playing_verified":
+                if old["state"] not in {"playing_verified", "completed"}:
                     report["operation"].update(state="superseded", phase="superseded", finished_at=utc())
                 self.write(db, old["token"], report, cancel_requested=1, next_check=0)
             token, now = "pb_" + secrets.token_urlsafe(24), utc()
             report = {
-                "schema_version": 1,
+                "schema_version": body["schema_version"],
                 "token": token,
                 "request_id": body["request_id"],
                 "device_id": body["device_id"],
@@ -210,6 +210,7 @@ class ExecutorStore:
             "retired_at",
             "next_check",
             "completion_candidate",
+            "content_id",
         }
         if set(fields) - allowed:
             raise ValueError("Unknown executor record field")
@@ -246,6 +247,15 @@ class ExecutorStore:
                 status=409,
                 retryable=False,
             )
+        if navigation:
+            request = json.loads(row["request"])
+            if request.get("purpose") == "discovery" and request.get("interests", {}).get("policy_key"):
+                from ..discovery import policy_key
+
+                if request["interests"]["policy_key"] != policy_key(device):
+                    raise ExecutorError(
+                        "superseded", "Discovery preferences changed", status=409, retryable=False
+                    )
         return row
 
     def phase(self, token, phase, *, attempt=None):

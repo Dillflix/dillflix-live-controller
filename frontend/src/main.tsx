@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { api, ApiError, commandId } from "./api";
 import { TeamRanking } from "./TeamRanking";
+import { PrimeDiscoverySettings } from "./PrimeDiscoverySettings";
 import { ConfigurationTools } from "./ConfigurationTools";
 import { DiagnosticsTools } from "./DiagnosticsTools";
 import { ScreenPanel } from "./ScreenPanel";
@@ -497,6 +498,8 @@ function App() {
     !!d.recovery?.retry_after;
   const requestPurpose = data.playback_job
     ? {
+        discovery: "Discovering live sports",
+        page_refresh: "Refreshing Prime pages",
         selection: "Event selection",
         route_handoff: "Updated coverage for the same event",
         recovery: "Live playback recovery",
@@ -861,13 +864,16 @@ function App() {
                   </span>
                   <Pill>
                     {d.playback_state === "verified"
-                      ? "Simulated live"
+                      ? d.observed?.simulated
+                        ? "Simulated live"
+                        : "Live"
                       : d.playback_state}
                   </Pill>
                 </div>
                 <div className="df-playing-title">
                   {(d.playback_state === "navigating" ? desired : observed)
                     ?.title ||
+                    d.discovered?.title ||
                     (d.manual_control
                       ? "You choose what’s on TV"
                       : "Waiting for live sports")}
@@ -885,7 +891,9 @@ function App() {
                     {data.playback_job.purpose === "route_handoff"
                       ? "Updating coverage for the same event"
                       : `Request ${data.playback_job.progress || "queued"}`}{" "}
-                    · waiting for live verification
+                    {data.playback_job.purpose === "page_refresh"
+                      ? "· updating available tabs"
+                      : "· waiting for live verification"}
                   </div>
                 )}
                 {d.playback_state === "unverified" && !playbackOffline && (
@@ -1510,6 +1518,21 @@ function App() {
                     </select>
                   </div>
                 </section>
+                <PrimeDiscoverySettings
+                  device={d}
+                  busy={busy}
+                  save={preference}
+                  refresh={() =>
+                    void mutate(
+                      () =>
+                        api(devicePath + "/prime-pages/refresh", {
+                          command_id: commandId(),
+                          expected_revision: d.revision,
+                        }),
+                      "Page refresh queued.",
+                    )
+                  }
+                />
                 <ConfigurationTools
                   devicePath={devicePath}
                   busy={busy}
@@ -1910,9 +1933,9 @@ function App() {
               <p>The desired target and observed playback are separate.</p>
               <dl className="df-kv">
                 <dt>Requested</dt>
-                <dd>{desired?.title || "Waiting"}</dd>
+                <dd>{desired?.title || d.discovered?.title || "Waiting"}</dd>
                 <dt>Observed</dt>
-                <dd>{observed?.title || "None"}</dd>
+                <dd>{observed?.title || d.discovered?.title || "None"}</dd>
                 <dt>State</dt>
                 <dd>{d.playback_state}</dd>
                 <dt>Playback service</dt>

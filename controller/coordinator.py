@@ -6,11 +6,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from .database import encode
+from .discovery import DiscoveryCoordinator
 from .planner import choose, parse_time
 from .recovery import PlaybackRecovery, compatible_options
 
 
-class PlaybackCoordinator(PlaybackRecovery):
+class PlaybackCoordinator(DiscoveryCoordinator, PlaybackRecovery):
     def owns_device(self, db, device_id):
         row = db.execute(
             "SELECT owner,expires FROM leases WHERE resource=?", (f"device:{device_id}",)
@@ -33,6 +34,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             indexed = {i["content_id"]: i for i in items}
             now = self.now(db)
             decision = choose(d, items, now, real)
+            if self.maybe_stage_discovery(db, d, decision, items, real):
+                return True
             d["force_switch"] = False
             target = decision["content_id"]
             d["reason"] = decision["reason"]
@@ -158,6 +161,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             return True
 
     def fail_attempt(self, db, d, job, reason, state="failed"):
+        if json.loads(job["payload"]).get("schema_version") == 2:
+            return self.discovery_failed(db, d, job, reason, state)
         prior = d["failures"].get(job["content_id"], {})
         attempts = prior.get("attempts", 0) + 1
         wait = 5 if attempts == 1 else 15 if attempts == 2 else 300
@@ -194,7 +199,12 @@ class PlaybackCoordinator(PlaybackRecovery):
             or observation.get("health") != "healthy"
         ):
             return "Requested live playback was not verified"
-        options = json.loads(job["payload"])["allowed_viewing_options"]
+        payload = json.loads(job["payload"])
+        if payload.get("schema_version") == 2:
+            resolution = json.loads(job["resolution"] or "{}")
+            options = [{"id": resolution.get("viewing_option_id")}]
+        else:
+            options = payload["allowed_viewing_options"]
         if observation.get("viewing_option_id") not in {o["id"] for o in options}:
             return "Playback used an option outside the permitted set"
         try:
@@ -223,6 +233,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             if not job or job["state"] != "pending" or not self.owns_device(db, job["device_id"]):
                 return False
             d = self.db.device(db, job["device_id"])
+            if json.loads(job["payload"]).get("schema_version") == 2:
+                return self.receive_discovery_report(db, d, job, report)
             items = self.items(db, d["id"])
             decision = choose(d, items, self.now(db), datetime.now(UTC))
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)
@@ -275,6 +287,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                     self.fail_attempt(db, d, job, error, "rejected")
                 else:
                     same_event = (d.get("observed") or {}).get("content_id") == job["content_id"]
+                    d["discovered"] = None
                     d["observed"] = report["observation"]
                     d["playback_state"] = "verified"
                     if not same_event:

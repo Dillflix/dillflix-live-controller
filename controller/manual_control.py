@@ -97,11 +97,14 @@ class ManualControl:
             self.db.save_device(db, device)
 
     def clear_playback_for_manual(self, db, device):
+        if device["prime_pages"]["state"] == "refreshing":
+            device["prime_pages"]["state"] = "queued"
         device["intent_version"] += 1
         db.execute("UPDATE jobs SET state='cancelled' WHERE device_id=? AND state='pending'", (device["id"],))
         device.update(
             desired=None,
             observed=None,
+            discovered=None,
             playback_state="waiting",
             started_at=None,
             last_switch_at=None,

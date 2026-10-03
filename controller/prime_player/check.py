@@ -29,6 +29,9 @@ async def check(settings):
             "ownership": health["ownership"],
             "serial": health["serial"],
             "match_model_configured": bool(config.prime_match_model),
+            "discovery_model_configured": bool(config.prime_discovery_model or config.prime_match_model),
+            "discovery_api_implemented": health.get("api_version", 0) >= 6
+            and {"pages", "discover"}.issubset(health.get("capabilities", [])),
             "device_mutations": 0,
         }
     finally:

@@ -135,6 +135,8 @@ class PlaybackRecovery:
                         existing.get("viewing_option_id"),
                     )
                 )
+                if job and json.loads(job["payload"]).get("purpose") == "discovery":
+                    route_valid = bool(job["resolution"] and d.get("discovered"))
                 if (
                     route_valid
                     and isinstance(observation, dict)

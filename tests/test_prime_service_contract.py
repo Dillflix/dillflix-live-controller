@@ -157,3 +157,66 @@ async def test_real_stop_reports_page_exit_separately_from_native_confirmation(
     assert result["page_exited"] is True
     assert result["attempt_id"] == aid and result["session_id"] == health["session_id"]
     assert [c[0] for c in runtime.calls].count("stop-playback") == 1
+
+
+async def test_api6_controller_client_receives_one_combined_result_scope(service, monkeypatch):
+    from datetime import UTC, datetime
+
+    from dillflix_prime_player import browsing
+    from dillflix_prime_player.models import SearchResults, SearchTile
+
+    from controller.models import PrimeDiscovery
+
+    controller, runtime, client, _ = service
+    original = runtime.compatibility
+
+    def compatibility():
+        report = original()
+        report["capabilities"].update(
+            {name: {"available": True} for name in ("native_inspection", "pages", "discover")}
+        )
+        return report
+
+    monkeypatch.setattr(runtime, "compatibility", compatibility)
+    tabs = [
+        dict(id="sports", title="Sports", kind="primary", available=True, position=0),
+        dict(id="dazn", title="DAZN", kind="channel", available=True, position=1),
+    ]
+    monkeypatch.setattr(browsing, "_discover", lambda *args: (None, tabs))
+    calls = []
+
+    def collect(c, tab, *args):
+        calls.append(tab["id"])
+        tile = SearchTile(
+            handle=tab["id"] + "-handle",
+            collection="Live",
+            position=0,
+            title="Live match",
+            date_label=None,
+            availability="live",
+            content_id="amzn1.dv.gti." + tab["id"],
+            candidate_ids=(),
+            identity_status="structural_slot_correlation",
+            labels=("LIVE",),
+            artwork=(),
+            bounds={},
+            intersects_viewport=True,
+        )
+        return SearchResults(
+            query="",
+            session_id=c.backend.session_id,
+            search_id=tab["id"],
+            generation=1,
+            observed_at=datetime.now(UTC).isoformat(),
+            tiles=(tile,),
+        )
+
+    monkeypatch.setattr(browsing, "_collect_page", collect)
+    health = await client.health()
+    client.require(health, "discover", "pages")
+    settings = {**PrimeDiscovery().model_dump(), "enabled_pages": ["sports", "dazn"]}
+    result = await client.discover(settings, client.ownership(health, automatic=True))
+    assert result["source"] == "discover" and result["pages"] == settings["enabled_pages"]
+    assert calls == ["sports", "dazn"]
+    assert list(controller.handles) == ["sports-handle", "dazn-handle"]
+    assert [t["occurrences"][0]["page_id"] for t in result["tiles"]] == calls

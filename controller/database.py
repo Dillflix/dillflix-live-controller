@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,7 +14,7 @@ def encode(value):
 
 class Database:
     # Older releases must not silently ignore completion or discovery decisions.
-    SCHEMA_VERSION = 8
+    SCHEMA_VERSION = 9
 
     def __init__(self, path):
         self.path = path
@@ -129,6 +130,35 @@ class Database:
                     at TEXT NOT NULL, action TEXT NOT NULL, state TEXT NOT NULL,
                     evidence_id TEXT, error TEXT)""")
                 db.execute("CREATE INDEX IF NOT EXISTS executor_actions_token ON executor_actions(token,id)")
+            if version < 9:
+                # An unresolved selection intent has no content identity yet.
+                # Rebuild preserves columns/data/indices while allowing NULL.
+                for table in ("jobs", "executor_jobs"):
+                    sql = db.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                    ).fetchone()[0]
+                    indices = [
+                        r[0]
+                        for r in db.execute(
+                            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+                            (table,),
+                        )
+                    ]
+                    db.execute(
+                        re.sub(
+                            r'CREATE TABLE ["`]?' + table + r'["`]?',
+                            "CREATE TABLE " + table + "_v9",
+                            sql,
+                            count=1,
+                        ).replace("content_id TEXT NOT NULL", "content_id TEXT")
+                    )
+                    db.execute(f"INSERT INTO {table}_v9 SELECT * FROM {table}")
+                    db.execute(f"DROP TABLE {table}")
+                    db.execute(f"ALTER TABLE {table}_v9 RENAME TO {table}")
+                    for index in indices:
+                        db.execute(index)
+                if "resolution" not in {r[1] for r in db.execute("PRAGMA table_info(jobs)")}:
+                    db.execute("ALTER TABLE jobs ADD COLUMN resolution TEXT")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
@@ -182,6 +212,12 @@ class Database:
             **json.loads(row["payload"]),
         }
         device["preferences"].setdefault("discovery_leagues", list(DEFAULT_LEAGUES))
+        from .models import PrimeDiscovery
+
+        device["preferences"].setdefault("prime_discovery", PrimeDiscovery().model_dump())
+        device.setdefault(
+            "prime_pages", {"pages": [], "state": "uninitialized", "last_success": None, "error": None}
+        )
         return device
 
     @staticmethod
