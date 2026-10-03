@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.5
+
+- An expired nonterminal copy of Teamarr feed status no longer overrides the current catalog when an event becomes selected/tracked. This removes a selection-dependent eligibility flip that can repeatedly stage and supersede queued jobs. Catalog timestamps remain unchanged; expired catalog evidence stays unknown and terminal observations remain retained.
+- This does not repair missing Prime search content IDs or model-provider request rejection.
+
 ## 0.14.4
 
 - Retain bounded model-provider JSON rejection details (message, parameter, code and type) in playback errors and diagnostic exports, redacting the configured API key and bearer/key patterns. Do not retain arbitrary error pages or extra response fields.

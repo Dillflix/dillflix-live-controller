@@ -211,11 +211,20 @@ class ContentStatusCoordinator:
         observation = json.loads(check["observation"]) if check and check["observation"] else None
         if (
             observation
-            and not pinned
+            and (
+                not pinned
+                or (
+                    observation.get("timestamp_basis") == "feed_received"
+                    and observation.get("source") in {"teamarr_feed", "feed_status_simulator"}
+                )
+            )
             and observation["state"] not in TERMINAL
             and observation_expiry(observation, self.settings.status_ttl) <= real
         ):
-            observation = None  # Unpinned discovery cards no longer receive independent lookups.
+            # Selecting an event must not make an expired copy of the same feed
+            # override the current catalog. The fallback retains catalog age;
+            # rereading it does not renew evidence or replace terminal facts.
+            observation = None
         if observation is None:
             try:
                 observation = source_observation(

@@ -186,3 +186,8 @@ Search matching still requires a playable live tile with a content ID; Prime Pla
 must resolve the live action and verify startup. Future, unknown, delayed, postponed,
 suspended and terminal statuses do not qualify via this rule. Expected end times
 never prove completion. Failed matches use the existing retry backoff.
+
+Expired nonterminal status records copied from Teamarr use current catalog evidence
+regardless of whether the event is selected/tracked. Selecting an event must not
+change the precedence of an expired feed copy. This fallback preserves catalog
+receipt age and retained terminal observations; it does not renew stale evidence.

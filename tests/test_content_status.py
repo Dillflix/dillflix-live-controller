@@ -377,3 +377,28 @@ def test_outside_feed_demo_reaches_completion_without_losing_the_plan(rig):
     s.tick()
     assert card(s, "demo:canadiens")["lifecycle"]["state"] == "ended"
     assert s.overview()["device"]["plan"][0]["content_id"] == "demo:canadiens"
+
+
+@pytest.mark.parametrize('pinned', [False, True])
+@pytest.mark.parametrize('feed_age, expected', [(30, 'live'), (180, 'unknown')])
+def test_expired_feed_copy_does_not_change_eligibility_when_selected(pinned, feed_age, expected):
+    from types import SimpleNamespace
+
+    from controller.content_status import ContentStatusCoordinator, source_observation
+
+    service = ContentStatusCoordinator()
+    service.settings = SimpleNamespace(mode="teamarr", status_ttl=120)
+    now = datetime.now(UTC)
+    snapshot = {'id': 'event:test', 'status': 'live'}
+    old = source_observation(snapshot, (now - timedelta(seconds=240)).isoformat(),
+                             now, now, 'teamarr', 120)
+    old.update(source='teamarr_feed', simulated=False)
+    row = {'snapshot': json.dumps(snapshot), 'seen_at': (now - timedelta(seconds=feed_age)).isoformat()}
+    check = {'observation': json.dumps(old), 'error': None, 'last_attempt': None,
+             'last_success': None, 'next_check': 0}
+    result = service.content_lifecycle(row, check, now, now, pinned)
+    assert result['state'] == expected
+    assert result['received_at'] == row['seen_at']
+    old['state'] = 'ended'
+    check['observation'] = json.dumps(old)
+    assert service.content_lifecycle(row, check, now, now, pinned)['state'] == 'ended'
