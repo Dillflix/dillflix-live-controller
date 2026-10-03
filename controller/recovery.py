@@ -34,7 +34,7 @@ class PlaybackRecovery:
     def executor_available(self, db):
         return self.db.device(db).get("executor_health", {}).get("state") != "offline"
 
-    def begin_observation_recovery(self, device, now):
+    def begin_observation_recovery(self, device, now, *, not_before=None, reason=None):
         content_id = device["observed"]["content_id"]
         recovery = device.get("recovery") or {}
         if recovery.get("content_id") != content_id:
@@ -43,10 +43,15 @@ class PlaybackRecovery:
             delay = min(self.settings.playback_recovery_grace * 2 ** min(recovery.get("attempts", 0), 3), 300)
             recovery.update(
                 since=now.isoformat(),
-                retry_after=(now + timedelta(seconds=delay)).isoformat(),
+                retry_after=max(now + timedelta(seconds=delay), not_before or now).isoformat(),
                 stable_since=None,
             )
+        elif not_before and recovery.get("retry_after"):
+            # Retained recovery state may have been created by an older version.
+            recovery["retry_after"] = max(parse_time(recovery["retry_after"]), not_before).isoformat()
         device["recovery"] = recovery
+        if reason:
+            recovery["reason"] = reason
 
     def note_verified_playback(self, device, now):
         recovery = device.get("recovery")
@@ -57,6 +62,7 @@ class PlaybackRecovery:
             return
         recovery["since"] = None
         recovery["retry_after"] = None
+        recovery.pop("reason", None)
         recovery["stable_since"] = recovery.get("stable_since") or now.isoformat()
         if (
             now - parse_time(recovery["stable_since"])
@@ -72,10 +78,14 @@ class PlaybackRecovery:
                 not health.get("next_probe_at")
                 or parse_time(health["next_probe_at"]).timestamp() <= time.time()
             )
-        observation, transport_error = None, None
+        observation, transport_error, monitoring = None, None, {}
         if probe_due:
             try:
-                observation = self.playback.observe("living-room")
+                if hasattr(self.playback, "observe_report"):
+                    monitoring = self.playback.observe_report("living-room") or {}
+                    observation = monitoring.get("observation")
+                else:
+                    observation = self.playback.observe("living-room")
             except Exception as exc:
                 transport_error = f"{type(exc).__name__}: playback service unavailable"
         with self.db.transaction() as db:
@@ -155,7 +165,7 @@ class PlaybackRecovery:
                             db,
                             self.now(db).isoformat(),
                             "Playback observation recovered",
-                            "Fresh simulated live observation received",
+                            "Fresh matching live playback observation received",
                             "verified",
                         )
                     self.note_verified_playback(d, now)
@@ -163,21 +173,48 @@ class PlaybackRecovery:
                     expiry = min(
                         parse_time(existing.get("valid_until")) or datetime.max.replace(tzinfo=UTC),
                         parse_time(existing["observed_at"])
-                        + timedelta(seconds=self.settings.observation_ttl),
+                        + timedelta(seconds=self.settings.playback_evidence_ttl),
                     )
-                    if not route_valid or expiry <= now:
+                    withdrawn = bool(
+                        isinstance(observation, dict)
+                        and observation.get("verified") is False
+                        and all(
+                            observation.get(k) == existing.get(k)
+                            for k in ("device_id", "request_id", "intent_version", "content_id")
+                        )
+                        and parse_time(observation["observed_at"]) >= parse_time(existing["observed_at"])
+                    )
+                    if not route_valid or withdrawn or expiry <= now:
+                        if not route_valid:
+                            detail = "Coverage changed"
+                        elif expiry <= now:
+                            detail = "Playback evidence expired; waiting briefly for recovery"
+                        else:
+                            detail = monitoring.get("reason") or "Current playback is unverified; waiting for recovery"
                         if existing.get("verified"):
                             self.db.log(
                                 db,
                                 self.now(db).isoformat(),
                                 "Playback requires revalidation",
-                                "Coverage changed"
-                                if not route_valid
-                                else "Playback evidence expired; waiting briefly for recovery",
+                                detail,
                                 "recovery",
                             )
                         existing["verified"] = False
                         if d["playback_state"] == "verified":
                             d["playback_state"] = "unverified"
-                        self.begin_observation_recovery(d, now)
+                        temporary = withdrawn and monitoring.get("player_state") in {
+                            "paused", "buffering", "unknown"
+                        }
+                        reason = detail
+                        if route_valid and expiry > now:
+                            if monitoring.get("player_state") == "paused":
+                                reason = "Prime playback is paused; allowing time to resume"
+                            elif monitoring.get("player_state") == "buffering":
+                                reason = "Prime playback is buffering; allowing time to recover"
+                        self.begin_observation_recovery(
+                            d,
+                            now,
+                            not_before=expiry if route_valid and temporary else None,
+                            reason=reason,
+                        )
             self.db.save_device(db, d)

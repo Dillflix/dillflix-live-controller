@@ -87,6 +87,12 @@ Load **Playback service outage** to disconnect the simulator after initial playb
 
 When the service responds but playback evidence is missing, the controller first waits for recovery. The initial grace is `PLAYBACK_RECOVERY_GRACE_SECONDS` (default 60, minimum 5). Repeated losses after recovery attempts increase the wait, up to 300 seconds; 30 seconds of healthy observations reset that budget. After grace, selection can reopen a confirmed live target, choose a confirmed live fallback, or wait. Unknown event status never authorizes a new playback request. Fresh verified playback can continue through a status outage. A higher live manual choice takes precedence, and **Play now** can explicitly retry an unverified live target without waiting for grace.
 
+Prime paused, buffering or temporarily unknown playback waits through the remaining
+five-minute evidence window before an automatic reopen. The current request remains
+unverified and continues monitoring. A final read-only check must finish before
+recovery can replace it; resumed playback keeps the original request and viewing
+timers. See [Prime monitoring and recovery](docs/prime-player.md#persistence-and-monitoring).
+
 The simulator stores executor state separately from controller jobs. On restart or an uncertain delivery outcome, the controller inspects the original request before resending the same ID. Cancellation is durable and retried; it ends pending navigation and matching active playback without stopping a newer target. Manual input waits for an acknowledged device cancellation barrier. Playback calls run in a drained worker thread so slow adapter calls do not block the HTTP event loop. In real mode the embedded adapters use durable token records; model HTTP and ADB run asynchronously with finite deadlines, and physical input shares the manual-control gate.
 
 ## Exercise independent content status

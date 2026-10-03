@@ -173,7 +173,7 @@ def choose(device, items, now, real_now):
                 "content_id": current_id,
                 "manual": current_id in order,
                 "rule_id": None,
-                "reason": "Playback evidence is missing; allowing time for recovery"
+                "reason": recovery.get("reason") or "Playback evidence is missing; allowing time for recovery"
                 if holding
                 else "Status is stale; retaining existing verified playback",
             }

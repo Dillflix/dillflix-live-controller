@@ -44,6 +44,11 @@ class IntegratedPlaybackAdapter:
         return self.project(report) if report else None
 
     def observe(self, device_id):
+        report = self.observe_report(device_id)
+        return report["observation"] if report else None
+
+    def observe_report(self, device_id):
+        """Read observation and monitoring outcome from the same durable snapshot."""
         if self.executor.stopping or not self.executor.loop:
             raise ConnectionError("Playback executor is not running")
         with self.executor.db.transaction() as db:
@@ -53,7 +58,18 @@ class IntegratedPlaybackAdapter:
             if not owner or not owner[0]:
                 return None
             report = self.executor.store.project(self.executor.store.get_row(db, owner[0]), db)
-            return report["observation"]
+            error = report["observation_status"].get("error") or {}
+            status = (report.get("prime_player") or {}).get("playback_status") or {}
+            return {
+                "observation": report["observation"],
+                "reason": error.get("message"),
+                "player_state": status.get("state", "unknown")
+                if error.get("code") == "prime_playback_unverified"
+                else "unknown",
+            }
+
+    def prepare_recovery(self, db, request_id, after):
+        return self.executor.prepare_recovery(db, request_id, after)
 
     def cancel(self, request_id):
         report = self.executor.store.by_request(request_id)

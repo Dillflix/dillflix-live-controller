@@ -87,6 +87,20 @@ controller. Changing only the request timeout leaves the old 15-second evidence
 expiry problem in earlier controller versions. Updating the controller does not
 require restarting Prime Player.
 
+Paused, buffering and temporarily unknown results immediately remove the playing
+claim, but automatic recovery waits through the remaining five-minute window from
+the last verified observation. Repeated unsuccessful checks do not extend it.
+Matching resumed playback restores verification on the original request without
+changing viewing timers. Explicit stopped/error/switched results keep the ordinary
+recovery grace; none of these results establishes sporting-event completion.
+
+Before automatically reopening the same event, the coordinator requires a recently
+completed read-only check after recovery became due. It queues that check on the
+existing worker and lets an in-flight monitor finish. A resumed result cancels the
+reopen; a continued nonplaying/unverified result allows ordinary recovery if the
+event is still live and its route remains permitted. Explicit Play now and route
+changes bypass this same-event guard; manual ownership still gates all automation.
+
 Paused, buffering, stopped, switched, ended and unknown player states are recorded
 without asserting sporting-event completion. Teamarr and the user's explicit
 manual completion remain the lifecycle sources. Live mode means the service
