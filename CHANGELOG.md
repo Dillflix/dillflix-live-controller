@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.11
+
+- Honor the five-minute Prime evidence lifetime in the coordinator's refresh path as well as result acceptance. A remaining 15-second expiry check could still start recovery early.
+- Keep paused, buffering and temporarily unknown playback unverified while holding the original attempt through the remaining evidence window. Repeated observations do not extend that window. Resumed verified playback preserves the attempt and viewing timers.
+- Require a recently completed status check after recovery becomes due; queue it on the existing worker and wait for an in-flight check without cancelling it. Explicit Play now, manual takeover and route changes retain their existing precedence.
+- Report the actual monitoring failure or player state in recovery activity instead of labelling every loss as expired evidence.
+
 ## 0.14.10
 
 - Allow one minute for Prime Player's playback-status check instead of truncating its multi-query native progression check at 10 seconds.

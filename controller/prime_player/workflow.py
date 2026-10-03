@@ -451,6 +451,28 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             report.setdefault("prime_player", {}).update(fields)
             self.store.write(db, token, report)
 
+    def prepare_recovery(self, db, request_id, after):
+        """Require a completed read-only check before replacing the old attempt.
+
+        Called in the coordinator's staging transaction. Queue the check on the
+        existing worker; never cancel an in-flight monitor or perform RPC here.
+        """
+        row = db.execute("SELECT * FROM executor_jobs WHERE request_id=?", (request_id,)).fetchone()
+        if not row or row["cancel_requested"] or row["state"] != "playing_verified":
+            return True
+        report = json.loads(row["report"])
+        checked = parse_time(report["observation_status"].get("checked_at"))
+        in_flight = self.active_token == row["token"] and self.active and not self.active.done()
+        recent = checked and 0 <= (datetime.now(UTC) - checked).total_seconds() < self.settings.observation_ttl
+        if recent and checked >= after and not in_flight:
+            # A resumed result may arrive between the coordinator's observation
+            # read and this staging transaction. Let the next tick adopt it.
+            return not bool((report.get("observation") or {}).get("verified"))
+        if not in_flight:
+            db.execute("UPDATE executor_jobs SET next_check=0 WHERE token=?", (row["token"],))
+            self.notify()
+        return False
+
     @correlated
     async def interrupt(self, token, *, force=False):
         """Fence remote work without waiting on the local mutation lock."""

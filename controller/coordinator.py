@@ -96,6 +96,18 @@ class PlaybackCoordinator(PlaybackRecovery):
                 and (retry_due or d.get("retry_playback") == target)
                 and indexed[target]["playable"]
             )
+            if (
+                retry
+                and not handoff
+                and d.get("retry_playback") != target
+                and hasattr(self.playback, "prepare_recovery")
+                and not self.playback.prepare_recovery(
+                    db, observed.get("request_id"), parse_time(recovery["retry_after"])
+                )
+            ):
+                d["reason"] = "Rechecking the current playback attempt before recovery"
+                self.db.save_device(db, d)
+                return True
             missing_job = bool(target and not pending and d["playback_state"] == "navigating")
             needs_request = (
                 target != d.get("desired")
