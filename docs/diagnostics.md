@@ -4,16 +4,18 @@ Activity now shows the controller state, executor availability, current job prog
 
 Use **Activity → Export diagnostics** during an incident, before restarting either service. The device-scoped JSON contains up to 1,000 Activity entries, 100 controller/executor jobs, 1,000 executor action records, retained search/matching/launch/status evidence, cancellation and stop receipts, manual handoff, controller worker status and a read-only Prime Player health snapshot. Job tokens, request IDs, service session IDs and attempt IDs correlate the records. Capturing this does not search, query native playback, stop playback or acquire input ownership.
 
-Prime Player 0.1.0a7 additionally supplies its last 1,000 completed RPC records and currently running RPCs with elapsed durations. This history is bounded to the current player process and omits search strings, handles and request bodies. The export works with older/unreachable players and records which collection failed. Database collection precedes service collection; timestamps describe each snapshot rather than claiming an atomic cross-service snapshot.
+Controller 0.14.9 and Prime Player 0.1.0a14 add persistent RPC request/response
+bodies, controller/player runtime logs and tracebacks, resolver observations, and
+continuous read-only device logcat/activity capture. The controller can read
+persisted player logs through its existing socket-directory mount when the player
+is offline. See [combined export contents, retention and validation](diagnostic-export.md).
 
-Credentials/configuration and standalone full catalog/request snapshots are excluded; captured model prompts include the source data actually sent to the model. Content titles, searches in retained controller matching evidence, and device identifiers can be present. This is a support bundle, not an exhaustive export of host journal, Docker stdout or Frida debug output. Those logs remain separate:
-
-```sh
-sudo journalctl -u dillflix-prime-player -u dillflix-controller --since '30 minutes ago' --no-pager > dillflix-service.log
-docker compose logs --since 30m --no-color controller > dillflix-controller.log
-```
-
-The service journal is available after supervised installation. Existing foreground output remains in the operator's `service.log` if launched through `tee`.
+These are bounded captures with explicit missing-source, truncation and dropped
+record metadata, not an exhaustive host journal. Credentials and manual input
+text are omitted; titles, model prompts, searches and device identifiers remain.
+Earlier players supply only current-process RPC summaries without bodies.
+Capture begins after updating and restarting both services; previously missing
+logs cannot be recovered retroactively.
 
 ## One-time supervised installation
 

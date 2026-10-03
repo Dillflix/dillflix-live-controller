@@ -5,10 +5,35 @@ No SDK/device runtime is embedded here and no mutation is retried by transport.
 
 import asyncio
 import json
+import logging
+import time
+import uuid
+from contextvars import ContextVar
+from functools import wraps
 
 import httpx
 
+from ..diagnostic_log import request_body
 from ..executor.models import ExecutorError
+
+rpc_context = ContextVar("prime_rpc_context", default={})
+
+
+def correlated(function):
+    @wraps(function)
+    async def wrapped(self, row, *args, **kwargs):
+        correlation = (
+            {"token": row}
+            if isinstance(row, str)
+            else {"token": row["token"], "request_id": row["request_id"]}
+        )
+        reset = rpc_context.set(correlation)
+        try:
+            return await function(self, row, *args, **kwargs)
+        finally:
+            rpc_context.reset(reset)
+
+    return wrapped
 
 
 class PrimePlayerClient:
@@ -24,17 +49,36 @@ class PrimePlayerClient:
         await self.http.aclose()
 
     async def rpc(self, method, *, budget=60, **params):
+        call_id = uuid.uuid4().hex
+        started = time.monotonic()
+        log = logging.getLogger("controller.prime_rpc")
+        evidence = {
+            **rpc_context.get(),
+            "call_id": call_id,
+            "request": request_body(method, params),
+            "budget_seconds": budget,
+        }
+        if method != "diagnostics":
+            log.info("Prime RPC started", extra={"diagnostic_rpc": {**evidence, "phase": "request"}})
+        data = bytearray()
         try:
             async with asyncio.timeout(budget):
                 async with self.http.stream(
-                    "POST", "/rpc", json={"method": method, "params": params}, timeout=budget
+                    "POST",
+                    "/rpc",
+                    json={"method": method, "params": params},
+                    timeout=budget,
+                    headers={"X-Dillflix-Call-Id": call_id},
                 ) as response:
-                    data = bytearray()
+                    evidence["http_status"] = response.status_code
                     async for chunk in response.aiter_bytes():
                         data.extend(chunk)
                         if len(data) > 8 * 1024 * 1024:
                             raise ValueError("oversized response")
+                evidence["http_status"] = response.status_code
+                evidence["response"] = data.decode("utf-8", errors="replace")
                 body = json.loads(data)
+                evidence["response"] = body
                 if not isinstance(body, dict):
                     raise ValueError("invalid response")
                 if "error" in body:
@@ -49,13 +93,36 @@ class PrimePlayerClient:
                 if response.status_code != 200 or not isinstance(body.get("result"), dict):
                     raise ValueError("invalid response")
                 return body["result"]
-        except ExecutorError:
+        except ExecutorError as exc:
+            evidence["error"] = {"type": type(exc).__name__, "message": str(exc)}
             raise
         except (httpx.HTTPError, TimeoutError, ValueError, TypeError, AttributeError) as exc:
+            evidence["error"] = {"type": type(exc).__name__, "message": str(exc)}
             raise ExecutorError(
                 "prime_transport_unknown",
                 f"Prime Player {method} outcome is unknown; inspect the retained attempt before replay",
             ) from exc
+        except asyncio.CancelledError:
+            evidence["error"] = {
+                "type": "CancelledError",
+                "message": "Client wait cancelled; server outcome unknown",
+            }
+            raise
+        finally:
+            if method != "diagnostics":
+                if data and "response" not in evidence:
+                    evidence["partial_response"] = data[: 256 * 1024].decode("utf-8", errors="replace")
+                    evidence["response_incomplete"] = True
+                log.info(
+                    "Prime RPC finished",
+                    extra={
+                        "diagnostic_rpc": {
+                            **evidence,
+                            "phase": "finished",
+                            "duration_seconds": round(time.monotonic() - started, 3),
+                        }
+                    },
+                )
 
     async def control_health(self):
         """Read service identity even when playback/runtime health has failed."""

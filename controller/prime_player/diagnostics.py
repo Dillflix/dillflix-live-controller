@@ -130,7 +130,7 @@ def collect(path, device_id="living-room"):
                     "credentials",
                     "standalone request/source snapshots (model prompts may contain source data)",
                     "screenshots",
-                    "host journal and Docker stdout",
+                    "host journal and unrelated Docker stdout (application logs captured separately)",
                 ],
             }
         )

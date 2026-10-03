@@ -16,7 +16,7 @@ from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
 from ..model_diagnostics import capture_model_calls
 from ..planner import parse_time
-from .client import PrimePlayerClient
+from .client import PrimePlayerClient, correlated
 from .labels import search_queries
 from .matching import EventMatcher
 
@@ -127,6 +127,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from SCREEN_ADB_SERIAL")
         return health
 
+    @correlated
     async def navigate(self, row):
         token, request = row["token"], json.loads(row["request"])
         try:
@@ -406,6 +407,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             )
             return verified
 
+    @correlated
     async def monitor(self, row):
         token = row["token"]
         try:
@@ -449,6 +451,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             report.setdefault("prime_player", {}).update(fields)
             self.store.write(db, token, report)
 
+    @correlated
     async def interrupt(self, token, *, force=False):
         """Fence remote work without waiting on the local mutation lock."""
         report = self.store.report(token)
@@ -470,6 +473,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         self.save_cancellation(token, cancellation_receipt=acknowledged)
         return acknowledged
 
+    @correlated
     async def cancel_one(self, token):
         async with self.input_lock:
             with self.db.transaction() as db:

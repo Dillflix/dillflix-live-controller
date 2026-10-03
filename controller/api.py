@@ -1,7 +1,9 @@
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -9,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
 from .device_input import DeviceInput, same_origin
+from .diagnostic_log import LogHandler, Recorder, read_logs
 from .executor.api import install_executor_api
 from .models import (
     AutomationUpdate,
@@ -33,6 +36,15 @@ def create_app(settings=None, *, start_workers=True):
 
     @asynccontextmanager
     async def lifespan(app):
+        recorder = Recorder(Path(str(settings.database) + ".diagnostics"))
+        app.state.diagnostic_recorder = recorder
+        handler = LogHandler(recorder)
+        logger = logging.getLogger("controller")
+        previous_level = logger.level
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+        server_logger = logging.getLogger("uvicorn.error")
+        server_logger.addHandler(handler)
         try:
             if service.executor:
                 await service.executor.start()
@@ -41,15 +53,29 @@ def create_app(settings=None, *, start_workers=True):
                 service.start()
             yield
         finally:
-            await control.stop()
-            await screen.stop()
-            await service.stop()
+            try:
+                await control.stop()
+                await screen.stop()
+                await service.stop()
+            finally:
+                logger.removeHandler(handler)
+                server_logger.removeHandler(handler)
+                logger.setLevel(previous_level)
+                await asyncio.to_thread(recorder.close)
 
     app = FastAPI(title="Dillflix Controller", version="0.13.0", lifespan=lifespan)
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
     install_executor_api(app, service)
+
+    @app.middleware("http")
+    async def record_unhandled_failure(request, call_next):
+        try:
+            return await call_next(request)
+        except Exception:
+            logging.getLogger("controller.api").exception("Unhandled HTTP request failure")
+            raise
 
     @app.post("/api/v1/devices/{device_id}/control")
     async def manual_control(device_id: str, command: ManualControlCommand, request: Request):
@@ -101,25 +127,28 @@ def create_app(settings=None, *, start_workers=True):
         bundle = await asyncio.to_thread(collect, settings.database, device_id)
         bundle["controller_health"] = health()
         bundle["prime_player"] = {"state": "not_configured"}
+        recorder = getattr(app.state, "diagnostic_recorder", None)
+        bundle["controller_logs"] = await asyncio.to_thread(
+            recorder.snapshot if recorder else lambda: read_logs(str(settings.database) + ".diagnostics")
+        )
         if service.executor:
-            try:
-                # This is read-only and bypasses healthy-session validation so a
-                # failed runtime can still explain its failure. No device query.
-                player = service.executor.player
-                bundle["prime_player"] = {
-                    "state": "available",
-                    "health": await player.rpc("health", budget=5),
-                }
+            player = service.executor.player
+            bundle["prime_player"] = {"state": "unavailable"}
+            # Collect independently: a failed health call must not hide evidence.
+            for method, key in (("health", "health"), ("diagnostics", "service_diagnostics")):
                 try:
-                    bundle["prime_player"]["service_diagnostics"] = await player.rpc("diagnostics", budget=5)
+                    bundle["prime_player"][key] = await player.rpc(method, budget=5)
+                    if method == "health":
+                        bundle["prime_player"]["state"] = "available"
                 except Exception as exc:
-                    bundle["prime_player"]["service_diagnostics_error"] = type(exc).__name__
-            except Exception as exc:
-                bundle["prime_player"] = {
-                    "state": "unavailable",
-                    "error": type(exc).__name__,
-                    "detail": str(exc)[:500],
-                }
+                    bundle["prime_player"][key + "_error"] = {
+                        "type": type(exc).__name__,
+                        "detail": str(exc)[:500],
+                    }
+            if "service_diagnostics" not in bundle["prime_player"]:
+                bundle["prime_player"]["persisted_logs"] = await asyncio.to_thread(
+                    read_logs, Path(settings.executor.prime_socket).parent / "diagnostics"
+                )
         return JSONResponse(
             redact(bundle),
             headers={

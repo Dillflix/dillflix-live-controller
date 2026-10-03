@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.9
+
+- Persist correlated Prime Player RPC request/response bodies, transport failures and controller runtime logs with bounded retention and redaction.
+- Extend the web diagnostic export with player runtime/resolver evidence and read-only device logs, including shared-directory fallback when the player is offline. Export reports missing sources, writer failures, dropped records and truncation. Requires Prime Player 0.1.0a14 for new player/device capture.
+
 ## 0.14.8
 
 - Add College Football (`college-football`) to schedule discovery and readable event, priority and team-preference labels. New installations discover it by default; existing discovery choices are preserved and the league can be enabled in Settings.
