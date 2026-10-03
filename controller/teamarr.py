@@ -71,7 +71,7 @@ class TeamarrClient:
                     else:
                         # Omitting league would restore Teamarr's defaults. Keep
                         # other configured coverage sources but skip game discovery.
-                        params["source"] = ["nfl_redzone", "golf", "special_events"]
+                        params["source"] = ["nfl_redzone", "golf", "special_events", "dazn_tennis"]
                 entries, cursors = {}, set()
                 schema_version = None
                 for page_number in range(100):
@@ -94,6 +94,10 @@ class TeamarrClient:
                             raise ValueError("Feed entry requires an aware start_time")
                         if item.get("expected_end_time"):
                             parse_time(item["expected_end_time"])
+                        if item.get("status_received_at"):
+                            acquired = parse_time(item["status_received_at"])
+                            if acquired > datetime.now(UTC) + timedelta(seconds=5):
+                                raise ValueError("Feed status acquisition time is in the future")
                         if item["id"] in entries:
                             raise ValueError("Duplicate ID in Teamarr snapshot")
                         entries[item["id"]] = item
