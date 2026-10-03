@@ -1,6 +1,7 @@
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -244,6 +245,51 @@ async def test_original_sample_age_not_refreshed_by_polling(tmp_path):
         assert report["observation"]["observed_at"] == original
     finally:
         await cleanup(controller)
+
+
+async def test_verified_evidence_expires_after_five_minutes(tmp_path, monkeypatch):
+    controller, workflow = rig(tmp_path)
+    try:
+        token = await launch(workflow)
+        for monitored in (False, True):
+            if monitored:
+                await workflow.monitor(row(workflow, token))
+            report = workflow.store.report(token)
+            observation = report["observation"]
+            start = datetime.fromisoformat(observation["observed_at"])
+            until = datetime.fromisoformat(observation["valid_until"])
+            lifetime = controller.settings.playback_evidence_ttl
+            assert lifetime == 300
+            assert (until - start).total_seconds() == 300
+            request = payload()
+            job = {"device_id": report["device_id"], "id": report["request_id"],
+                   "intent": observation["intent_version"], "content_id": report["content_id"],
+                   "payload": json.dumps(request)}
+            # A full status request can finish after the old 15s evidence deadline.
+            now = start + timedelta(seconds=299)
+            monkeypatch.setattr("controller.coordinator.datetime", SimpleNamespace(now=lambda _: now))
+            assert controller.observation_error(job, observation) is None
+            now = until
+            assert "stale" in controller.observation_error(job, observation)
+    finally:
+        await cleanup(controller)
+
+
+def test_status_budget_and_evidence_lifetime_follow_deployment_settings(monkeypatch):
+    from controller.config import Settings
+    from controller.executor.config import ExecutorConfig
+
+    monkeypatch.delenv("PRIME_PLAYER_STATUS_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("PLAYBACK_ADAPTER", "prime-player")
+    monkeypatch.setenv("PRIME_PLAYER_SOCKET", "/test/player.sock")
+    config = ExecutorConfig.from_env()
+    assert config.prime_status_timeout == 60
+    assert Settings(executor=config).playback_evidence_ttl == 300
+    assert Settings().playback_evidence_ttl == 15
+    monkeypatch.setenv("PRIME_PLAYER_STATUS_TIMEOUT_SECONDS", "30")
+    config = ExecutorConfig.from_env()
+    assert config.prime_status_timeout == 30
+    assert Settings(executor=config).playback_evidence_ttl == 300
 
 
 async def test_service_restart_withdraws_verification_without_replay(tmp_path):

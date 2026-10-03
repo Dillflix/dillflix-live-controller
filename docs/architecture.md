@@ -174,6 +174,10 @@ An identity-matching `playing` launch/attempt result from Prime Player is suffic
 for startup acceptance. The controller does not require another playback inspection.
 The initial observation timestamp records receipt of that startup result; subsequent
 `playback_status` monitoring supplies current observation timestamps and expiry.
+Prime monitoring allows 60 seconds for a native playback check. Incoming sample
+freshness remains 15 seconds; stored verified evidence expires five minutes after
+its observation, so normal collection does not itself trigger recovery. Failed or
+contradictory status immediately revokes it, and missing updates still expire.
 A saved successful startup does not renew monitoring evidence across controller
 restarts. Cancellation reads service identity and ownership even when runtime health
 has failed or ownership is blocked, and only acknowledges controller cancellation

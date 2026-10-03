@@ -269,7 +269,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 "simulated": False,
                 "health": "healthy",
                 "observed_at": now.isoformat(),
-                "valid_until": (now + timedelta(seconds=self.settings.observation_ttl)).isoformat(),
+                "valid_until": (now + timedelta(seconds=self.settings.playback_evidence_ttl)).isoformat(),
                 "evidence": {
                     "method": "device_observation",
                     "evidence_id": f"prime:{workflow['session_id']}:{workflow['attempt_id']}",
@@ -349,7 +349,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                     "simulated": False,
                     "health": "healthy",
                     "observed_at": observed.isoformat(),
-                    "valid_until": (observed + timedelta(seconds=self.settings.observation_ttl)).isoformat(),
+                    "valid_until": (observed + timedelta(seconds=self.settings.playback_evidence_ttl)).isoformat(),
                     "evidence": {
                         "method": "device_observation",
                         "evidence_id": f"prime:{workflow['session_id']}:{workflow['attempt_id']}",

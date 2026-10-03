@@ -69,6 +69,24 @@ polling never manufactures fresh evidence. Historical Playing is not current
 Playing. Service restart or contradictory identity withdraws verification. A
 subsequent scheduled retry cannot pass an unresolved cancellation obligation.
 
+`PRIME_PLAYER_STATUS_TIMEOUT_SECONDS` defaults to **60**. A status observation
+collects two serialized native identity/position
+samples and state checkpoints; the old 10-second controller budget could expire
+after the first sample while the event continued playing.
+
+Newly returned samples must still be younger than 15 seconds (and pass the
+player's own freshness checks). Previously verified evidence has a separate
+bounded lifetime: **five minutes** from the original observation timestamp.
+The 5-second monitoring interval is unchanged. An unknown,
+failed, nonplaying or mismatched check withdraws verification immediately; expiry
+does not renew itself when no successful check arrives.
+
+Existing `.env` files can retain the old explicit value. Change
+`PRIME_PLAYER_STATUS_TIMEOUT_SECONDS=10` to `60`, then rebuild/recreate the
+controller. Changing only the request timeout leaves the old 15-second evidence
+expiry problem in earlier controller versions. Updating the controller does not
+require restarting Prime Player.
+
 Paused, buffering, stopped, switched, ended and unknown player states are recorded
 without asserting sporting-event completion. Teamarr and the user's explicit
 manual completion remain the lifecycle sources. Live mode means the service
