@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from playback_fixtures import payload, settings
 from test_prime_matching import GTI, results, tile
-from test_real_executor import payload, settings
 
 from controller.executor.models import CancelRequest, ExecutorError, PlaybackReport
 from controller.prime_player.client import PrimePlayerClient
@@ -17,8 +17,6 @@ async def test_prime_config_requires_no_vision_or_adb_settings(tmp_path):
         tmp_path,
         mode="prime-player",
         prime_socket="/run/prime/player.sock",
-        actor_model="",
-        observer_model="",
         base_url="",
     )
     config.executor.validate()
@@ -29,8 +27,8 @@ async def test_prime_config_requires_no_vision_or_adb_settings(tmp_path):
 
 
 class Player:
-    cancellation_ready = True
     require = staticmethod(PrimePlayerClient.require)
+    ownership = staticmethod(PrimePlayerClient.ownership)
 
     def __init__(self):
         self.calls = []
@@ -41,6 +39,8 @@ class Player:
         self.age = 0
         self.lost_response = False
         self.cancel_ack = True
+        self.stop_confirmed = True
+        self.epoch = 0
         self.search_entered = asyncio.Event()
         self.search_release = None
 
@@ -50,12 +50,24 @@ class Player:
     async def health(self):
         return {
             "session_id": self.session,
+            "api_version": 4,
+            "serial": "fixture",
+            "ownership": {
+                "session_id": self.session,
+                "epoch": self.epoch,
+                "mode": "manual" if self.suspended else "automatic",
+                "handoff_id": str(self.epoch),
+                "acknowledged": True,
+            },
             "closed": False,
             "failure": None,
-            "capabilities": ["search", "play", "playback_status"],
+            "capabilities": ["search", "play", "playback_status", "cancel", "stop"],
             "suspended": self.suspended,
             "compatibility": {
-                "capabilities": {x: {"available": True} for x in ("search", "play", "playback_status")}
+                "capabilities": {
+                    x: {"available": True}
+                    for x in ("search", "play", "playback_status", "javascript_navigation")
+                }
             },
         }
 
@@ -64,7 +76,8 @@ class Player:
         self.suspended = value
         return await self.health()
 
-    async def search(self, query, timeout):
+    async def search(self, query, timeout, ownership):
+        assert ownership["epoch"] == self.epoch and ownership["session_id"] == self.session
         self.calls.append(("search", query))
         self.search_entered.set()
         if self.search_release:
@@ -81,6 +94,7 @@ class Player:
     def outcome(self):
         return {
             "attempt_id": self.attempt_id,
+            "session_id": self.session,
             "requested_id": GTI,
             "resolved_id": GTI + "-resolved",
             "state": "playing",
@@ -88,7 +102,8 @@ class Player:
             "evidence": {"resolution": {"playbackClass": "live_watch_now"}},
         }
 
-    async def play(self, handle, attempt_id):
+    async def play(self, handle, attempt_id, ownership):
+        assert ownership["epoch"] == self.epoch and ownership["session_id"] == self.session
         self.calls.append(("play", handle, attempt_id))
         self.attempt_id = attempt_id
         if self.lost_response:
@@ -120,10 +135,28 @@ class Player:
             "evidence": {},
         }
 
-    async def cancel_attempt(self, session_id, attempt_id):
-        assert session_id == self.session and attempt_id == self.attempt_id
+    async def cancel_work(self, session_id, attempt_id, ownership):
+        assert session_id == self.session
+        assert ownership["epoch"] == self.epoch and ownership["session_id"] == self.session
         self.calls.append(("cancel", attempt_id))
-        return {"input_quiescent": self.cancel_ack, "active_playback": "stopped"}
+        if not self.cancel_ack:
+            raise ExecutorError("prime_handoff_unconfirmed", "Cancellation not confirmed")
+        self.epoch += 1
+        if self.search_release:
+            self.search_release.set()
+        return {**(await self.health())["ownership"], "cancelled": True, "playback_stopped": False}
+
+    async def stop_attempt(self, session_id, attempt_id, ownership):
+        assert session_id == self.session and attempt_id == self.attempt_id
+        assert ownership["epoch"] == self.epoch and ownership["session_id"] == self.session
+        self.calls.append(("stop", attempt_id))
+        return {
+            "stopped": self.stop_confirmed,
+            "page_exited": True,
+            "stop_requested": True,
+            "session_id": session_id,
+            "attempt_id": attempt_id,
+        }
 
 
 def rig(tmp_path):
@@ -250,12 +283,12 @@ async def test_manual_takeover_during_search_prevents_late_play(tmp_path):
         await workflow.cancel_one(token)
         assert workflow.store.report(token)["cancellation"]["input_quiescent"]
         assert not any(c[0] == "play" for c in workflow.player.calls)
-        assert workflow.player.suspended
+        assert any(c[0] == "cancel" for c in workflow.player.calls)
     finally:
         await cleanup(controller)
 
 
-async def test_unacknowledged_stop_keeps_cancellation_pending(tmp_path):
+async def test_unacknowledged_input_barrier_keeps_cancellation_pending(tmp_path):
     controller, workflow = rig(tmp_path)
     try:
         token = await launch(workflow)
@@ -271,13 +304,22 @@ async def test_unacknowledged_stop_keeps_cancellation_pending(tmp_path):
         await cleanup(controller)
 
 
-async def test_unimplemented_stop_boundary_cannot_start_playback(tmp_path):
+async def test_page_exit_does_not_claim_native_stop_or_event_completion(tmp_path):
     controller, workflow = rig(tmp_path)
     try:
-        workflow.player.cancellation_ready = False
         token = await launch(workflow)
-        assert workflow.store.report(token)["operation"]["error"]["code"] == "prime_cancel_contract_pending"
-        assert not workflow.player.calls
+        workflow.player.stop_confirmed = None
+        workflow.store.request_cancel(CancelRequest(device_id="living-room", token=token))
+        await workflow.cancel_one(token)
+        report = workflow.store.report(token)
+        assert report["cancellation"] == {
+            "state": "acknowledged",
+            "input_quiescent": True,
+            "active_playback": "unknown",
+        }
+        assert report["content_status"]["effective_state"] != "ended"
+        await workflow.cancel_one(token)
+        assert [c[0] for c in workflow.player.calls].count("stop") == 1
     finally:
         await cleanup(controller)
 
@@ -294,10 +336,18 @@ async def test_transport_matches_service_wire_and_never_retries_mutations():
     client = PrimePlayerClient("/test/player.sock", transport=httpx.MockTransport(handler))
     try:
         with pytest.raises(ExecutorError) as exc:
-            await client.play("fresh-handle", "a" * 32)
+            await client.play("fresh-handle", "a" * 32, {"epoch": 2})
         assert exc.value.code == "prime_operation_unknown"
         assert calls == [
-            {"method": "play", "params": {"handle": "fresh-handle", "mode": "live", "attempt_id": "a" * 32}}
+            {
+                "method": "play",
+                "params": {
+                    "handle": "fresh-handle",
+                    "mode": "live",
+                    "attempt_id": "a" * 32,
+                    "ownership": {"epoch": 2},
+                },
+            }
         ]
     finally:
         await client.close()
@@ -372,5 +422,81 @@ async def test_old_cancel_does_not_stop_newer_owned_attempt(tmp_path):
         await workflow.cancel_one(old)
         assert workflow.player.calls[calls:] == []
         assert workflow.store.report(new)["observation"]["verified"]
+    finally:
+        await cleanup(controller)
+
+
+async def test_lost_stop_response_is_fenced_and_never_replayed_after_restart(tmp_path):
+    controller, workflow = rig(tmp_path)
+    token = await launch(workflow)
+    player = workflow.player
+    stop_calls = []
+
+    async def lost(*args):
+        stop_calls.append(args)
+        raise ExecutorError("prime_transport_unknown", "Lost stop response")
+
+    player.stop_attempt = lost
+    workflow.store.request_cancel(CancelRequest(device_id="living-room", token=token))
+    await workflow.cancel_one(token)
+    assert workflow.store.report(token)["cancellation"]["active_playback"] == "unknown"
+    assert len([c for c in player.calls if c[0] == "cancel"]) == 2
+    await cleanup(controller)
+    restored = Controller(controller.settings)
+    restored.executor.player = player
+    try:
+        restored.executor.recover()
+        await restored.executor.cancel_one(token)
+        assert len(stop_calls) == 1
+    finally:
+        await cleanup(restored)
+
+
+async def test_manual_owner_cannot_be_resumed_by_automatic_search(tmp_path):
+    controller, workflow = rig(tmp_path)
+    try:
+        workflow.player.suspended = True
+        token = await launch(workflow)
+        assert workflow.store.report(token)["operation"]["error"]["code"] == "prime_ownership_unavailable"
+        assert not workflow.player.calls
+    finally:
+        await cleanup(controller)
+
+
+async def test_restore_preserves_newer_tokens_and_fences_service_attempt(tmp_path):
+    from controller import ops
+
+    controller, workflow = rig(tmp_path)
+    backup = tmp_path / "before-play.sqlite3"
+    ops.backup(controller.settings.database, backup)
+    token = await launch(workflow)
+    player = workflow.player
+    await cleanup(controller)
+    ops.restore(backup, controller.settings.database, replace=True)
+    restored = Controller(controller.settings)
+    restored.executor.player = player
+    before = len(player.calls)
+    try:
+        assert restored.overview()["device"]["input_handoff"]
+        await restored.executor.start()
+        await restored.playback_work(restored.tick)
+        assert [c[0] for c in player.calls[before:]] == ["cancel", "stop"]
+        assert restored.overview()["device"]["input_handoff"] is None
+        assert restored.overview()["device"]["automation"] == "paused"
+        assert restored.executor.store.report(token)["cancellation"]["input_quiescent"]
+    finally:
+        await cleanup(restored)
+
+
+async def test_service_restart_cancel_never_sends_old_stop_to_new_service(tmp_path):
+    controller, workflow = rig(tmp_path)
+    try:
+        token = await launch(workflow)
+        workflow.player.session = "new-session"
+        workflow.store.request_cancel(CancelRequest(device_id="living-room", token=token))
+        before = len(workflow.player.calls)
+        await workflow.cancel_one(token)
+        assert not workflow.player.calls[before:]
+        assert workflow.store.report(token)["cancellation"]["active_playback"] == "not_current"
     finally:
         await cleanup(controller)

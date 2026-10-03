@@ -15,6 +15,10 @@ async def check(settings):
     client = PrimePlayerClient(config.prime_socket)
     try:
         health = await client.health()
+        client.require(health, "search", "play", "playback_status", "cancel", "stop", "manual_input")
+        client.ownership(health)
+        if health.get("serial") != settings.screen_adb_serial:
+            raise ValueError("Prime Player serial differs from SCREEN_ADB_SERIAL")
         return {
             "session_id": health["session_id"],
             "api_version": health.get("api_version"),
@@ -22,7 +26,8 @@ async def check(settings):
             "busy": health.get("busy"),
             "implemented_capabilities": health.get("capabilities"),
             "available_capabilities": health.get("compatibility", {}).get("capabilities"),
-            "cancel_contract_connected": client.cancellation_ready,
+            "ownership": health["ownership"],
+            "serial": health["serial"],
             "match_model_configured": bool(config.prime_match_model),
             "device_mutations": 0,
         }

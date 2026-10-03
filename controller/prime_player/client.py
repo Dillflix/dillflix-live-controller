@@ -12,8 +12,6 @@ from ..executor.models import ExecutorError
 
 
 class PrimePlayerClient:
-    cancellation_ready = False
-
     def __init__(self, socket_path, *, transport=None):
         self.http = httpx.AsyncClient(
             base_url="http://prime-player",
@@ -72,17 +70,35 @@ class PrimePlayerClient:
 
     @staticmethod
     def require(health, *capabilities):
+        if health.get("api_version", 0) < 4:
+            raise ExecutorError("prime_incompatible", "Prime Player API 4 or newer is required")
         implemented = health.get("capabilities", [])
         available = health.get("compatibility", {}).get("capabilities", {})
         for name in capabilities:
-            if name not in implemented or available.get(name, {}).get("available") is not True:
+            if name not in implemented or (
+                name in {"search", "play", "playback_status", "stop"}
+                and available.get("javascript_navigation" if name == "stop" else name, {}).get("available")
+                is not True
+            ):
                 raise ExecutorError("prime_incompatible", f"Prime Player capability unavailable: {name}")
 
-    async def search(self, query, timeout):
-        return await self.rpc("search", query=query, timeout=timeout, budget=timeout + 5)
+    @staticmethod
+    def ownership(health, *, automatic=False):
+        receipt = health.get("ownership", {})
+        if (
+            receipt.get("acknowledged") is not True
+            or receipt.get("session_id") != health.get("session_id")
+            or receipt.get("mode") not in ({"automatic"} if automatic else {"automatic", "manual"})
+            or type(receipt.get("epoch")) is not int
+        ):
+            raise ExecutorError("prime_ownership_unavailable", "Prime input ownership is not acknowledged")
+        return receipt
 
-    async def play(self, handle, attempt_id):
-        return await self.rpc("play", handle=handle, mode="live", attempt_id=attempt_id)
+    async def search(self, query, timeout, ownership):
+        return await self.rpc("search", query=query, timeout=timeout, ownership=ownership, budget=timeout + 5)
+
+    async def play(self, handle, attempt_id, ownership):
+        return await self.rpc("play", handle=handle, mode="live", attempt_id=attempt_id, ownership=ownership)
 
     async def attempt(self, attempt_id):
         return await self.rpc("attempt", attempt_id=attempt_id, budget=60)
@@ -90,20 +106,12 @@ class PrimePlayerClient:
     async def status(self, attempt_id, timeout):
         return await self.rpc("playback_status", attempt_id=attempt_id, timeout=timeout, budget=timeout + 5)
 
-    async def suspend(self, value):
-        result = await self.rpc("suspend", value=value, budget=5)
-        if result.get("suspended") is not value:
-            raise ExecutorError("prime_handoff_unconfirmed", "Prime Player did not acknowledge suspension")
-        return result
+    async def cancel_work(self, session_id, attempt_id, ownership):
+        return await self.rpc(
+            "cancel", session_id=session_id, attempt_id=attempt_id, ownership=ownership, budget=45
+        )
 
-    async def cancel_attempt(self, session_id, attempt_id):
-        """The service cancel/stop API is being implemented independently.
-
-        Deliberately do not guess its wire shape, kill Prime, or treat suspend as
-        active stop. Replace only this method once its released contract is known.
-        """
-        raise ExecutorError(
-            "prime_cancel_contract_pending",
-            "Prime Player cancel/stop integration awaits the service's released contract",
-            retryable=False,
+    async def stop_attempt(self, session_id, attempt_id, ownership):
+        return await self.rpc(
+            "stop", session_id=session_id, attempt_id=attempt_id, ownership=ownership, budget=60
         )

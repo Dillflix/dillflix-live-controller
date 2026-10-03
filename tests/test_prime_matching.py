@@ -2,7 +2,7 @@ import json
 from dataclasses import replace
 
 import pytest
-from test_real_executor import payload
+from playback_fixtures import payload
 
 from controller.executor.config import ExecutorConfig
 from controller.executor.models import ExecutorError

@@ -1,162 +1,55 @@
-# Playback API implementation guide
+# Playback API and implementation guide
 
-Implemented in **dillflix-live-controller 0.11.0**, in `controller/executor/`. The controller, device worker, token store, and manual remote share one application and SQLite database. Real playback is opt-in through `PLAYBACK_ADAPTER=prime-video`; the default remains the simulator. See [setup and diagnostics](executor-setup.md).
+Controller 0.14.0 exposes three durable orchestration operations. Prime Player API 4 executes application actions over a local Unix socket. The controller owns scheduling and semantic event selection; it does not run a second device navigator. See [workflow, setup and acceptance](prime-player.md) and [OpenAPI](executor-api.openapi.yaml).
 
-**Implementation status:** native collection now includes the later recorder's multiline framing, independent stdout/stderr, pending-record capture guards and failure-latched listener ownership. The controller uses observed menu ordering plus fresh focus labels, and binds visual event identity to structured runtime sessions for monitoring. The supplied v2 source/APK, same-signer verification, matching rebuild and explicit installer/readiness CLI are included. Service/session IDs, connection epochs, strict collection/write health and checked sequence intervals scope the binding; invalid v2 never falls back to token hashes. See the [grounding policy, capture evidence and remaining validation](runtime-grounding.md). Autonomous reliability and probe installation on the target TV remain unvalidated. The three-operation contract remains unchanged.
-
-The public contract has exactly three operations. Separate request recovery, current-device observation, content-ID lifecycle, input-authority/renewal, and Stop APIs remain unnecessary for this release.
-
-| Operation | Route | Meaning |
+| Operation | Request | Result |
 | --- | --- | --- |
-| Play | `POST /v1/playbacks` | Persist a live-only request and return its token; navigation runs asynchronously. |
-| Status | `GET /v1/playbacks/{token}` | Read launch progress, current playback evidence, and lifecycle/completion for that request. |
-| Cancel | `POST /v1/playbacks/cancel` | Cancel navigation and stop owned playback, or cancel through a device intent watermark. |
+| `POST /v1/playbacks` | Original Teamarr snapshot, all allowed options, opaque content ID, request ID, device, intent version, live mode and deadline | 202 and durable token; 200 for an identical retained retry |
+| `GET /v1/playbacks/{token}` | Controller token | Operation progress, expiring playback observation, independent event lifecycle, cancellation and Prime selection/attempt/status evidence |
+| `POST /v1/playbacks/cancel` | Device plus either token or `through_intent_version` | Acknowledged input quiescence and separately reported active playback state |
 
-The [OpenAPI contract](executor-api.openapi.yaml) includes schemas and synthetic examples. `/docs` and `/openapi.json` expose the implemented routes and Pydantic request/response schemas. External calls require `Authorization: Bearer <EXECUTOR_API_TOKEN>`. A blank credential disables external executor access; the embedded controller still works. The service credential is separate from playback tokens, manual browser ownership tokens, model credentials, and nginx authentication.
+External calls require `Authorization: Bearer <EXECUTOR_API_TOKEN>` with a configured 32-character-or-longer token. A blank setting disables these external operations. The built-in planner calls the same durable workflow directly. Keep application authentication behind the existing nginx proxy.
 
-## Play and retry
+## Initiating playback
 
-| Field | Requirement |
+The schema in OpenAPI is authoritative. Keep Teamarr's opaque `content_id` and complete original snapshot; do not replace them with a Prime GTI. Send every permitted original viewing option unchanged. Only live mode is accepted. `deadline_at` must include a UTC offset. A 202 response means accepted, not playing.
+
+Reuse the same request ID and identical body when retrying an uncertain POST response. A changed body with the same ID is 409. No request-ID recovery endpoint is necessary. Intent versions fence older work; cancelled or retired request tombstones cannot relaunch content.
+
+The workflow searches after the planner has decided to initiate/switch playback. It filters live, playable, identity-correlated result handles, matches labels deterministically or with a bounded text LLM, and persists the chosen Prime service session and attempt ID before Play. Ordinary opponent labels are sufficient matching inputs. The service resolves live Watch Now and verifies launch. The controller then requires fresh, current attempt-bound playing evidence.
+
+## Reading status
+
+`operation` describes the original request. `observation` is current playback evidence with an acquisition timestamp and validity deadline. Its verification is withdrawn on age, service restart, changed content, pauses or unavailable evidence. A historic successful launch does not override current status.
+
+`prime_player` retains the query, eligible/excluded candidate audit, decision and quoted labels, selected handle/GTI/route, service session, attempt, launch outcome, latest playback status, ownership and cancellation/stop evidence. Search handles are temporary and never replayed after uncertain delivery. Polling the controller getter reads stored evidence; it does not refresh timestamps or issue a device query.
+
+`content_status` is independent sports-event lifecycle evidence from Teamarr or explicit manual completion in the controller. Prime stopped, paused, switched, player-ended, lost connection and elapsed schedule estimates never prove event completion. Broadcast/session coverage cannot be completed by an unrelated individual match ending.
+
+## Cancellation and manual input
+
+Persist the local fence first. Cancel interrupts remote work through the service's acknowledged runtime barrier, including searches awaiting results. Stop is scoped to the saved service session and attempt, so an old token cannot stop newer playback. An uncertain physical stop is not replayed.
+
+A successful response always has `input_quiescent=true`. `active_playback` is `stopped` only with confirmed native stopping, `already_inactive` for an untouched token, `not_current` when the token no longer owns playback, or `unknown` when inactivity is unproven. A playback page exit alone remains unknown. Retrying an acknowledged Cancel returns its retained outcome without another Stop. An unconfirmed input barrier returns 503 and remains a durable retry obligation.
+
+The web remote acquires its acknowledged service manual receipt after controller cancellation. Wake, keys and text all use that receipt and increasing sequence numbers. Release drains writes, validates the durable manual owner, and acknowledges automatic ownership before planner resumption. Physical remotes remain external actors. No separate public authority, device-observation, stop or lifecycle-by-content endpoint is added.
+
+## Errors and recovery
+
+Errors use `application/problem+json` with stable `code`, message and `retryable`; 401 is authentication, 404 unknown token, 409 conflicting request/stale intent, 410 retired token, 413 body limit, 422 validation and 503 unavailable/unconfirmed execution. An error or HTTP timeout is not proof an action was undelivered. Inspect retained token/attempt evidence before retrying; service mutations are never transport-retried.
+
+The worker and controller calls remain asynchronous or off the event loop. Restart reconciles the saved attempt without replaying Play. Interrupted search and unconfirmed cancellation remain cleanup obligations. Service restart withdraws old verification and cannot transfer an old token to a new service lifetime. Offline restore retains newer execution history, advances intent fences and leaves automation paused.
+
+## Implementation map
+
+| File | Responsibility |
 | --- | --- |
-| `schema_version` | `1` |
-| `request_id` | Unique ID for one logical request. Preserve the ID and body across uncertain delivery retries. |
-| `device_id` | `living-room`. The ADB destination is configured on the server. |
-| `intent_version` | Increasing device intent, above previously accepted executor intents and the durable cancellation fence. The controller allocates it transactionally. |
-| `content_id` | Opaque Teamarr **feed entry ID**, equal to `content_snapshot.id`; not an inferred event/provider ID. |
-| `mode` | `live` only. |
-| `purpose` | `selection`, `route_handoff`, or `recovery`. |
-| `previous_request_id` | Prior request for a handoff/recovery, otherwise null. |
-| `content_snapshot_schema_version` | `1` |
-| `content_snapshot` | Complete original Teamarr entry: teams, event/session/broadcast, timing, identity, artwork, all options, review reasons, and unknown extension fields. |
-| `allowed_viewing_options` | Every permitted original option, unchanged. Excluded, replay, highlights, and unsuitable partial/multi-event options cannot authorize a specific game. |
-| `deadline_at` | Fixed aware timestamp for navigation, no more than one hour ahead. Does not limit event duration or successful playback. |
+| `controller/prime_player/client.py` | Bounded async API 4 RPC, capability/ownership validation |
+| `controller/prime_player/matching.py` | Live filtering, deterministic/LLM label selection and audit |
+| `controller/prime_player/workflow.py` | Durable search/launch/monitor/cancel lifecycle |
+| `controller/prime_ownership.py` | Manual receipts, sequenced wake/keys/text, release |
+| `controller/executor/store.py`, `worker.py` | Tokens, intent fences, action journal, cancellation obligations, retention |
+| `controller/executor/api.py`, `models.py` | Three authenticated public operations and schemas |
+| `controller/executor/integration.py` | Built-in scheduling and lifecycle adapters |
 
-Bodies are limited to 2 MiB. Invalid devices, replay requests, malformed identities, changed options, and invalid timestamps are rejected. The controller does not select an app. The current executor supports Prime Video options and records unsupported apps in attempt history; other apps require another device adapter.
-
-`202 Accepted` means the token and request are committed, **not** that the TV is playing. The response is a `PlaybackReport`, with a `Location` header pointing to the getter. Identical ID/body retries return `200`, the same token, and its current report without navigating twice. Reusing an ID with changed data returns `409`.
-
-1. Persist the request, including its ID, intent and fixed deadline.
-2. POST Play. On a transport timeout, disconnect, or retryable HTTP problem, retry that same body while its intent remains current. Do not mint a new ID because the response was lost.
-3. On `200` or `202`, persist the token and use the getter.
-4. An asynchronous `failed` or `timed_out` operation is a finished attempt. A deliberate retry of the navigation itself needs a new ID, newer intent and new deadline, after checking current live eligibility.
-
-The separate `request_id` recovery endpoint remains deferred. Repeating the original POST handles a lost response without another API. Exactly-once ADB execution is not claimed: a key may reach Android before the connection/process fails. The action journal records ambiguity and never blindly replays that key.
-
-## Interpret token status
-
-GET reads durable records and applies freshness rules. It sends no input and makes no model or device call. A background worker acquires observations. Responses use `Cache-Control: no-store`.
-
-| Report field | Interpretation |
-| --- | --- |
-| `operation.state` | `accepted`, `navigating`, `playing_verified`, `failed`, `timed_out`, `cancelled`, or `superseded`: the launch attempt's history. |
-| `operation.phase`, `attempts`, `error` | Progress, attempted option IDs, and sanitized failure reasons. |
-| `operation.finished_at` | When the launch attempt finished, **not** when the event finished. |
-| `observation` | Playback evidence attributable to this token; null before verification and after acknowledged cancellation. |
-| `observation.verified` | True only while acquired evidence remains current and matches the requested content, permitted route and live presentation. |
-| `observation_status` | `fresh`, `stale`, or `unavailable`, independently of HTTP success. |
-| `runtime` | Optional transport/source health, boot/session/media identity, visual association, last visual time, live-mode basis and callback diagnostics. `runtime_media_id` is not `content_id`; live-edge latency remains unmeasured. |
-| `content_status.effective_state` | `scheduled`, `live`, `ended`, `cancelled`, `delayed`, `suspended`, `postponed`, or `unknown`: the event/broadcast lifecycle. |
-| `content_status.observation` | Lifecycle fact, source, original acquisition/receipt times and optional visual evidence. |
-| `cancellation` | `none`, `requested`, or `acknowledged`, plus whether input in scope is quiescent. |
-| `retained_until` | Earliest retirement time after cancellation acknowledgment; null while active. |
-
-Historical `playing_verified` can coexist with stale playback evidence and an ended event. After Cancel, historical launch success is retained but current playback is null. **Cancel never marks an event ended.** Treat launch result, current playback and lifecycle separately.
-
-Playback evidence expires 15 seconds after acquisition; polling cannot refresh its timestamps. Expired evidence becomes `verified=false`. Nonterminal lifecycle evidence expires after 120 seconds or its earlier source expiry. Explicit terminal facts remain retained through outages, although their evidence can be marked stale. `revision` counts stored writes, not time passing or catalog projection changes; it is not an ETag.
-
-Polling every 2–5 seconds is sufficient for most callers. The embedded controller reads the same store directly. Use the controller's normal selection/Play now commands for user intent; do not run an independent scheduler against the same TV alongside it. Raw API callers must coordinate the same device intent sequence.
-
-## Verification and completion
-
-The controller handles established transitions and label-confirmed menu arrows; the actor proposes one D-pad action when navigation is unresolved. Neither can supply arbitrary commands, coordinates, URLs, or global Home/settings actions. A separate observer receives only the screenshot and observation schema: no target, expected answer, actor reasoning, or prior success claims. Python checks its transcribed facts against the request.
-
-The actor also receives capture-associated app-provided focus metadata, with separate input/accessibility channels and explicit unknown/historical states. Native changes during capture or inference invalidate pending navigation evidence. Revision checks happen under the physical input gate before dispatch; rejected actions are recaptured, not replayed. Native row/suggestion labels cannot substitute for event identity or activation/playback proof. The screenshot-only observer is kept separate to avoid feeding the expected native answer back into its visual reading.
-
-Before SELECT activates content, two captures must agree on the focused control. Both competitors must match structured team aliases. A visible league/date must agree. The focused content must be identified as live. Opening a result with one short Select reveals its action menu and establishes no playback proof; missing route details can be learned there. Watch Live requires matching explicit route/channel and language constraints. Replay, upcoming, ended, Resume, Rapid Recap, Multiview, start-over, purchase, sign-in, unclear focus and unrelated content cannot authorize playback. Ordinary navigation controls can be selected; Play/Watch/Resume cannot masquerade as menu navigation.
-
-Menus have no fixed Watch Live index, item count or starting focus. The observer supplies visible items in order; the controller moves one adjacent step and requires the expected fresh input-channel label. Missing/ambiguous/off-screen targets or unexpected transitions trigger visual navigation again. Select on Watch Live always gets fresh visual event/variant validation.
-
-The preferred verification path requires:
-
-- Prime Video still foreground;
-- a confirmed Watch Live dispatch, separately from opening the result;
-- independently observed player identity and route matching the request;
-- a fresh structured Prime PLAYING session corroborated as active;
-- consistent boot/session/runtime media identity across screenshot acquisition and a further runtime read after inference.
-
-The association permits five-second runtime monitoring without per-poll inference, with visual checks every 30 seconds by default. Visual identity and transport timestamps remain separate. Unknown visual identity can retain the same binding only within a bounded visual-age window; positive contradictions withdraw it. Session/boot/ID changes, source loss, pause/seek/stop and uncovered history gaps require revalidation. Brief buffering is unverified transport, can recover on the same binding, and never implies event completion. Restart invalidates bindings; fresh explicit playhead-at-live evidence is needed to reassociate without another Watch Live dispatch.
-
-MediaSession position is not proof of rendered video, programme elapsed time or live lag. The visual-only fallback requires two matching samples at least one second apart, explicit visual live-playhead evidence, active Prime PLAYING and an advancing visible elapsed player timer. Actor FINISH, successful ADB, audio and generic titles cannot verify playback. Read-only monitoring never presses keys to reveal controls. The [detailed policy](runtime-grounding.md) distinguishes measured facts from remaining target-device validation.
-
-| Lifecycle source | Policy |
-| --- | --- |
-| Teamarr feed | Explicit lifecycle state with original feed receipt time. `timestamp_basis=feed_received`, `observed_at=null`; provider acquisition freshness is unknown. Re-reading cached data never extends expiry. |
-| Prime Video visuals | Two matching scoped conclusion readings at least 15 seconds apart within the 120-second evidence window. `timestamp_basis=device_observed`, `source=prime_video_visual`, `evidence.decision=confirmed`. An intervening contrary/failed observation clears the candidate. |
-
-A game's FINAL/full-time can complete that game, not RedZone. Aggregate coverage requires explicit end-of-coverage evidence for the whole named broadcast/session. A round, period, half-time, intermission, scheduled end, missing feed entry, navigation failure or stopped player cannot establish completion. Confirmed visual completion takes precedence over cached feed status still saying live. The worker never navigates elsewhere just to investigate lifecycle.
-
-No independent sports-results provider is implemented. For an unplayed or switched-away event, fresh Teamarr facts and retained terminal facts may be the only evidence. When absent/stale, status stays unknown and the reservation remains. This limitation does not require another public endpoint.
-
-## Cancel, active stop and manual control
-
-Cancel one request, including active playback:
-
-```json
-{"device_id":"living-room","token":"pb_example"}
-```
-
-Or cancel all requests through an intent watermark, including delayed Play deliveries whose token was never received:
-
-```json
-{"device_id":"living-room","through_intent_version":24}
-```
-
-Supply exactly one scope. Token cancellation affects only that token. Device cancellation durably raises the fence: Play at/below it is rejected even after restart. Neither form affects newer work outside its scope. A manual session also pauses automation and prevents higher-intent submissions through the ownership check.
-
-Cancellation persists before interruption. Model work is cancelled. A bounded in-flight ADB input is drained while holding the physical input lock; it may already have reached the TV. If the cancelled token still owns the app, the executor issues `am force-stop com.amazon.firebat`, then confirms Prime is neither foreground nor actively playing/paused/buffering. Play/Pause is not used as Stop. An old token cannot issue Stop after a newer token owns the device.
-
-`200` acknowledges that input in scope is quiescent and owned playback is stopped/already inactive. Cancel is idempotent. Timeout/`503` leaves durable cancellation pending and cleanup retrying; **manual input stays disabled**. Repeating Cancel wakes cleanup immediately. `input_quiescent` concerns the cancelled scope, not newer work outside it.
-
-Manual and autonomous input share one `asyncio.Lock`. Take control saves new manual intent, waits for device cancellation acknowledgment, then enables the remote. Release/expiry drains manual transport before automation resumes. Sessions, fences and pending handoffs survive restart. Pause alone leaves successful playback running; Take control uses cancellation and stops it.
-
-Play, getter and Cancel therefore suffice. Physical remotes and unrelated ADB clients remain outside this application's ownership gate.
-
-## Implementation and durability
-
-| Module | Responsibility |
-| --- | --- |
-| `api.py`, `models.py` | Auth, bounded requests, validated contracts, response schemas, safe problem responses. |
-| `store.py` | Token acceptance, hashes, intent/fences, cancellation, journal, freshness and retirement. |
-| `runtime.py` | Single device worker, navigation deadline, preemption, stop, monitoring and completion. |
-| `adb.py` | Quoted package-scoped commands, bounded subprocesses, images, foreground/media telemetry. |
-| `accessibility.py`, `event_records.py` | Native channels, timing/window policy, multiline transport framing and listener ownership. |
-| `navigation.py` | Observed menu order, native focus reconciliation and deterministic adjacent moves. |
-| `media.py`, `media_v2.py`, `monitoring.py` | Structured probe snapshots/callbacks, runtime identity epochs, visual binding and status diagnostics. |
-| `vision.py`, `verification.py` | Model transport, strict protocols, matching and evidence policy. |
-| `integration.py` | Controller adapters reading/writing the same durable token records. |
-| `check.py` | Configuration/live-screen/saved-PNG diagnostics that send no input. |
-| `probe.py`, `android/prime-media-probe/` | Pinned supplied v2 APK, explicit installation/readiness, unchanged Java source, schema, rebuild and host tests. |
-
-Controller coordination runs in a serialized, drained worker thread. Model HTTP uses asynchronous HTTPX, total deadlines, limited connections, bounded responses, no redirects and explicit schema validation. ADB uses bounded asynchronous subprocesses. There is no blocking HTTP on the event loop serving screens, manual input, feed/status work and web requests, and no loopback HTTP hop for the embedded integration.
-
-Schema 6 adds `executor_jobs`, `executor_devices`, and `executor_actions`. Acceptance and intent advancement commit together. Each input is journaled before dispatch and marked acknowledged/uncertain afterward. Durable intent/manual state is rechecked immediately before dispatch. Higher-intent navigation waits for older cleanup.
-
-On restart, successful jobs are re-observed without relaunching; saved playback claims are invalidated immediately. Interrupted navigation that touched the device fails and queues cleanup; uncertain keys are never replayed. Accepted jobs with no input may proceed if still eligible and within deadline. A process lock enforces one executor per database. Run one API worker and one controller database per physical TV.
-
-After acknowledged cancellation, full reports/payloads remain for seven days, then GET returns `410 Gone`. Compact ID/hash/token/intent tombstones remain so old requests cannot relaunch. Unresolved cancellation is never discarded. Backup includes all executor state. Restore preserves newer executor history from the target database, advances fences, pauses automation, and requires stop confirmation before manual input/resumption. State lost with an unavailable newer database cannot be reconstructed.
-
-## Errors and validation
-
-| HTTP outcome | Action |
-| --- | --- |
-| `401` | Correct service credentials. |
-| `404` | Unknown token in this database; do not automatically turn a status miss into new Play. |
-| `409` | Changed body, stale intent, expired deadline, paused automation or manual ownership. Refresh intent/state. |
-| `410` | Retired token; its request still cannot relaunch. |
-| `413` / `422` | Correct size/contract violations. |
-| `503`, retryable | Retry the same operation with bounded backoff. Cancellation stays unconfirmed until acknowledged. |
-| `503`, not retryable | Configure the real executor/external API. |
-
-Problems use `application/problem+json` with `type`, `title`, `status`, `detail`, `code`, and `retryable`. Retryable problems include `Retry-After: 5`. Failures after acceptance are recorded in the token report. Reports omit credentials, model reasoning and images; evidence contains acquisition time and image hash.
-
-Automated coverage includes auth/contracts, idempotency, active stop, old-token fencing, model cancellation, draining input, manual takeover, token persistence, crash ambiguity, completion scope, stale evidence, unsupported routes, quoted ADB subprocesses, total inference timeout, full controller delivery/status ingestion, and restoring a backup older than current playback. Controlled device/model boundaries do not establish physical compatibility or model accuracy. Follow [target-TV validation](executor-setup.md#validate-on-the-target-tv).
+Host tests cover these boundaries. Install the reviewed Prime Player package without device extras and run `tests/test_prime_service_contract.py` for tests against its real HTTP server/ownership engine with a controlled runtime. The normal suite skips that optional contract suite if the package is absent. Actual TV/account/model behavior and Docker permissions require the target acceptance procedure.

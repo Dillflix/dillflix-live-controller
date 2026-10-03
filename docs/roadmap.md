@@ -50,15 +50,15 @@ The requested screen view is available before autonomous navigation: an independ
 
 ## Manual device control — implemented in 0.8
 
-Take control suspends automation for a chosen duration, including four-hour events and up to 24 hours. It provides a mobile remote, focused keyboard shortcuts, text entry, explicit browser takeover, extension, and resume/stay-paused actions. Ownership and deadlines survive restarts; expiry and input are fenced on the server. Input uses a separate control-only scrcpy connection; capture stays shared. Actual Fire TV input compatibility, nginx, and physical mobile behavior need host validation. Version 0.9 joins the real executor to the same physical input gate.
+Take control suspends automation for a chosen duration, including four-hour events and up to 24 hours. It provides a mobile remote, focused keyboard shortcuts, text entry, explicit browser takeover, extension, and resume/stay-paused actions. Ownership and deadlines survive restarts; expiry and input are fenced on the server. Input uses a separate control-only scrcpy connection; capture stays shared. Actual Fire TV input compatibility, nginx, and physical mobile behavior need host validation. Version 0.14 routes manual input through Prime Player when its socket is configured.
 
-## 4. Integrated Prime Video executor — API and native collector implemented; live validation pending
+## 4. Prime Player execution — implemented; target acceptance pending
 
-The authorized integration is in this repository: Play, status by token and Cancel, durable records/fences, async model/ADB calls, Prime launch/search, JSON or TVTheseus navigation, independent visual verification and scoped completion, active stop, and shared manual ownership. No additional public lifecycle, authority, recovery or Stop API is required. See [setup](executor-setup.md) and [implementation](executor-api-handoff.md).
+Version 0.14 replaces the old screenshot/ADB executor and native probe with the external Prime Player service. The controller searches only after selecting a playback intent, matches eligible live result labels deterministically or with a text LLM, records an attempt before launch, and monitors that attempt without repeating playback on uncertain responses. Public operations remain Play, status by token and Cancel.
 
-The September 30 audit identified the missing native accessibility subsystem. Version 0.9.1 ports its collection, timing, channels, window-burst handling, screenshot association and focus-revision checks. Version 0.10 uses the later supplied manual search-to-play capture for multiline framing, observed-order menus and runtime association; 0.11.0 integrates the supplied v2 probe and migrates identity, health, timestamps and sequence coverage with explicit setup. See [runtime grounding](runtime-grounding.md) for current evidence and [probe implementation rationale](../android/prime-media-probe/IMPROVEMENTS.md). Autonomous target-device trials, model accuracy, varied layouts and event endings remain to be validated; collector parity and one manual path do not establish unattended reliability.
+API 4 ownership envelopes, out-of-band cancellation and attempt-scoped stop connect automation and manual input to one runtime authority. Native stop confirmation remains distinct from input quiescence; playback end remains distinct from event completion. See [workflow and acceptance](prime-player.md).
 
-Automated tests use controlled device/model boundaries and validate controller integration, concurrency, cancellation and restore. Actual TV/account/inference accuracy, protected-video visibility, Docker/nginx and unattended endurance require the target-host validation procedure. Other apps and a provider for unplayed/out-of-window sports results remain future integrations; unknown evidence never completes a commitment.
+Remaining work: target-host rollout, live matching accuracy, physical search/play/cancel/handoff, socket permissions, restart/outage checks, and endurance. Other streaming applications and independent unplayed-event results providers remain future integrations.
 
 ## Later iterations
 

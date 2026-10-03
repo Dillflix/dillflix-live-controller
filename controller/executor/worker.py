@@ -25,19 +25,10 @@ class PlaybackWorker:
         self.loop = self.worker = self.active = self.active_token = self.guard = None
         self.stopping = False
 
-    async def start_resources(self):
-        pass
-
     def recover(self):
-        self.store.recover()
-
-    async def worker_stopped(self):
-        pass
+        raise NotImplementedError
 
     async def close_resources(self):
-        pass
-
-    def invalidate_input_context(self):
         pass
 
     async def start(self):
@@ -51,7 +42,6 @@ class PlaybackWorker:
             self.guard = None
             raise RuntimeError("Only one executor process may own this device database") from None
         self.loop = asyncio.get_running_loop()
-        await self.start_resources()
         self.recover()
         self.stopping = False
         self.worker = asyncio.create_task(self.run(), name="playback-executor")
@@ -116,14 +106,24 @@ class PlaybackWorker:
                         if self.store.get_row(db, t)["cancel_requested"] != 2
                         and self.store.get_row(db, t)["request"] is not None
                     ]
-                    stopped = any(self.store.get_row(db, t)["touched_device"] for t in tokens)
+                    outcomes = {
+                        json.loads(self.store.get_row(db, t)["report"])
+                        .get("cancellation", {})
+                        .get("active_playback", "unknown")
+                        for t in tokens
+                        if self.store.get_row(db, t)["request"] is not None
+                    }
+                    active_playback = next(
+                        (s for s in ("unknown", "stopped", "not_current") if s in outcomes),
+                        "already_inactive",
+                    )
                 if not pending:
                     return {
                         "device_id": command.device_id,
                         "token": command.token,
                         "through_intent_version": command.through_intent_version,
                         "input_quiescent": True,
-                        "active_playback": "stopped" if stopped else "already_inactive",
+                        "active_playback": active_playback,
                         "acknowledged_at": utc(),
                     }
                 if not self.loop or self.stopping:
@@ -205,5 +205,3 @@ class PlaybackWorker:
             # Fail visibly; no uncontrolled device loop after an internal defect.
             log.exception("Playback executor stopped unexpectedly")
             self.stopping = True
-        finally:
-            await self.worker_stopped()

@@ -41,14 +41,9 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 if settings.mode != "teamarr":
                     raise ValueError("Real playback requires Teamarr mode; demo fixtures cannot control a TV")
                 from .executor.integration import ExecutorContentStatusAdapter, IntegratedPlaybackAdapter
-                if settings.executor.mode == "prime-player":
-                    from .prime_player.workflow import PrimePlaybackWorkflow
+                from .prime_player.workflow import PrimePlaybackWorkflow
 
-                    self.executor = PrimePlaybackWorkflow(self.db, settings)
-                else:
-                    from .executor.runtime import PlaybackExecutor
-
-                    self.executor = PlaybackExecutor(self.db, settings)
+                self.executor = PrimePlaybackWorkflow(self.db, settings)
                 playback = playback or IntegratedPlaybackAdapter(self.executor)
                 status = status or ExecutorContentStatusAdapter(self.executor)
             self.playback = playback or SimulatedPlaybackAdapter(self.db, settings.observation_ttl)
@@ -172,9 +167,11 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         return [
             content_view(
                 snapshot,
-                r["active"] and (
+                r["active"]
+                and (
                     snapshot.get("source") != "games"
-                    or snapshot.get("competition") in leagues or r["id"] in pins
+                    or snapshot.get("competition") in leagues
+                    or r["id"] in pins
                 ),
                 self.content_lifecycle(
                     r, checks.get(r["id"]), now, real, r["id"] in pins, completions.get(r["id"])
@@ -467,7 +464,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             if any(len(ranks) != len(set(ranks)) for ranks in data["team_ranks"].values()):
                 raise HTTPException(422, "Team rankings must not contain duplicate identities")
             device.update(
-                rules=data["rules"], team_ranks=data["team_ranks"],
+                rules=data["rules"],
+                team_ranks=data["team_ranks"],
                 preferences={
                     **data["preferences"],
                     "discovery_leagues": data["preferences"].get(
@@ -660,7 +658,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             # Batch extra leagues retained by other devices/commitments within
             # Teamarr's query limit, then publish the complete catalog atomically.
             entries, schema = {}, None
-            for group in [leagues[i:i + 20] for i in range(0, len(leagues), 20)] or [[]]:
+            for group in [leagues[i : i + 20] for i in range(0, len(leagues), 20)] or [[]]:
                 page, schema = await self.client.fetch_snapshot(leagues=group)
                 entries.update((item["id"], item) for item in page)
             with self.db.transaction() as db:
@@ -686,7 +684,9 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             return
         with self.db.transaction() as db:
             primary = set(self.requested_leagues(db)) - {"f1"}
-            leagues = sorted(primary) + sorted({t["league"] for t in self.db.teams(db)} - primary - {"f1"})[:16]
+            leagues = (
+                sorted(primary) + sorted({t["league"] for t in self.db.teams(db)} - primary - {"f1"})[:16]
+            )
             health = self.db.meta(db, "team_directory_health", {"leagues": {}})
         for league in leagues:
             try:

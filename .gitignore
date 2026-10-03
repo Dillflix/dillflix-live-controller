@@ -19,7 +19,3 @@ backups/
 *.executor.lock
 *.egg-info/
 /build/
-android/prime-media-probe/.build/
-android/prime-media-probe/.test-cache/
-android/prime-media-probe/dist/
-*.p12

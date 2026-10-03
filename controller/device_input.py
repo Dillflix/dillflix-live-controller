@@ -12,6 +12,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import Field, ValidationError
 
 from .models import StrictModel
+from .prime_ownership import PrimeInput, PrimeOwnership
 from .screen_capture import AdbCapture, CaptureError
 from .screen_install import SERVER_VERSION
 
@@ -108,6 +109,10 @@ class DeviceInput:
         self.lock = asyncio.Lock()
         self.connection = None
         self.monitor = None
+        socket_path = getattr(service.settings, "prime_player_socket", "")
+        if service.executor and socket_path != service.settings.executor.prime_socket:
+            raise ValueError("Automation and manual control must use the same PRIME_PLAYER_SOCKET")
+        self.prime = PrimeOwnership(socket_path, service.settings.screen_adb_serial) if socket_path else None
 
     def start(self):
         self.monitor = asyncio.create_task(self.watch_expiry())
@@ -130,12 +135,19 @@ class DeviceInput:
         async with self.lock:
             task = self.revoke_locked()
         await self.drain(task)
+        if self.prime:
+            await self.prime.close()
 
     async def expire(self):
         async with self.lock:
             if self.service.manual_expired():
                 # Keep automation paused until all manual writes and cleanup end.
                 await self.drain(self.revoke_locked())
+                if self.prime:
+                    with self.service.db.transaction() as db:
+                        session = self.service.db.device(db, "living-room").get("manual_control")
+                    if session:
+                        await self.prime.release(session["session_id"])
                 self.service.expire_manual()
 
     async def watch_expiry(self):
@@ -152,6 +164,15 @@ class DeviceInput:
                 _, attached = self.connection
                 if (attached.session_id, attached.owner_token) == (command.session_id, command.owner_token):
                     await self.drain(self.revoke_locked())
+            if self.prime and command.action == "release":
+                with self.service.db.transaction() as db:
+                    session = self.service.db.device(db, device_id).get("manual_control")
+                if session and session["session_id"] == command.session_id:
+                    with self.service.db.transaction() as db:
+                        self.service.check_manual_owner(
+                            db, self.service.db.device(db, device_id), command.session_id, command.owner_token
+                        )
+                    await self.prime.release(command.session_id)
             result = self.service.manual_command(device_id, command)
             task = None
             if self.connection:
@@ -173,6 +194,9 @@ class DeviceInput:
                             command.session_id,
                             command.owner_token,
                         )
+                        if self.prime:
+                            self.service.manual_authorized(device_id, command.session_id, command.owner_token)
+                            await self.prime.acquire(command.session_id)
                     except HTTPException:
                         raise
                     except Exception as error:
@@ -210,6 +234,8 @@ class DeviceInput:
                     raise HTTPException(
                         409, "This remote is already connected in another tab. Close it first."
                     )
+                if self.prime:
+                    await self.prime.acquire(attach.session_id)
                 task = asyncio.create_task(self.run(websocket, device_id, attach))
                 self.connection = (task, attach)
             await asyncio.shield(task)
@@ -269,13 +295,16 @@ class DeviceInput:
         if self.service.executor:
             async with self.service.executor.input_lock:
                 self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
-                self.service.executor.invalidate_input_context()
                 await source.send(packet)
         else:
             await source.send(packet)
 
     async def run(self, websocket, device_id, attach):
-        source = self.source_factory(self.service.settings)
+        source = (
+            PrimeInput(self.prime, attach.session_id)
+            if self.prime
+            else self.source_factory(self.service.settings)
+        )
         try:
             await self.connect_source(websocket, source)
             # Startup can outlast ownership/deadline. Recheck at the write boundary,

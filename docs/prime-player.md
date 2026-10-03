@@ -2,17 +2,9 @@
 
 ## Status
 
-The controller-side search → label matching → live launch → current-status workflow
-is implemented and host-tested against controlled service/model boundaries. The
-Prime Player service contract reviewed is API 3, version 0.1.0a4, commit
-`bd53c548b9cf1f3fe8cf326fe87d32dc448e2ffe`.
+Controller 0.14.0 integrates Prime Player **API 4 / 0.1.0a5**, reviewed at commit `55e296ac1179478733c5efa89389a0743e1b728b`. Search, matching, Play, current status, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
 
-**Activation is intentionally blocked until the independently developed
-cancel/stop API is connected.** That service version has no cancel/stop operation.
-`PrimePlayerClient.cancel_attempt()` is the single explicit integration seam; it
-currently returns an error, and `cancellation_ready=False` prevents Search/Play.
-No guessed RPC, force-stop fallback, service restart, or suspend-as-stop is used.
-This is development integration code, not a claim of deployed TV acceptance.
+Host tests cover durable workflow behavior, RPC delivery and the actual service ownership engine with a controlled runtime. Physical TV, live inference and deployment acceptance remain pending.
 
 ## Responsibilities
 
@@ -25,9 +17,7 @@ This is development integration code, not a claim of deployed TV acceptance.
 
 The new workflow does not construct an ADB device, run an accessibility or
 MediaSession collector, use screenshot navigation, or instantiate a vision actor.
-The optional matcher uses a text completion model. The old `prime-video` mode is
-retained explicitly for existing deployments; there is no automatic fallback to
-it and the two execution paths never run together.
+The optional matcher uses a text completion model. `PLAYBACK_ADAPTER=prime-video` is rejected with a migration message. Supported modes are `simulator` and `prime-player`.
 
 The shared `executor/worker.py` and store contain only durable workflow
 lifecycle/ownership infrastructure. Controller Play/status/Cancel remain the
@@ -85,35 +75,26 @@ manual completion remain the lifecycle sources. Live mode means the service
 resolved Watch Now; current status is not a fresh measurement of delay behind live
 or HDMI/rendered video quality.
 
-## Cancel/stop integration seam
+## Cancellation, stop and ownership
 
-The other agent owns the service implementation. Do not add a competing stop
-implementation to this repository. Once the service's actual wire contract is
-available, adapt only `PrimePlayerClient.cancel_attempt(session_id, attempt_id)`
-and its contract tests, then set `cancellation_ready=True`.
+Every Search and Play includes a current acknowledged **automatic ownership envelope**. The controller never resumes a manual owner on its own. The web gateway obtains a manual receipt using `suspend(true, owner_id, previous)` and forwards wake/keys/text with strictly increasing sequence numbers. Release acknowledges automatic ownership before resuming the planner. There is no additional public authority API.
 
-The method's **internal normalized result** must contain:
+Cancellation first persists the controller's intent fence, then interrupts in-flight remote work through the service's out-of-band cancellation lane. It does not wait for a long search HTTP response before asking the runtime to cancel. Only an acknowledged input barrier permits the next controller or manual input operation.
 
-```json
-{"input_quiescent": true, "active_playback": "stopped"}
-```
+For an owned launch, the controller calls `stop(session_id, attempt_id, ownership)` after cancellation. It records dispatch **before** sending, so a lost response or restart cannot replay a physical stop. Uncertain delivery is followed by a fresh cancellation barrier and recorded as unknown. Service restart, manual ownership and superseded attempts never authorize stopping unrelated playback.
 
-`already_inactive` is also accepted. This is not a proposed service RPC schema.
-The adapter must validate that the real acknowledgement applies to the requested
-service session/attempt, prevents late launch, and cannot stop newer playback.
-Unknown/refused/stale-session responses must raise `ExecutorError`; a local HTTP
-timeout or mere suspension is not acknowledgement. A restart cannot silently
-transfer authority from an old attempt to unrelated current playback.
+| Cancel `active_playback` | Meaning |
+| --- | --- |
+| `stopped` | Service confirmed a matching native stopped/ended event for this attempt |
+| `already_inactive` | This controller token never acquired the device |
+| `not_current` | The token no longer controls this service lifetime/attempt; unrelated playback was left alone |
+| `unknown` | Input is quiescent, but playback inactivity was not proved; page exit alone has this result |
 
-The workflow drains any bounded in-flight mutation under the same lock as manual
-input, suspends service automation, and acknowledges cancellation only after the
-owned attempt is inactive. Search-only cancellation uses suspension's operation
-lock as the quiescence barrier. Device takeover also suspends the service when no
-controller-owned attempt exists. A later authorized workflow resumes it. Physical
-remotes and independent SDK clients remain external actors; do not run competing
-automated clients alongside the controller.
+A 200 response confirms `input_quiescent=true`; it does **not** imply `active_playback=stopped`. An unacknowledged input barrier stays pending and returns an error, preserving the cleanup obligation. Read the token's `prime_player.stop_result` / `stop_error` for detail. None of these states proves the sporting event ended.
 
-## Deployment after the seam is connected
+No competing automated SDK client should control the same device. External physical remotes can change playback, which current status will detect. The controller never kills or restarts the Prime service to resolve ownership errors.
+
+## Deployment
 
 Keep the existing Prime Player service. Do not launch a second service, stop it,
 or restart Prime as part of deploying the controller. Set:
@@ -122,6 +103,7 @@ or restart Prime as part of deploying the controller. Set:
 CONTROLLER_MODE=teamarr
 PLAYBACK_ADAPTER=prime-player
 PRIME_PLAYER_SOCKET=/absolute/path/to/player.sock
+SCREEN_ADB_SERIAL=YOUR_DEVICE_SERIAL
 PRIME_PLAYER_MATCH_MODEL=YOUR_TEXT_MODEL
 EXECUTOR_LLM_BASE_URL=http://YOUR_MODEL_SERVER/v1
 EXECUTOR_LLM_API_KEY=
@@ -134,7 +116,7 @@ inspection defaults to 10 seconds (configurable 5–60). The whole workflow has 
 durable deadline, including matching and service launch verification.
 
 For Docker, the service exposes a **mode-0600 Unix socket**, not a TCP port. Use
-the optional overlay and set `PRIME_PLAYER_SOCKET_DIRECTORY` to its parent directory:
+the optional overlay and set `PRIME_PLAYER_STATE_DIR` to its parent directory:
 
 ```bash
 docker compose -f compose.yaml -f compose.prime-player.yaml config --quiet
@@ -151,21 +133,23 @@ world-writable. A read-only bind mount does not itself restrict socket RPCs.
 Retain the existing database volume and persistent ADB identity for manual input
 and screen mirroring. Changing container UID also requires existing volume access.
 
-Cancel outstanding real playback before changing from another real adapter;
-startup rejects a change that would abandon its cleanup obligations. Simulator
-deployments retain their plans/settings and clear old simulated observations.
+Before upgrading an old `prime-video` deployment, pause automation and cancel outstanding real playback on that version. Save a database backup using [operations](operations.md), then stop the old controller. Start only the new `prime-player` controller against that database. Startup rejects an adapter switch with unresolved old cleanup obligations; keep the old version available to resolve those rather than deleting history. Plans/settings are retained. Simulator migration clears simulated observations.
+
+Remove `EXECUTOR_ACTOR_MODEL`, `EXECUTOR_OBSERVER_MODEL`, `EXECUTOR_ACTOR_PROTOCOL`, and the old ADB/probe/visual/settle/action-limit settings from deployment configuration. The remaining model settings are for text matching only. `EXECUTOR_CANCEL_TIMEOUT_SECONDS` now defaults to 80 seconds to allow a bounded native stop inspection. Keep only one `PRIME_PLAYER_SOCKET` entry. The existing probe APK is no longer read or required; this release does not uninstall software from the TV.
+
+For gateway-only testing use `PLAYBACK_ADAPTER=simulator` with the same socket. The supplied Compose overlay deliberately enables real `prime-player` playback; start it with automation paused until the checks below pass.
 
 ## Acceptance on the target host
 
 1. Run the read-only `python -m controller.prime_player.check`. Confirm the service
-   session, actual capability availability, socket permissions and connected stop
-   adapter. This command sends no search, play, suspend or device commands.
+   session, actual capability availability, socket permissions and ownership
+   receipt. This command sends no search, play, suspend or device commands.
 2. Initiate one known live event. Inspect its selection audit, live resolution,
    attempt identity and fresh current status. Confirm the TV plays that event.
 3. Exercise multiple live results, a replay-only result and unresolved identity.
    Check semantic selection and abstention with the configured real model.
 4. Take manual control during search and during playback; verify no late launch,
-   correct scoped stop, and input readiness only after acknowledgement.
+   correct scoped stop result, and input readiness only after acknowledgement.
 5. Reconnect/restart the controller with the service left running. Verify the
    original attempt is inspected without another search or launch.
 6. Validate service restart, socket loss, paused/buffering/switched playback and

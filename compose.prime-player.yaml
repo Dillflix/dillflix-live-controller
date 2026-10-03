@@ -1,15 +1,14 @@
-# Optional overlay, only after the cancel/stop service contract is connected.
-# Mount the directory, not the socket inode: service restart replaces the socket.
+# Mount the directory: restarting Prime Player replaces the socket inode.
 services:
   controller:
+    environment:
+      PRIME_PLAYER_SOCKET: /run/prime-player/player.sock
+      PLAYBACK_ADAPTER: prime-player
+      NAVIGATION_TIMEOUT_SECONDS: ${NAVIGATION_TIMEOUT_SECONDS:-300}
     volumes:
       - type: bind
-        source: ${PRIME_PLAYER_SOCKET_DIRECTORY:?Set the host directory containing player.sock}
+        source: ${PRIME_PLAYER_STATE_DIR:?Set PRIME_PLAYER_STATE_DIR to the host socket directory}
         target: /run/prime-player
         read_only: true
         bind:
           create_host_path: false
-    environment:
-      PLAYBACK_ADAPTER: prime-player
-      PRIME_PLAYER_SOCKET: /run/prime-player/player.sock
-      NAVIGATION_TIMEOUT_SECONDS: ${NAVIGATION_TIMEOUT_SECONDS:-300}

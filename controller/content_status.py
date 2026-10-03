@@ -48,6 +48,9 @@ def source_observation(snapshot, seen_at, as_of, now, mode, ttl):
     else:
         state = snapshot.get("status", "unknown")
         observed_at, received_at, basis = None, seen_at, "feed_received"
+        if snapshot.get("status_received_at"):
+            # An upstream cache hit must not renew an old live observation.
+            received_at = min(parse_time(seen_at), parse_time(snapshot["status_received_at"])).isoformat()
         source = "feed_status_simulator"
     return {
         "content_id": snapshot["id"],

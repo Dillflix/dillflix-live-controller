@@ -157,14 +157,9 @@ class ExecutorStore:
         if observation and parse_time(observation["valid_until"]) <= now:
             observation["verified"] = False
             report["observation_status"]["state"] = "stale"
-        runtime = report.get("runtime")
-        if runtime and parse_time(runtime["valid_until"]) <= now:
-            runtime.update(
-                source_health="stale",
-                binding="revalidation_required",
-                bound_content_id=None,
-                live_mode="unknown",
-            )
+        # Old report blobs may remain in backups; native probe fields have no
+        # current authority in the service-backed workflow.
+        report.pop("runtime", None)
         lifecycle = report["content_status"]
         if db is not None and lifecycle["effective_state"] not in {"ended", "cancelled"}:
             catalog = db.execute(
@@ -310,7 +305,7 @@ class ExecutorStore:
                 self.write(db, row["token"], report, cancel_requested=1, next_check=0)
             return tokens
 
-    def acknowledge_cancel(self, token, stopped):
+    def acknowledge_cancel(self, token, active_playback):
         with self.db.transaction() as db:
             row = self.get_row(db, token)
             report = json.loads(row["report"])
@@ -318,18 +313,18 @@ class ExecutorStore:
                 report["operation"].update(
                     state="cancelled", phase="cancelled", finished_at=utc(), updated_at=utc()
                 )
-            report["cancellation"] = {"state": "acknowledged", "input_quiescent": True}
+            report["cancellation"] = {
+                "state": "acknowledged",
+                "input_quiescent": True,
+                "active_playback": active_playback,
+            }
             report["observation"] = None
-            if report.get("runtime"):
-                report["runtime"].update(
-                    binding="unbound", bound_content_id=None, live_mode="unknown", source_health="unavailable"
-                )
             report["observation_status"] = {"state": "unavailable", "checked_at": utc(), "error": None}
             until = datetime.now(UTC) + timedelta(days=self.settings.executor.retention_days)
             report["retained_until"] = until.isoformat()
             self.write(db, token, report, state="cancelled", cancel_requested=2, retired_at=time.time())
             db.execute("UPDATE executor_devices SET current_token=NULL WHERE current_token=?", (token,))
-            return stopped
+            return active_playback
 
     def journal(self, token, action, evidence_id=None, *, cancelling=False):
         with self.db.transaction() as db:
@@ -357,44 +352,6 @@ class ExecutorStore:
                 "UPDATE executor_actions SET state=?,error=? WHERE id=?",
                 ("uncertain" if error else "acknowledged", error, action_id),
             )
-
-    def recover(self):
-        """Never replay a dispatched key after a crash. Successful players are read-only rechecked."""
-        with self.db.transaction() as db:
-            rows = db.execute(
-                "SELECT * FROM executor_jobs WHERE request IS NOT NULL AND cancel_requested=0"
-            ).fetchall()
-            for row in rows:
-                report = json.loads(row["report"])
-                if row["state"] == "playing_verified":
-                    if report["observation"]:
-                        report["observation"]["verified"] = False
-                    report["observation_status"]["state"] = "unavailable"
-                    if report.get("runtime"):
-                        report["runtime"].update(
-                            binding="revalidation_required",
-                            bound_content_id=None,
-                            live_mode="unknown",
-                            source_health="unavailable",
-                        )
-                    self.write(db, row["token"], report, next_check=0)
-                elif row["touched_device"] and row["state"] in {"accepted", "navigating"}:
-                    report["operation"].update(
-                        state="failed",
-                        phase="restart_interrupted",
-                        finished_at=utc(),
-                        error={
-                            "code": "restart_interrupted",
-                            "message": "Navigation was interrupted; uncertain input will not be replayed",
-                            "retryable": True,
-                        },
-                    )
-                    report["cancellation"] = {"state": "requested", "input_quiescent": False}
-                    self.write(db, row["token"], report, state="failed", cancel_requested=1)
-                db.execute(
-                    "UPDATE executor_actions SET state='uncertain',error='process_restart' WHERE token=? AND state='dispatching'",
-                    (row["token"],),
-                )
 
     def prune(self):
         with self.db.transaction() as db:

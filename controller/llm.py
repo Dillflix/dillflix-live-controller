@@ -1,4 +1,4 @@
-"""Bounded OpenAI-compatible structured text/image completion transport."""
+"""Bounded OpenAI-compatible structured text completion transport."""
 
 import asyncio
 import json
@@ -38,7 +38,7 @@ class ChatClient:
     async def close(self):
         await self.client.aclose()
 
-    async def completion(self, model, messages, schema=None, name="tv_observation", max_tokens=1800):
+    async def completion(self, model, messages, schema=None, name="event_match", max_tokens=1800):
         body = {
             **self.config.model_options,
             "model": model,

@@ -45,7 +45,7 @@ def create_app(settings=None, *, start_workers=True):
             await screen.stop()
             await service.stop()
 
-    app = FastAPI(title="Dillflix Controller", version="0.12.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.13.0", lifespan=lifespan)
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control

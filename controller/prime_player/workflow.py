@@ -13,10 +13,10 @@ from uuid import uuid4
 
 from ..executor.models import ExecutorError
 from ..executor.store import utc
-from ..executor.verification import search_queries
 from ..executor.worker import PlaybackWorker
 from ..planner import parse_time
 from .client import PrimePlayerClient
+from .labels import search_queries
 from .matching import EventMatcher
 
 
@@ -75,14 +75,20 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             try:
                 result = await asyncio.shield(task)
             except asyncio.CancelledError:
-                # A local disconnect does not cancel a remote operation. Drain
-                # its bounded response before releasing the manual input gate.
-                drained = asyncio.gather(task, return_exceptions=True)
-                while not drained.done():
+                # Stop remote work out of band: search holds input_lock locally,
+                # but the service cancellation lane can interrupt its runtime.
+                cleanup = asyncio.create_task(self.interrupt(token))
+                while not cleanup.done():
                     try:
-                        await asyncio.shield(drained)
+                        await asyncio.shield(cleanup)
                     except asyncio.CancelledError:
                         continue
+                    except Exception:
+                        break
+                # A failed barrier remains a durable cancellation obligation.
+                await asyncio.gather(cleanup, return_exceptions=True)
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
                 self.store.journal_done(action_id, "interrupted_delivery")
                 raise
             except Exception:
@@ -103,6 +109,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 retryable=False,
             )
         self.player.require(health, *capabilities)
+        if health.get("serial") != self.settings.screen_adb_serial:
+            raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from SCREEN_ADB_SERIAL")
         return health
 
     async def navigate(self, row):
@@ -128,25 +136,23 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             self.store.fail(token, ExecutorError("prime_workflow_failed", "Prime playback workflow failed"))
 
     async def select_and_launch(self, token, request):
-        if not self.player.cancellation_ready:
-            raise ExecutorError(
-                "prime_cancel_contract_pending",
-                "Connect the released Prime Player cancel/stop contract before enabling playback",
-                retryable=False,
-            )
-        health = await self.check_session(capabilities=("search", "play", "playback_status"))
+        health = await self.check_session(
+            capabilities=("search", "play", "playback_status", "cancel", "stop")
+        )
+        ownership = self.player.ownership(health, automatic=True)
         session = health["session_id"]
         with self.db.transaction() as db:
             self.store.allowed(db, token, navigation=True)
             timezone = self.db.device(db, request["device_id"])["preferences"]["timezone"]
         query = search_queries(request["content_snapshot"])[0]
-        self.save_workflow(token, session_id=session, query=query, source="prime_player", selection=None)
+        self.save_workflow(
+            token, session_id=session, query=query, source="prime_player", selection=None, ownership=ownership
+        )
         self.store.phase(token, "searching")
-        resumed = await self.mutation(token, "PRIME_RESUME", lambda: self.player.suspend(False))
-        if resumed.get("session_id") != session:
-            raise ExecutorError("prime_session_changed", "Prime Player changed before search")
         results = await self.mutation(
-            token, "PRIME_SEARCH", lambda: self.player.search(query, self.config.prime_search_timeout)
+            token,
+            "PRIME_SEARCH",
+            lambda: self.player.search(query, self.config.prime_search_timeout, ownership),
         )
         if results.get("session_id") != session or results.get("query") != query:
             raise ExecutorError("prime_stale_result", "Search result belongs to another session or query")
@@ -166,13 +172,16 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             raise ExecutorError("prime_no_match", audit["reason"], retryable=False)
         if time.monotonic() - received > 90:
             raise ExecutorError("prime_stale_result", "Result selection outlived its usable handle")
-        await self.check_session(session, capabilities=("play",))
+        health = await self.check_session(session, capabilities=("play",))
+        ownership = self.player.ownership(health, automatic=True)
         attempt = uuid4().hex
-        self.save_workflow(token, attempt_id=attempt, selected=selected, launch_outcome=None)
+        self.save_workflow(
+            token, attempt_id=attempt, selected=selected, launch_outcome=None, ownership=ownership
+        )
         self.store.phase(token, "launching")
         try:
             outcome = await self.mutation(
-                token, "PRIME_PLAY", lambda: self.player.play(selected["handle"], attempt)
+                token, "PRIME_PLAY", lambda: self.player.play(selected["handle"], attempt, ownership)
             )
             self.validate_outcome(outcome, self.store.report(token)["prime_player"])
             self.save_workflow(token, launch_outcome=outcome)
@@ -186,7 +195,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
     @staticmethod
     def validate_outcome(outcome, workflow):
         if (
-            outcome.get("attempt_id") != workflow["attempt_id"]
+            outcome.get("session_id") != workflow["session_id"]
+            or outcome.get("attempt_id") != workflow["attempt_id"]
             or outcome.get("requested_id") != workflow["selected"]["content_id"]
         ):
             raise ExecutorError(
@@ -208,7 +218,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             outcome = await self.player.attempt(workflow["attempt_id"])
             self.validate_outcome(outcome, workflow)
             self.save_workflow(token, launch_outcome=outcome)
-            if outcome["state"] in {"failed", "unknown"}:
+            if outcome["state"] in {"failed", "unknown", "cancelled", "stopped"}:
                 raise ExecutorError(
                     "prime_launch_unverified", "Prime could not verify the requested playback"
                 )
@@ -330,43 +340,110 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 }
                 self.store.write(db, token, report, next_check=time.time() + self.config.monitor_interval)
 
+    def save_cancellation(self, token, **fields):
+        with self.db.transaction() as db:
+            row = self.store.get_row(db, token)
+            report = json.loads(row["report"])
+            report.setdefault("prime_player", {}).update(fields)
+            self.store.write(db, token, report)
+
+    async def interrupt(self, token):
+        """Fence remote work without waiting on the local mutation lock."""
+        report = self.store.report(token)
+        workflow = report.get("prime_player") or {}
+        health = await self.check_session()
+        receipt = self.player.ownership(health)
+        if workflow.get("session_id") != health["session_id"]:
+            # An old service token cannot address the new service lifetime.
+            return receipt
+        previous = workflow.get("ownership") or {}
+        if receipt["mode"] == "manual" or any(
+            receipt.get(k) != previous.get(k) for k in ("epoch", "handoff_id")
+        ):
+            # A newer acknowledged transition has already fenced this work.
+            return receipt
+        result = await self.player.cancel_work(workflow["session_id"], workflow.get("attempt_id"), receipt)
+        acknowledged = self.player.ownership({"session_id": health["session_id"], "ownership": result})
+        self.save_cancellation(token, cancellation_receipt=acknowledged)
+        return acknowledged
+
     async def cancel_one(self, token):
         async with self.input_lock:
             with self.db.transaction() as db:
                 row = self.store.get_row(db, token)
+                if row["cancel_requested"] == 2:
+                    return
                 report = json.loads(row["report"])
                 owner = db.execute(
                     "SELECT current_token FROM executor_devices WHERE device_id=?", (row["device_id"],)
                 ).fetchone()
                 owns = bool(owner and owner[0] == token and row["touched_device"])
+            active = "not_current" if row["touched_device"] else "already_inactive"
             if owns:
                 workflow = report.get("prime_player") or {}
-                suspended = await self.player.suspend(True)
-                if workflow.get("session_id") != suspended.get("session_id"):
-                    raise ExecutorError(
-                        "prime_session_changed", "Cannot cancel an old attempt in a new service session"
-                    )
-                if workflow.get("attempt_id"):
-                    result = await self.player.cancel_attempt(workflow["session_id"], workflow["attempt_id"])
-                    if result.get("input_quiescent") is not True or result.get("active_playback") not in {
-                        "stopped",
-                        "already_inactive",
-                    }:
-                        raise ExecutorError(
-                            "prime_cancel_unconfirmed", "Prime Player cancellation is not confirmed"
-                        )
-            self.store.acknowledge_cancel(token, owns)
-
-    async def cancel(self, command):
-        result = await super().cancel(command)
-        if command.through_intent_version is not None:
-            # A manual takeover with no controller-owned attempt still suspends
-            # the service. Acquisition of its operation lock is the idle barrier.
-            async with self.input_lock:
-                with self.db.transaction() as db:
-                    owner = db.execute(
-                        "SELECT highest_intent FROM executor_devices WHERE device_id=?", (command.device_id,)
-                    ).fetchone()
-                if not owner or owner[0] <= command.through_intent_version:
-                    await self.player.suspend(True)
-        return result
+                receipt = await self.interrupt(token)
+                attempt = workflow.get("attempt_id")
+                if workflow.get("session_id") != receipt["session_id"] or receipt["mode"] != "automatic":
+                    active = "not_current"
+                elif attempt:
+                    active = "unknown"
+                    # Persist before dispatch. A lost response must never replay
+                    # a physical Back/stop action after restart or retry.
+                    if not workflow.get("stop_dispatched"):
+                        self.save_cancellation(token, stop_dispatched=True)
+                        try:
+                            result = await self.player.stop_attempt(workflow["session_id"], attempt, receipt)
+                        except ExecutorError as exc:
+                            self.save_cancellation(token, stop_error=exc.detail())
+                            # The preceding barrier is insufficient after a lost
+                            # stop response: fence/drain that operation as well.
+                            health = await self.check_session()
+                            current = self.player.ownership(health)
+                            if (
+                                current["session_id"] == workflow["session_id"]
+                                and current["mode"] == "automatic"
+                            ):
+                                fenced = await self.player.cancel_work(
+                                    workflow["session_id"], attempt, current
+                                )
+                                self.player.ownership(
+                                    {"session_id": current["session_id"], "ownership": fenced}
+                                )
+                        else:
+                            self.save_cancellation(token, stop_result=result)
+                            if result.get("stopped") is True and (
+                                result.get("session_id") == workflow["session_id"]
+                                and result.get("attempt_id") == attempt
+                            ):
+                                active = "stopped"
+                            elif result.get("reason") == "attempt_not_current":
+                                active = "not_current"
+                    else:
+                        result = workflow.get("stop_result") or {}
+                        if result.get("stopped") is True and (
+                            result.get("session_id") == workflow["session_id"]
+                            and result.get("attempt_id") == attempt
+                        ):
+                            active = "stopped"
+                        elif result.get("reason") == "attempt_not_current":
+                            active = "not_current"
+                        else:
+                            # Recover uncertain stop by fencing input, not replaying
+                            # stop. A native stop confirmation remains unknown.
+                            health = await self.check_session()
+                            current = self.player.ownership(health)
+                            if (
+                                current["session_id"] == workflow["session_id"]
+                                and current["mode"] == "automatic"
+                            ):
+                                fenced = await self.player.cancel_work(
+                                    workflow["session_id"], attempt, current
+                                )
+                                self.player.ownership(
+                                    {"session_id": current["session_id"], "ownership": fenced}
+                                )
+                else:
+                    # Search can replace existing content; no bound attempt exists
+                    # with which to prove what is playing or stopped.
+                    active = "unknown"
+            self.store.acknowledge_cancel(token, active)

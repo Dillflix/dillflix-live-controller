@@ -1,12 +1,28 @@
 # Changelog
 
-## Unreleased — Prime Player orchestration (cancel/stop integration pending)
+## 0.14.0 — Prime Player execution replaces the native screenshot executor
 
-- Add a separate Prime Player workflow over its existing Unix HTTP/RPC service. Prime Player owns application execution; the controller retains scheduling, intent and durable tokens. No ADB navigation, accessibility collector or MediaSession probe runs in this path.
-- Select live results using exact matchup labels/provider aliases where unambiguous, otherwise an optional text LLM with bounded candidates, exact evidence and abstention. Preserve the original Teamarr ID and snapshot independently of Prime GTIs.
-- Persist service session and attempt association before Play; inspect uncertain launches without replay. Monitor current attempt-bound status, retain acquisition age, and never convert stopped/switched/player-ended into sports-event completion.
-- Extract shared worker lifecycle and model transport without changing legacy behavior. Preserve manual ownership and cancellation barriers. Another agent owns the service cancel/stop implementation; its adapter seam remains explicit and playback activation is blocked until connected.
-- Document read-only diagnostics, Unix-socket Docker mounting/permissions, rollout and target-device acceptance. Existing `simulator` and explicit `prime-video` deployments retain their behavior; there is no automatic legacy fallback.
+- Use Prime Player API 4 / 0.1.0a5 for search, live launch, attempt-bound monitoring, cancellation and scoped stop. Preserve controller scheduling, durable tokens, opaque Teamarr IDs and all permitted source routes.
+- Match playable live result labels deterministically or with a bounded text LLM, supporting abstention and retained selection evidence. Structured competitor metadata in Prime is not required.
+- Share one asynchronous RPC transport and service ownership contract with manual input. Interrupt remote search out of band, reject late results and stale owners, and never replay an uncertain Play or Stop.
+- Report input quiescence separately from native stop confirmation. Player stopped/switched/ended cannot complete a sports event.
+- Remove the screenshot navigator, native accessibility and MediaSession collectors, bundled APK/Java sources, vision prompts, obsolete dependencies/settings, fixtures and setup instructions. Screen mirroring and the manual remote remain supported.
+- Preserve database history and restore fences. Existing `prime-video` configuration must migrate to `prime-player`; cancel outstanding old work before upgrading. Update socket/model settings using `docs/prime-player.md`.
+- Controller and actual API 4 host-service contract tests use controlled runtime boundaries. Physical-device, live model and deployment acceptance remain pending.
+
+## 0.13.1 — Prime Player manual ownership
+
+- Add opt-in API 4 service handoff before manual input, including wake and text.
+- Drain in-flight writes and reject stale session release; no direct-ADB fallback when configured.
+- Reject coexistence with the legacy mutation executor on the same gateway. Automated planner integration is unchanged.
+- Simulated handoff tests pass; target-device acceptance remains pending.
+
+## 0.13.0 — Continuous DAZN tennis coverage
+
+- Consume Teamarr's DAZN Canadian day/session/court broadcast listings through Prime Video. Keep titles, artwork, source identities, and unknown ends intact; individual ATP/WTA match discovery is unchanged.
+- Add Tennis filtering and the DAZN tennis priority source, plus a dedicated demo scenario and phone browser test.
+- Preserve upstream status acquisition time across feed cache hits. A match's Final signal cannot finish the encompassing broadcast; failures and elapsed estimates preserve reservations.
+- No database migration. Update Teamarr first. The real public schedule was checked; installed deployment and Fire TV playback validation remain outstanding.
 
 ## 0.12.0 — Configurable leagues and expanded Prime Video coverage
 
@@ -195,3 +211,4 @@ Upgrade from the existing checkout with `git pull --ff-only` and `docker compose
 ## 0.1.0
 
 Initial independent controller: responsive events, watch plan, priorities, settings and activity; Teamarr feed ingestion; persistent SQLite state; live-only selection; and simulated playback/status adapters.
+

@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 from pydantic import Field, ValidationError
 
 from ..executor.models import ExecutorError, Strict
-from ..executor.verification import date_agrees, norm, prime_option, team_aliases, teams
 from ..llm import ChatClient
+from .labels import date_agrees, norm, prime_option, team_aliases, teams
 
 GTI = re.compile(r"amzn1\.dv\.gti\.[A-Za-z0-9-]+\Z")
 EXCLUDED = re.compile(r"\b(replay|highlights?|recap|multiview|start over|from the beginning)\b", re.I)
