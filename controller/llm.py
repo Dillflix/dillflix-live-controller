@@ -10,12 +10,18 @@ from .executor.models import ExecutorError
 
 
 def strict_schema(schema):
-    """Keep optional fields backward compatible locally, but required/null on the wire."""
+    """Build the strict wire schema; length ceilings remain enforced locally.
+
+    The deployed model backend rejects grammar generation with maxLength.
+    Omit only that constraint and defaults; preserve all other wire constraints.
+    """
     if isinstance(schema, list):
         return [strict_schema(value) for value in schema]
     if not isinstance(schema, dict):
         return schema
-    result = {key: strict_schema(value) for key, value in schema.items() if key != "default"}
+    result = {
+        key: strict_schema(value) for key, value in schema.items() if key not in {"default", "maxLength"}
+    }
     if result.get("type") == "object" and "properties" in result:
         result["required"] = list(result["properties"])
         result["additionalProperties"] = False

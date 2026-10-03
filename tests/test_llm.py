@@ -48,3 +48,48 @@ async def test_unstructured_and_oversized_error_bodies_not_exposed(body):
         assert 'proxy failure' not in caught.value.message
     finally:
         await client.close()
+
+
+async def test_strict_wire_schema_omits_length_ceilings_but_local_model_retains_them():
+    import copy
+    import json
+
+    from pydantic import ValidationError
+
+    from controller.prime_player.matching import Choice
+
+    original = Choice.model_json_schema()
+    saved = copy.deepcopy(original)
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={'choices': [{
+            'finish_reason': 'stop', 'message': {'content': json.dumps({
+                'content_id': None, 'viewing_option_id': None,
+                'reason': 'No candidates', 'evidence_labels': [],
+            })},
+        }]})
+
+    client = ChatClient(ExecutorConfig(base_url='https://model.invalid/v1', structured_output='json_schema'),
+                        transport=httpx.MockTransport(respond))
+    try:
+        answer = await client.completion('test', [], original)
+    finally:
+        await client.close()
+    Choice.model_validate_json(answer)
+    response_format = requests[0]['response_format']
+    assert response_format['type'] == 'json_schema'
+    assert response_format['json_schema']['strict'] is True
+    wire = response_format['json_schema']['schema']
+    assert 'maxLength' not in json.dumps(wire)
+    assert wire['additionalProperties'] is False
+    assert set(wire['required']) == set(original['properties'])
+    assert wire['properties']['reason']['minLength'] == 1
+    assert wire['properties']['evidence_labels']['maxItems'] == 10
+    assert wire['properties']['content_id']['anyOf'] == [{'type': 'string'}, {'type': 'null'}]
+    assert original == saved == Choice.model_json_schema()
+    valid = json.loads(answer)
+    for field, limit in [('content_id', 256), ('viewing_option_id', 1024), ('reason', 2000)]:
+        with pytest.raises(ValidationError):
+            Choice.model_validate({**valid, field: 'x' * (limit + 1)})

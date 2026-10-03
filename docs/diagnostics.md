@@ -56,3 +56,9 @@ and individual fields at 1,200 characters; configured API keys and common bearer
 patterns are redacted. Arbitrary non-JSON bodies and other response fields are omitted.
 Provider messages can still contain quoted model names or input excerpts. Existing
 failures cannot be enriched retroactively: a subsequent request must capture the response.
+
+Starting with 0.14.6, strict model requests omit `maxLength` from the wire schema
+because the deployed backend failed to initialize its grammar with these bounds.
+`json_schema` and `strict: true` remain enabled, as do nullable types, required
+fields, `additionalProperties: false`, `minLength` and `maxItems`. The original
+local model retains every length ceiling and rejects overlength answers.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.6
+
+- Omit `maxLength` from the transmitted strict JSON schema to avoid the reproduced model-backend grammar initialization failure. Keep `json_schema`, `strict: true`, all other schema constraints, and existing local length/selection validation.
+
 ## 0.14.5
 
 - An expired nonterminal copy of Teamarr feed status no longer overrides the current catalog when an event becomes selected/tracked. This removes a selection-dependent eligibility flip that can repeatedly stage and supersede queued jobs. Catalog timestamps remain unchanged; expired catalog evidence stays unknown and terminal observations remain retained.
