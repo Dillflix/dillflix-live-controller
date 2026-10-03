@@ -69,6 +69,35 @@ def collect(path, device_id="living-room"):
                     "workflow": prime,
                 }
             )
+        catalog = []
+        for r in db.execute(
+            "SELECT c.*,s.observation,s.error,s.last_attempt FROM contents c LEFT JOIN content_status s ON s.content_id=c.id ORDER BY c.id LIMIT 10000"
+        ):
+            snapshot = json.loads(r["snapshot"])
+            catalog.append(
+                {
+                    "content_id": r["id"],
+                    "active": bool(r["active"]),
+                    "seen_at": r["seen_at"],
+                    "feed_entry": {
+                        k: snapshot.get(k)
+                        for k in (
+                            "id",
+                            "title",
+                            "source",
+                            "status",
+                            "status_detail",
+                            "status_received_at",
+                            "start_time",
+                            "expected_end_time",
+                            "viewing_options",
+                        )
+                    },
+                    "independent_observation": json.loads(r["observation"]) if r["observation"] else None,
+                    "lookup_error": r["error"],
+                    "last_lookup_attempt": r["last_attempt"],
+                }
+            )
         actions = [
             dict(r)
             for r in db.execute(
@@ -87,6 +116,7 @@ def collect(path, device_id="living-room"):
                 },
                 "activity": activity,
                 "controller_jobs": controller_jobs,
+                "catalog_status": catalog,
                 "playbacks": jobs,
                 "executor_actions": actions,
                 "catalog_health": {
@@ -95,7 +125,7 @@ def collect(path, device_id="living-room"):
                         "SELECT key,value FROM metadata WHERE key IN ('feed_health','team_directory_health','maintenance_health')"
                     )
                 },
-                "limits": {"activity": 1000, "jobs": 100, "executor_actions": 1000},
+                "limits": {"activity": 1000, "jobs": 100, "executor_actions": 1000, "catalog_status": 10000},
                 "excluded": [
                     "credentials",
                     "request/source snapshots",

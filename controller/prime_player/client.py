@@ -57,8 +57,15 @@ class PrimePlayerClient:
                 f"Prime Player {method} outcome is unknown; inspect the retained attempt before replay",
             ) from exc
 
-    async def health(self):
+    async def control_health(self):
+        """Read service identity even when playback/runtime health has failed."""
         value = await self.rpc("health", budget=5)
+        if not isinstance(value.get("session_id"), str) or not value["session_id"]:
+            raise ExecutorError("prime_unavailable", "Prime Player service identity is unavailable")
+        return value
+
+    async def health(self):
+        value = await self.control_health()
         if (
             not isinstance(value.get("session_id"), str)
             or not value["session_id"]
@@ -92,6 +99,17 @@ class PrimePlayerClient:
             or type(receipt.get("epoch")) is not int
         ):
             raise ExecutorError("prime_ownership_unavailable", "Prime input ownership is not acknowledged")
+        return receipt
+
+    @staticmethod
+    def control_ownership(health):
+        receipt = health.get("ownership", {})
+        if (
+            receipt.get("session_id") != health.get("session_id")
+            or type(receipt.get("epoch")) is not int
+            or receipt.get("mode") not in {"automatic", "manual", "blocked", "transitioning"}
+        ):
+            raise ExecutorError("prime_ownership_unavailable", "Prime control receipt is invalid")
         return receipt
 
     async def search(self, query, timeout, ownership):

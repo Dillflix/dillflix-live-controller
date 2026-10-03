@@ -29,6 +29,7 @@ async def test_prime_config_requires_no_vision_or_adb_settings(tmp_path):
 class Player:
     require = staticmethod(PrimePlayerClient.require)
     ownership = staticmethod(PrimePlayerClient.ownership)
+    control_ownership = staticmethod(PrimePlayerClient.control_ownership)
 
     def __init__(self):
         self.calls = []
@@ -70,6 +71,9 @@ class Player:
                 }
             },
         }
+
+    async def control_health(self):
+        return await self.health()
 
     async def suspend(self, value):
         self.calls.append(("suspend", value))
@@ -220,7 +224,9 @@ async def test_nonplaying_status_never_completes_event(tmp_path, state):
         assert report["content_status"]["effective_state"] == "unknown"
         assert report["observation_status"]["error"]["code"] == "prime_playback_unverified"
         with workflow.db.transaction() as db:
-            assert db.execute("SELECT 1 FROM activity WHERE message='Playback monitoring lost verification'").fetchone()
+            assert db.execute(
+                "SELECT 1 FROM activity WHERE message='Playback monitoring lost verification'"
+            ).fetchone()
         assert len([c for c in workflow.player.calls if c[0] == "play"]) == 1
     finally:
         await cleanup(controller)
@@ -501,5 +507,101 @@ async def test_service_restart_cancel_never_sends_old_stop_to_new_service(tmp_pa
         await workflow.cancel_one(token)
         assert not workflow.player.calls[before:]
         assert workflow.store.report(token)["cancellation"]["active_playback"] == "not_current"
+    finally:
+        await cleanup(controller)
+
+
+async def test_startup_accepts_player_proof_without_status_inspection(tmp_path):
+    controller, workflow = rig(tmp_path)
+    try:
+
+        async def unavailable(*args):
+            raise AssertionError("startup must not inspect playback again")
+
+        workflow.player.status = unavailable
+        token = await launch(workflow)
+        report = workflow.store.report(token)
+        assert report["operation"]["state"] == "playing_verified"
+        assert report["observation"]["verified"]
+        assert "playback_status" not in report["prime_player"]
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_cancellation_recovers_with_failed_runtime_health(tmp_path, blocked):
+    controller, workflow = rig(tmp_path)
+    try:
+        token = await launch(workflow)
+        player = workflow.player
+        original_health = player.health
+
+        async def control_health():
+            health = await original_health()
+            health["failure"] = "runtime evidence unavailable"
+            if blocked:
+                health["ownership"].update(mode="blocked", acknowledged=False)
+            return health
+
+        async def unhealthy():
+            raise ExecutorError("prime_unavailable", "Runtime unavailable")
+
+        async def barrier(session_id, attempt_id, ownership):
+            player.calls.append(("cancel", attempt_id))
+            player.epoch += 1
+            return (await original_health())["ownership"]
+
+        async def uncertain_stop(*args):
+            player.calls.append(("stop", args[1]))
+            raise ExecutorError("prime_operation_unknown", "Stop outcome unknown")
+
+        player.control_health, player.health = control_health, unhealthy
+        player.cancel_work, player.stop_attempt = barrier, uncertain_stop
+        workflow.store.request_cancel(CancelRequest(device_id="living-room", token=token))
+        await workflow.cancel_one(token)
+        assert workflow.store.report(token)["cancellation"] == {
+            "state": "acknowledged",
+            "input_quiescent": True,
+            "active_playback": "unknown",
+        }
+        assert [c[0] for c in player.calls].count("stop") == 1
+        assert [c[0] for c in player.calls].count("cancel") == 2
+        await workflow.cancel_one(token)
+        assert [c[0] for c in player.calls].count("stop") == 1
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize(
+    "state,offset,eligible",
+    [
+        ("scheduled", -60, True),
+        ("scheduled", 60, False),
+        ("ended", -60, False),
+        ("cancelled", -60, False),
+        ("postponed", -60, False),
+        ("unknown", -60, False),
+    ],
+)
+async def test_due_scheduled_prime_event_can_be_selected_without_claiming_live(
+    tmp_path, state, offset, eligible
+):
+    from datetime import timedelta
+
+    from controller.planner import choose
+
+    controller, workflow = rig(tmp_path)
+    try:
+        snapshot = payload()["content_snapshot"]
+        snapshot["status"] = state
+        snapshot["start_time"] = (datetime.now(UTC) + timedelta(seconds=offset)).isoformat()
+        with controller.db.transaction() as db:
+            controller.replace_catalog(db, [snapshot], "teamarr")
+            items = controller.items(db)
+            device = controller.db.device(db, "living-room")
+            decision = choose(device, items, datetime.now(UTC), datetime.now(UTC))
+        assert items[0]["lifecycle"]["state"] == state
+        assert items[0]["playable"] is eligible
+        assert bool(decision["content_id"]) is eligible
     finally:
         await cleanup(controller)

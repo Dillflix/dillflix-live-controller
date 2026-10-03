@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.3
+
+- Accept Prime Player's verified launch directly; current playback inspection remains monitoring, not an extra startup gate.
+- Allow cancellation barriers through failed runtime health and blocked ownership, while still requiring service acknowledgement. Uncertain stop is never replayed.
+- Search for scheduled Prime events once their start time arrives, retaining the provider's scheduled status and requiring live-only result matching and verified live playback.
+- Include stored feed status and independent lifecycle evidence in diagnostic exports.
+- Validation: 297 controller tests, including the real Prime Player Unix-socket service against a simulated runtime. Physical-device acceptance remains pending.
+
+
 ## 0.14.0 — Prime Player execution replaces the native screenshot executor
 
 - Use Prime Player API 4 / 0.1.0a5 for search, live launch, attempt-bound monitoring, cancellation and scoped stop. Preserve controller scheduling, durable tokens, opaque Teamarr IDs and all permitted source routes.

@@ -100,8 +100,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                     self.store.allowed(db, token, navigation=True)
                 return result
 
-    async def check_session(self, expected=None, *, capabilities=()):
-        health = await self.player.health()
+    async def check_session(self, expected=None, *, capabilities=(), control=False):
+        health = await (self.player.control_health() if control else self.player.health())
         if expected and health["session_id"] != expected:
             raise ExecutorError(
                 "prime_session_changed",
@@ -214,8 +214,10 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             with self.db.transaction() as db:
                 self.store.allowed(db, token, navigation=True)
             workflow = self.store.report(token)["prime_player"]
-            await self.check_session(workflow["session_id"])
-            outcome = await self.player.attempt(workflow["attempt_id"])
+            outcome = workflow.get("launch_outcome") or {}
+            if outcome.get("state") != "playing":
+                await self.check_session(workflow["session_id"])
+                outcome = await self.player.attempt(workflow["attempt_id"])
             self.validate_outcome(outcome, workflow)
             self.save_workflow(token, launch_outcome=outcome)
             if outcome["state"] in {"failed", "unknown", "cancelled", "stopped"}:
@@ -228,10 +230,61 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                     raise ExecutorError(
                         "prime_non_live_resolution", "Verified launch lacks live resolution evidence"
                     )
-                status = await self.player.status(workflow["attempt_id"], self.config.prime_status_timeout)
-                if self.record_status(token, status):
-                    return
+                self.record_launch(token, outcome)
+                return
             await asyncio.sleep(2)
+
+    def record_launch(self, token, outcome):
+        """Accept Prime Player's startup proof; current status belongs to monitoring."""
+        now = datetime.now(UTC)
+        with self.db.transaction() as db:
+            row = self.store.allowed(db, token, navigation=True)
+            report = json.loads(row["report"])
+            workflow = report["prime_player"]
+            self.validate_outcome(outcome, workflow)
+            report["observation"] = {
+                "device_id": row["device_id"],
+                "request_id": row["request_id"],
+                "intent_version": row["intent"],
+                "content_id": row["content_id"],
+                "viewing_option_id": workflow["selected"]["viewing_option_id"],
+                "presentation": "live",
+                "verified": True,
+                "simulated": False,
+                "health": "healthy",
+                "observed_at": now.isoformat(),
+                "valid_until": (now + timedelta(seconds=self.settings.observation_ttl)).isoformat(),
+                "evidence": {
+                    "method": "device_observation",
+                    "evidence_id": f"prime:{workflow['session_id']}:{workflow['attempt_id']}",
+                    "summary": "Prime Player verified live startup; timestamp is result receipt time",
+                    "confidence": None,
+                    "captured_at": now.isoformat(),
+                },
+            }
+            report["operation"].update(
+                state="playing_verified",
+                phase="verified",
+                updated_at=utc(),
+                finished_at=utc(),
+                error=None,
+            )
+            report["observation_status"] = {"state": "fresh", "checked_at": utc(), "error": None}
+            self.db.log(
+                db,
+                utc(),
+                "Prime playback verified",
+                "Prime Player accepted live startup",
+                "verified",
+                row["device_id"],
+            )
+            self.store.write(
+                db,
+                token,
+                report,
+                state="playing_verified",
+                next_check=time.time() + self.config.monitor_interval,
+            )
 
     def record_status(self, token, status):
         now = datetime.now(UTC)
@@ -381,18 +434,19 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             report.setdefault("prime_player", {}).update(fields)
             self.store.write(db, token, report)
 
-    async def interrupt(self, token):
+    async def interrupt(self, token, *, force=False):
         """Fence remote work without waiting on the local mutation lock."""
         report = self.store.report(token)
         workflow = report.get("prime_player") or {}
-        health = await self.check_session()
-        receipt = self.player.ownership(health)
+        health = await self.check_session(control=True, capabilities=("cancel",))
+        receipt = self.player.control_ownership(health)
         if workflow.get("session_id") != health["session_id"]:
             # An old service token cannot address the new service lifetime.
-            return receipt
+            return self.player.ownership(health)
         previous = workflow.get("ownership") or {}
-        if receipt["mode"] == "manual" or any(
-            receipt.get(k) != previous.get(k) for k in ("epoch", "handoff_id")
+        if receipt.get("acknowledged") is True and (
+            receipt["mode"] == "manual"
+            or (not force and any(receipt.get(k) != previous.get(k) for k in ("epoch", "handoff_id")))
         ):
             # A newer acknowledged transition has already fenced this work.
             return receipt
@@ -431,18 +485,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                             self.save_cancellation(token, stop_error=exc.detail())
                             # The preceding barrier is insufficient after a lost
                             # stop response: fence/drain that operation as well.
-                            health = await self.check_session()
-                            current = self.player.ownership(health)
-                            if (
-                                current["session_id"] == workflow["session_id"]
-                                and current["mode"] == "automatic"
-                            ):
-                                fenced = await self.player.cancel_work(
-                                    workflow["session_id"], attempt, current
-                                )
-                                self.player.ownership(
-                                    {"session_id": current["session_id"], "ownership": fenced}
-                                )
+                            await self.interrupt(token, force=True)
                         else:
                             self.save_cancellation(token, stop_result=result)
                             if result.get("stopped") is True and (
@@ -464,18 +507,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                         else:
                             # Recover uncertain stop by fencing input, not replaying
                             # stop. A native stop confirmation remains unknown.
-                            health = await self.check_session()
-                            current = self.player.ownership(health)
-                            if (
-                                current["session_id"] == workflow["session_id"]
-                                and current["mode"] == "automatic"
-                            ):
-                                fenced = await self.player.cancel_work(
-                                    workflow["session_id"], attempt, current
-                                )
-                                self.player.ownership(
-                                    {"session_id": current["session_id"], "ownership": fenced}
-                                )
+                            await self.interrupt(token, force=True)
                 else:
                     # Search can replace existing content; no bound attempt exists
                     # with which to prove what is playing or stopped.

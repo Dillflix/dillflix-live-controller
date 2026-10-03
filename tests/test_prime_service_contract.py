@@ -157,3 +157,18 @@ async def test_real_stop_reports_page_exit_separately_from_native_confirmation(
     assert result["page_exited"] is True
     assert result["attempt_id"] == aid and result["session_id"] == health["session_id"]
     assert [c[0] for c in runtime.calls].count("stop-playback") == 1
+
+
+async def test_failed_runtime_blocked_ownership_can_still_acknowledge_cancel(service):
+    controller, runtime, client, _ = service
+    runtime.failure = "polling failed"
+    controller.ownership.mode = "blocked"
+    with pytest.raises(ExecutorError, match="healthy service"):
+        await client.health()
+    health = await client.control_health()
+    receipt = client.control_ownership(health)
+    assert receipt["acknowledged"] is False
+    result = await client.cancel_work(health["session_id"], None, receipt)
+    assert client.ownership({"session_id": health["session_id"], "ownership": result})
+    assert runtime.calls[-1][0] == "fence"
+    assert runtime.failure == "polling failed"

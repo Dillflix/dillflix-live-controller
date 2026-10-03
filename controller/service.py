@@ -176,6 +176,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 self.content_lifecycle(
                     r, checks.get(r["id"]), now, real, r["id"] in pins, completions.get(r["id"])
                 ),
+                prime_search_at=real if self.executor else None,
             )
             for r in db.execute("SELECT * FROM contents ORDER BY id")
             for snapshot in [json.loads(r["snapshot"])]
@@ -390,7 +391,10 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             if items[content_id]["lifecycle"]["state"] in {"ended", "cancelled"}:
                 raise HTTPException(422, "This event has finished or was cancelled")
             if op == "play_now" and not items[content_id]["playable"]:
-                raise HTTPException(422, "Play now requires confirmed live status and a valid viewing option")
+                raise HTTPException(
+                    422,
+                    "Play now requires a live event or a scheduled Prime event whose start time has arrived, and a valid viewing option",
+                )
             entry = next((p for p in device["plan"] if p["content_id"] == content_id), self.entry(content_id))
             device["plan"] = [p for p in device["plan"] if p["content_id"] != content_id]
             if op == "play_now" or action.get("priority") == "first":

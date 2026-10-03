@@ -166,3 +166,23 @@ Cursor requests carry no filters. Zero selected leagues explicitly omits the
 ## Prime Player ownership boundary
 
 When configured, `PrimeOwnership` acquires an acknowledged service receipt before the manual remote becomes available. Prime Player revokes automatic work and fences resolver callbacks; the gateway forwards bounded keys/text with that receipt and an increasing sequence. Release drains writes, then releases only the matching durable manual session. A failed acknowledgement grants no input. HTTP worker cancellation is drained before cleanup. Screen streaming remains read-only. See [deployment constraints](prime-player-ownership.md).
+
+
+## Prime startup and recovery contract (0.14.3)
+
+An identity-matching `playing` launch/attempt result from Prime Player is sufficient
+for startup acceptance. The controller does not require another playback inspection.
+The initial observation timestamp records receipt of that startup result; subsequent
+`playback_status` monitoring supplies current observation timestamps and expiry.
+A saved successful startup does not renew monitoring evidence across controller
+restarts. Cancellation reads service identity and ownership even when runtime health
+has failed or ownership is blocked, and only acknowledges controller cancellation
+after the service confirms its input barrier. Uncertain stop is fenced, never replayed;
+native stopping may remain unknown.
+
+In Prime Player mode, a fresh `scheduled` event with a permitted Prime route becomes
+a search candidate once its start time arrives. Its Teamarr lifecycle stays scheduled.
+Search matching still requires a playable live tile with a content ID; Prime Player
+must resolve the live action and verify startup. Future, unknown, delayed, postponed,
+suspended and terminal statuses do not qualify via this rule. Expected end times
+never prove completion. Failed matches use the existing retry backoff.

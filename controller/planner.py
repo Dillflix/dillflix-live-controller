@@ -42,12 +42,18 @@ def allowed_options(snapshot):
     return accepted
 
 
-def content_view(snapshot, active, lifecycle):
+def content_view(snapshot, active, lifecycle, *, prime_search_at=None):
     event = snapshot.get("event") or {}
     teams = [t for t in [event.get("away_team_details"), event.get("home_team_details")] if t]
     league = event.get("league") or snapshot.get("competition") or "unknown"
     teams = [{**t, "key": team_key(t, league), "league": league} for t in teams]
     options = allowed_options(snapshot)
+    scheduled_search = bool(
+        prime_search_at is not None
+        and lifecycle["state"] == "scheduled"
+        and parse_time(snapshot["start_time"]) <= prime_search_at
+        and any(o.get("app") == "prime_video" for o in options)
+    )
     return {
         "content_id": snapshot["id"],
         "kind": snapshot["kind"],
@@ -64,7 +70,12 @@ def content_view(snapshot, active, lifecycle):
         "active": bool(active),
         "lifecycle": lifecycle,
         "viewing_options": options,
-        "playable": lifecycle["state"] == "live" and bool(options),
+        "playable": bool(options) and (lifecycle["state"] == "live" or scheduled_search),
+        "launch_eligibility": "scheduled_start_reached"
+        if scheduled_search
+        else "confirmed_live"
+        if lifecycle["state"] == "live" and options
+        else "ineligible",
         "availability_reason": "No valid viewing options"
         if not options
         else ("Awaiting fresh live status" if lifecycle["state"] == "unknown" else None),

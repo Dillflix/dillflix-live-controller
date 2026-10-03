@@ -40,3 +40,12 @@ docker compose exec controller python -m controller.prime_player.check
 ```
 
 Physical-device reboot, runtime failure recovery and socket replacement acceptance still require testing on the deployment host.
+
+
+The export also includes `catalog_status`: the stored Teamarr status/start time,
+feed receipt time, permitted routes, and any independent status observation or
+lookup error. Together with `device.failures` and controller jobs, this explains
+selection eligibility and “Retry pending”. The latter means playback retry backoff
+(5 seconds after the first failure, 15 after the second, 300 thereafter), not an
+event lifecycle state. Upload a new export while the symptom is visible; an older
+overview cannot explain a later failure.
