@@ -20,7 +20,7 @@ class ExecutorConfig:
     prime_socket: str = ""
     prime_match_model: str = ""
     prime_search_timeout: float = 100
-    prime_status_timeout: float = 10
+    prime_status_timeout: float = 60
     # Explicit self-hosted sampler extensions are opt-in, never assumed by the client.
     model_options: dict = field(default_factory=lambda: {"temperature": 0, "top_p": 1})
 
@@ -90,7 +90,7 @@ class ExecutorConfig:
             prime_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
             prime_match_model=os.getenv("PRIME_PLAYER_MATCH_MODEL", ""),
             prime_search_timeout=float(os.getenv("PRIME_PLAYER_SEARCH_TIMEOUT_SECONDS", "100")),
-            prime_status_timeout=float(os.getenv("PRIME_PLAYER_STATUS_TIMEOUT_SECONDS", "10")),
+            prime_status_timeout=float(os.getenv("PRIME_PLAYER_STATUS_TIMEOUT_SECONDS", "60")),
             model_options=json.loads(os.getenv("EXECUTOR_LLM_OPTIONS_JSON") or '{"temperature":0,"top_p":1}'),
         )
         value.validate()

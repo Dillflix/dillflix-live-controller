@@ -36,6 +36,17 @@ class Settings:
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
+    @property
+    def playback_evidence_ttl(self):
+        """Expire prior verified Prime evidence five minutes after observation.
+
+        observation_ttl remains the maximum age of a newly accepted sample.
+        Failed or contradictory checks revoke evidence before this deadline.
+        """
+        if self.executor.mode == "prime-player":
+            return 300
+        return self.observation_ttl
+
     @classmethod
     def from_env(cls):
         mode = os.getenv("CONTROLLER_MODE", "demo")
@@ -65,4 +76,3 @@ class Settings:
             screen_bit_rate=min(12000000, max(250000, int(os.getenv("SCREEN_BIT_RATE", "2000000")))),
             executor=ExecutorConfig.from_env(),
         )
-

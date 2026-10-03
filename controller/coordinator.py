@@ -232,7 +232,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                     observed <= now + timedelta(seconds=5)
                     and until > now
                     and until > observed
-                    and now - observed < timedelta(seconds=self.settings.observation_ttl)
+                    and now - observed < timedelta(seconds=self.settings.playback_evidence_ttl)
                 )
             ):
                 return "Playback observation is stale or has invalid timing"

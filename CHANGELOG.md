@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.10
+
+- Allow one minute for Prime Player's playback-status check instead of truncating its multi-query native progression check at 10 seconds.
+- Expire previously verified Prime playback evidence five minutes after its observation. Newly accepted native evidence must still be fresh; nonplaying, failed, mismatched and unavailable checks immediately withdraw verification. Simulator timing is unchanged.
+
 ## 0.14.9
 
 - Persist correlated Prime Player RPC request/response bodies, transport failures and controller runtime logs with bounded retention and redaction.
