@@ -72,11 +72,13 @@ class PrimePlayerClient:
     def require(health, *capabilities):
         if health.get("api_version", 0) < 4:
             raise ExecutorError("prime_incompatible", "Prime Player API 4 or newer is required")
+        if {"pages", "discover"}.intersection(capabilities) and health.get("api_version", 0) < 6:
+            raise ExecutorError("prime_incompatible", "Prime Player API 6 is required for discovery")
         implemented = health.get("capabilities", [])
         available = health.get("compatibility", {}).get("capabilities", {})
         for name in capabilities:
             if name not in implemented or (
-                name in {"search", "play", "playback_status", "stop"}
+                name in {"search", "play", "playback_status", "stop", "pages", "discover"}
                 and available.get("javascript_navigation" if name == "stop" else name, {}).get("available")
                 is not True
             ):
@@ -96,6 +98,21 @@ class PrimePlayerClient:
 
     async def search(self, query, timeout, ownership):
         return await self.rpc("search", query=query, timeout=timeout, ownership=ownership, budget=timeout + 5)
+
+    async def pages(self, ownership):
+        return await self.rpc("pages", timeout=60, ownership=ownership, budget=65)
+
+    async def discover(self, settings, ownership):
+        timeout = 100 * len(settings["enabled_pages"])
+        return await self.rpc(
+            "discover",
+            pages=settings["enabled_pages"],
+            limit_per_page=settings["limit_per_page"],
+            max_rows=settings["max_rows"],
+            timeout=timeout,
+            ownership=ownership,
+            budget=timeout + 5,
+        )
 
     async def play(self, handle, attempt_id, ownership):
         return await self.rpc("play", handle=handle, mode="live", attempt_id=attempt_id, ownership=ownership)

@@ -20,6 +20,21 @@ class PlaybackAdapter(Protocol):
     def observe(self, device_id: str) -> dict | None: ...
 
 
+def simulated_selection(request):
+    gti = "amzn1.dv.gti.simulated-live-sports"
+    return dict(
+        content_id=gti,
+        title="Simulated live sports",
+        handle="simulated-handle",
+        viewing_option_id="prime-live:" + gti,
+        reason="Simulated discovery selection",
+        availability="live",
+        identity_status="structural_slot_correlation",
+        labels=["LIVE"],
+        occurrences=[dict(page_id=request["discovery"]["enabled_pages"][0])],
+    )
+
+
 class SimulatedPlaybackAdapter:
     """Independent durable executor state lets delivery/reconciliation survive a restart.
 
@@ -42,19 +57,40 @@ class SimulatedPlaybackAdapter:
     @staticmethod
     def report(row):
         payload = json.loads(row["payload"])
+        workflow = None
+        if payload.get("purpose") == "page_refresh" and row["state"] == "completed":
+            workflow = {
+                "pages_result": {
+                    "session_id": "simulator",
+                    "observed_at": datetime.fromtimestamp(row["submitted_at"], UTC).isoformat(),
+                    "pages": [
+                        dict(id=id, title=title, available=True, kind=kind, position=i)
+                        for i, (id, title, kind) in enumerate(
+                            [("sports", "Sports", "primary"), ("dazn", "DAZN", "channel")]
+                        )
+                    ],
+                }
+            }
+        elif payload.get("purpose") == "discovery" and row["state"] == "playing_verified":
+            workflow = {"selected": simulated_selection(payload)}
+        observation = json.loads(row["observation"]) if row["observation"] else None
         return {
+            "prime_player": workflow,
             "request_id": row["id"],
             "executor_job_id": row["id"],
             "device_id": payload["device_id"],
             "intent_version": payload["intent_version"],
-            "content_id": payload["content_id"],
+            "content_id": observation["content_id"] if observation else payload["content_id"],
             "state": row["state"],
-            "observation": json.loads(row["observation"]) if row["observation"] else None,
+            "observation": observation,
             "reason": row["error"],
         }
 
     def submit(self, request):
-        if request["mode"] != "live" or request["content_id"] != request["content_snapshot"]["id"]:
+        discovery = request.get("schema_version") == 2
+        if request["mode"] != "live" or (
+            not discovery and request["content_id"] != request["content_snapshot"]["id"]
+        ):
             raise ValueError("Playback request identity or presentation mismatch")
         with self.db.transaction() as db:
             self.check_online(db)
@@ -122,10 +158,12 @@ class SimulatedPlaybackAdapter:
             highest = db.execute(
                 "SELECT intent FROM simulated_devices WHERE device_id=?", (row["device_id"],)
             ).fetchone()[0]
-            controls = request["content_snapshot"].get("_simulation", {})
+            controls = request.get("content_snapshot", {}).get("_simulation", {})
             observation, reason = None, None
             if row["intent"] < highest:
                 state = "superseded"
+            elif request.get("purpose") == "page_refresh":
+                state = "completed"
             elif controls.get("stall_navigation"):
                 state = "navigating"
             elif controls.get("fail_playback"):
@@ -133,12 +171,15 @@ class SimulatedPlaybackAdapter:
             else:
                 now = datetime.now(UTC)
                 state = "playing_verified"
+                selected = simulated_selection(request) if request.get("purpose") == "discovery" else None
                 observation = {
                     "device_id": row["device_id"],
-                    "content_id": request["content_id"],
+                    "content_id": "prime:" + selected["content_id"] if selected else request["content_id"],
                     "request_id": request_id,
                     "intent_version": row["intent"],
-                    "viewing_option_id": request["allowed_viewing_options"][0]["id"],
+                    "viewing_option_id": selected["viewing_option_id"]
+                    if selected
+                    else request["allowed_viewing_options"][0]["id"],
                     "presentation": "replay" if controls.get("replay_result") else "live",
                     "verified": True,
                     "simulated": True,
@@ -171,7 +212,8 @@ class SimulatedPlaybackAdapter:
             for device in db.execute("SELECT * FROM simulated_devices WHERE observation IS NOT NULL"):
                 if json.loads(device["observation"])["request_id"] == request_id:
                     db.execute(
-                        "UPDATE simulated_devices SET observation=NULL WHERE device_id=?", (device["device_id"],)
+                        "UPDATE simulated_devices SET observation=NULL WHERE device_id=?",
+                        (device["device_id"],),
                     )
 
     def cancel_device(self, device_id, through_intent_version):
@@ -201,7 +243,7 @@ class SimulatedPlaybackAdapter:
             row = db.execute(
                 "SELECT payload FROM simulated_jobs WHERE id=?", (observation["request_id"],)
             ).fetchone()
-            controls = json.loads(row[0])["content_snapshot"].get("_simulation", {}) if row else {}
+            controls = json.loads(row[0]).get("content_snapshot", {}).get("_simulation", {}) if row else {}
             if controls.get("observation_outage"):
                 raise ConnectionError("Simulated playback observation outage")
             now = datetime.now(UTC)

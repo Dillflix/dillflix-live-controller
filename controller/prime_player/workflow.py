@@ -16,19 +16,22 @@ from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
 from ..planner import parse_time
 from .client import PrimePlayerClient
+from .discovery import DiscoverySelector
 from .labels import search_queries
 from .matching import EventMatcher
 
 
 class PrimePlaybackWorkflow(PlaybackWorker):
-    def __init__(self, database, settings, *, player=None, matcher=None):
+    def __init__(self, database, settings, *, player=None, matcher=None, selector=None):
         super().__init__(database, settings)
         self.player = player or PrimePlayerClient(self.config.prime_socket)
         self.matcher = matcher or EventMatcher(self.config)
+        self.selector = selector or DiscoverySelector(self.config)
 
     async def close_resources(self):
         # Closing the client never restarts, detaches, or terminates Prime Player.
         await self.matcher.close()
+        await self.selector.close()
         await self.player.close()
 
     def recover(self):
@@ -41,7 +44,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 if report["observation"]:
                     report["observation"]["verified"] = False
                 report["observation_status"]["state"] = "unavailable"
-                if row["touched_device"] and not workflow.get("attempt_id"):
+                if row["touched_device"] and not workflow.get("attempt_id") and row["state"] != "completed":
                     # An interrupted search has no playback attempt to reconcile.
                     # Quiesce it before any new search; do not repeat on startup.
                     report["operation"].update(
@@ -49,7 +52,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                         phase="restart_interrupted",
                         finished_at=utc(),
                         error=ExecutorError(
-                            "restart_interrupted", "Search interrupted by controller restart"
+                            "restart_interrupted", "Selection interrupted by controller restart"
                         ).detail(),
                     )
                     self.store.write(
@@ -120,6 +123,9 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             if budget <= 0:
                 raise ExecutorError("navigation_expired", "Playback workflow deadline passed")
             async with asyncio.timeout(budget):
+                if request.get("purpose") == "page_refresh":
+                    await self.refresh_pages(token)
+                    return
                 workflow = self.store.report(token).get("prime_player") or {}
                 if not workflow.get("attempt_id"):
                     await self.select_and_launch(token, request)
@@ -136,31 +142,47 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             self.store.fail(token, ExecutorError("prime_workflow_failed", "Prime playback workflow failed"))
 
     async def select_and_launch(self, token, request):
-        health = await self.check_session(
-            capabilities=("search", "play", "playback_status", "cancel", "stop")
-        )
+        discovery = request.get("purpose") == "discovery"
+        method = "discover" if discovery else "search"
+        health = await self.check_session(capabilities=(method, "play", "playback_status", "cancel", "stop"))
         ownership = self.player.ownership(health, automatic=True)
         session = health["session_id"]
         with self.db.transaction() as db:
             self.store.allowed(db, token, navigation=True)
             timezone = self.db.device(db, request["device_id"])["preferences"]["timezone"]
-        query = search_queries(request["content_snapshot"])[0]
+        query = None if discovery else search_queries(request["content_snapshot"])[0]
         self.save_workflow(
-            token, session_id=session, query=query, source="prime_player", selection=None, ownership=ownership
+            token, session_id=session, query=query, source=method, selection=None, ownership=ownership
         )
-        self.store.phase(token, "searching")
+        self.store.phase(token, "discovering" if discovery else "searching")
         results = await self.mutation(
             token,
-            "PRIME_SEARCH",
-            lambda: self.player.search(query, self.config.prime_search_timeout, ownership),
+            "PRIME_DISCOVER" if discovery else "PRIME_SEARCH",
+            lambda: (
+                self.player.discover(request["discovery"], ownership)
+                if discovery
+                else self.player.search(query, self.config.prime_search_timeout, ownership)
+            ),
         )
-        if results.get("session_id") != session or results.get("query") != query:
-            raise ExecutorError("prime_stale_result", "Search result belongs to another session or query")
+        if (
+            results.get("session_id") != session
+            or (
+                discovery
+                and (
+                    results.get("source") != "discover"
+                    or results.get("pages") != request["discovery"]["enabled_pages"]
+                )
+            )
+            or (not discovery and results.get("query") != query)
+        ):
+            raise ExecutorError("prime_stale_result", "Result belongs to another session or request")
         # Local monotonic age is independent of host clock skew and cannot extend
         # the service's own expiring handle. The service remains the final check.
         received = time.monotonic()
-        self.store.phase(token, "matching")
-        selected, audit = await self.matcher.choose(request, results, timezone)
+        self.store.phase(token, "selecting_live_event" if discovery else "matching")
+        selected, audit = await (self.selector if discovery else self.matcher).choose(
+            request, results, timezone
+        )
         self.save_workflow(
             token,
             selection=audit,
@@ -172,6 +194,13 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             raise ExecutorError("prime_no_match", audit["reason"], retryable=False)
         if time.monotonic() - received > 90:
             raise ExecutorError("prime_stale_result", "Result selection outlived its usable handle")
+        if discovery:
+            with self.db.transaction() as db:
+                row = self.store.allowed(db, token, navigation=True)
+                report = json.loads(row["report"])
+                content_id = "prime:" + selected["content_id"]
+                report["content_id"] = report["content_status"]["content_id"] = content_id
+                self.store.write(db, token, report, content_id=content_id)
         health = await self.check_session(session, capabilities=("play",))
         ownership = self.player.ownership(health, automatic=True)
         attempt = uuid4().hex
@@ -191,6 +220,22 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             if exc.code not in {"prime_transport_unknown", "prime_operation_unknown"}:
                 raise
             self.save_workflow(token, launch_error=exc.detail())
+
+    async def refresh_pages(self, token):
+        health = await self.check_session(capabilities=("pages", "cancel"))
+        ownership = self.player.ownership(health, automatic=True)
+        self.save_workflow(token, session_id=health["session_id"], source="pages", ownership=ownership)
+        self.store.phase(token, "refreshing_pages")
+        result = await self.mutation(token, "PRIME_PAGES", lambda: self.player.pages(ownership))
+        from ..discovery import validate_inventory
+
+        validate_inventory(result, health["session_id"])
+        with self.db.transaction() as db:
+            row = self.store.allowed(db, token, navigation=True)
+            report = json.loads(row["report"])
+            report["prime_player"]["pages_result"] = result
+            report["operation"].update(state="completed", phase="pages_refreshed", finished_at=utc())
+            self.store.write(db, token, report, state="completed")
 
     @staticmethod
     def validate_outcome(outcome, workflow):

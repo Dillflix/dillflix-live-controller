@@ -159,3 +159,26 @@ For gateway-only testing use `PLAYBACK_ADAPTER=simulator` with the same socket. 
 Host tests exercise controlled boundaries. Actual live search/launch, matching
 accuracy, cancellation, Docker permissions and sustained device monitoring still
 require this acceptance run.
+
+## Page inventory and live discovery
+
+Prime Player **0.1.0a8 / API 6** adds `discover(pages=[...])`. Its one collection operation returns playable handles for every enabled page, including early pages after later pages have loaded. API 4 remains sufficient for existing event search; discovery and page refresh explicitly require API 6 and their available runtime capabilities.
+
+In **Settings → Prime live discovery**, use **Refresh available pages** after subscriptions change. This is an explicit, revisioned administrative command, not a periodic poll. It queues while playback is healthy, navigation is in progress, automation is paused, or manual control owns the device. The native inventory includes each individual channel tab. A refreshed TSN or Sportsnet+ tab starts disabled. Existing enabled IDs survive missing tabs and refresh failures; unavailable/missing tabs are excluded from a run. Up to eight pages can be enabled, in the saved order. An empty enabled list disables fallback discovery. The simulator exposes clearly simulated Sports and DAZN tabs and playback.
+
+Page choices, the discovery brief, tiles per page (default 20), and maximum rows (default two) are part of revisioned preferences, undo, export and import. The UI shows the last successful refresh and any failure without discarding its cache. Refresh requests use `POST /api/v1/devices/living-room/prime-pages/refresh` with `command_id` and `expected_revision`. The inventory is in the overview's `device.prime_pages`; this read does not operate the TV.
+
+| Selection path | Identity at request time | Selection task |
+| --- | --- | --- |
+| `search()` | Original opaque Teamarr feed-entry ID, full snapshot, permitted viewing options | Match the specific event already chosen by the planner |
+| `discover()` | No content ID or Teamarr snapshot | Choose a relevant live broadcast from the enabled page list |
+
+Discovery gets a separate durable schema-2 intent (`purpose=discovery`, `content_id=null`, `discovery`, `interests`, and a deadline). It is resolved to a source-specific `prime:<GTI>` identity only after selection. The immutable request remains unresolved for idempotent retries; the resolution, source occurrences, candidate audit, selection reason, service session and launch attempt are retained separately. No start time or Teamarr event is invented. Schema-1 search requests and their original snapshots/options are unchanged. `purpose=page_refresh` uses the same durable request/ownership machinery and completes without playback.
+
+The deterministic planner selects Teamarr targets first. Discovery starts only when there is no eligible target, even when a known target is temporarily excluded by failure backoff. Search returning no match does not authorize discovery. Healthy current playback is retained; observation loss gets the existing recovery grace before a new discovery run. A scheduled/manual target, changed preferences, pause or manual handoff supersedes an unresolved selection. Rechecking intent before launch and accepting a report prevents stale selections from becoming current playback. Failed or abstained discovery retries no faster than once a minute; page refresh failures require another admin request.
+
+The discovery prompt asks what is interesting/relevant, using the brief, enabled priorities, ranked-team directory and recent discovered viewing. It does not attempt to match a nonexistent scheduled event. It shares deterministic eligibility with matching: explicit LIVE availability, correlated playable GTI, usable handle and title; replay/highlights and unbound identities are excluded. Model choices must use a supplied ID and exact candidate evidence labels; abstention is supported. Set `PRIME_PLAYER_DISCOVERY_MODEL` or reuse `PRIME_PLAYER_MATCH_MODEL`. Both use the existing text model connection; no model means abstention. Page controls never restrict `search()` results or rewrite Teamarr viewing options.
+
+After selection, both paths share live Watch Now resolution, session/attempt binding, fresh native playback verification, read-only monitoring, restart reconciliation and cancellation. Stopped or ended player state is not a sports-event completion fact. Collection budgets are 100 seconds per enabled page plus 150 seconds for selection/launch/verification; the discovery deadline is independent of the existing search navigation timeout. Handles are never replayed after an uncertain mutation.
+
+Database schema 9 makes unresolved job content IDs nullable and persists the separate resolution while preserving existing jobs and configuration. Older binaries reject this schema; back up the database before deploying either branch. These changes have host/simulator/browser coverage; physical multi-page Fire TV acceptance remains to be run with the updated service.

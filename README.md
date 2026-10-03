@@ -222,3 +222,5 @@ Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillfl
 ## Prime Player manual ownership (optional)
 
 With Prime Player API 4 / 0.1.0a5, set `PRIME_PLAYER_SOCKET` to its Unix socket to require an acknowledged service handoff before remote input. Wake, keys and text then go through Prime Player. There is no direct-input fallback when configured. See [setup and validation](docs/prime-player-ownership.md). The same gateway is used by the `prime-player` workflow. Simulator mode can also use the service for manual input.
+
+Prime live discovery: Settings can refresh native page tabs and enable individual pages such as Sports, DAZN, TSN and Sportsnet+. With Prime Player API 6, the controller calls `discover()` across enabled pages when no scheduled target is available, selects a live broadcast using a separate interest prompt, and verifies playback through the existing workflow. Specific Teamarr events continue to use `search()`. See [page discovery setup and contracts](docs/prime-player.md#page-inventory-and-live-discovery).

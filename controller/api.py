@@ -16,6 +16,7 @@ from .models import (
     CompletionCommand,
     ConfigurationImport,
     ManualControlCommand,
+    PageRefreshCommand,
     RulesUpdate,
     SimulationCommand,
     UndoCommand,
@@ -210,6 +211,10 @@ def create_app(settings=None, *, start_workers=True):
     @app.put("/api/v1/devices/{device_id}/rules")
     def save_rules(device_id: str, update: RulesUpdate):
         return service.rules_command(device_id, update)
+
+    @app.post("/api/v1/devices/{device_id}/prime-pages/refresh")
+    def refresh_prime_pages(device_id: str, command: PageRefreshCommand):
+        return service.refresh_pages_command(device_id, command)
 
     @app.post("/api/v1/devices/{device_id}/automation")
     def automation(device_id: str, update: AutomationUpdate):

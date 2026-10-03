@@ -164,3 +164,7 @@ Cursor requests carry no filters. Zero selected leagues explicitly omits the
 ## Prime Player ownership boundary
 
 When configured, `PrimeOwnership` acquires an acknowledged service receipt before the manual remote becomes available. Prime Player revokes automatic work and fences resolver callbacks; the gateway forwards bounded keys/text with that receipt and an increasing sequence. Release drains writes, then releases only the matching durable manual session. A failed acknowledgement grants no input. HTTP worker cancellation is drained before cleanup. Screen streaming remains read-only. See [deployment constraints](prime-player-ownership.md).
+
+### Prime page discovery
+
+When deterministic Teamarr selection has no target (including after disregarding retry backoff), the coordinator may stage a schema-2 unresolved discovery intent. It is separate from the unchanged schema-1 targeted playback contract. The Prime workflow calls one `discover()` with the enabled page IDs, filters the returned live candidates, and uses an interest-selection prompt. A separately persisted Prime resolution binds verification and monitoring without fabricating Teamarr metadata. New scheduled/manual intent supersedes the discovery. An admin page inventory refresh uses the same durable job and ownership lane and runs when idle. See [Prime page inventory and discovery](prime-player.md#page-inventory-and-live-discovery) for contracts, UI behavior, budgets and migration.

@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from .models import CancelRequest, CancelResult, ExecutorError, PlaybackReport, PlaybackRequest, Problem
+from .models import CancelRequest, CancelResult, ExecutorError, PlaybackIntent, PlaybackReport, Problem
 
 
 def problem_response(error):
@@ -104,7 +104,7 @@ def install_executor_api(app, service):
         operation_id="initiatePlayback",
         summary="Accept live playback and return a durable token",
     )
-    def play(command: PlaybackRequest):
+    def play(command: PlaybackIntent):
         report, created = service.executor.submit(command.model_dump(mode="json"))
         return JSONResponse(
             report,

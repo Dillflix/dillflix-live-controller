@@ -68,7 +68,19 @@ export interface Rule {
   source: string | null;
   kind: "event" | "session" | "broadcast" | null;
 }
+export interface PrimePage {
+  id: string;
+  title: string | null;
+  title_hint?: string | null;
+  available: boolean;
+}
 export interface Preferences {
+  prime_discovery: {
+    enabled_pages: string[];
+    brief: string;
+    limit_per_page: number;
+    max_rows: number;
+  };
   discovery_leagues: string[];
   timezone: string;
   minimum_viewing_seconds: number;
@@ -112,6 +124,18 @@ export interface Device {
     viewing_option_id: string;
     presentation: string;
   } | null;
+  discovered?: {
+    title: string;
+    reason: string;
+    content_id: string;
+    occurrences?: { page_id: string }[];
+  } | null;
+  prime_pages: {
+    pages: PrimePage[];
+    state: string;
+    last_success: string | null;
+    error?: string | null;
+  };
   playback_state: string;
   executor_health?: {
     state: "starting" | "ok" | "offline";
@@ -159,8 +183,9 @@ export interface Overview {
   };
   playback_job: {
     id: string;
-    purpose: "selection" | "route_handoff" | "recovery";
-    content_id: string;
+    purpose:
+      "selection" | "route_handoff" | "recovery" | "discovery" | "page_refresh";
+    content_id: string | null;
     state: string;
     progress: string | null;
     deadline_at: number | null;

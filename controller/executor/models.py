@@ -3,8 +3,9 @@
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
+from ..models import PrimeDiscovery
 from ..planner import allowed_options, parse_time
 
 
@@ -61,6 +62,34 @@ class PlaybackRequest(Strict):
         return self
 
 
+class DiscoveryRequest(Strict):
+    """A selection intent, never an invented Teamarr content snapshot."""
+
+    schema_version: Literal[2] = 2
+    request_id: str = Field(min_length=1, max_length=200)
+    device_id: Literal["living-room"]
+    intent_version: int = Field(strict=True, ge=0, le=9007199254740991)
+    content_id: None = None
+    mode: Literal["live"] = "live"
+    purpose: Literal["discovery", "page_refresh"]
+    discovery: PrimeDiscovery
+    interests: dict = Field(default_factory=dict)
+    deadline_at: datetime
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if self.deadline_at.tzinfo is None:
+            raise ValueError("deadline_at needs a UTC offset")
+        self.deadline_at = self.deadline_at.astimezone(UTC)
+        if self.purpose == "discovery" and not self.discovery.enabled_pages:
+            raise ValueError("Discovery needs at least one enabled page")
+        return self
+
+
+PlaybackIntent = PlaybackRequest | DiscoveryRequest
+intent_adapter = TypeAdapter(PlaybackIntent)
+
+
 class CancelRequest(Strict):
     device_id: Literal["living-room"]
     token: str | None = Field(default=None, min_length=1, max_length=200)
@@ -108,7 +137,14 @@ class RouteAttempt(Strict):
 
 class Operation(Strict):
     state: Literal[
-        "accepted", "navigating", "playing_verified", "failed", "cancelled", "superseded", "timed_out"
+        "accepted",
+        "navigating",
+        "playing_verified",
+        "completed",
+        "failed",
+        "cancelled",
+        "superseded",
+        "timed_out",
     ]
     phase: str
     created_at: datetime
@@ -158,7 +194,7 @@ class LifecycleObservation(Strict):
 
 
 class ContentStatus(Strict):
-    content_id: str
+    content_id: str | None
     lookup_state: Literal["ok", "unavailable"]
     effective_state: LifecycleState
     stale: bool
@@ -174,11 +210,11 @@ class Cancellation(Strict):
 
 
 class PlaybackReport(Strict):
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     token: str
     request_id: str
     device_id: Literal["living-room"]
-    content_id: str
+    content_id: str | None
     intent_version: int
     revision: int
     operation: Operation

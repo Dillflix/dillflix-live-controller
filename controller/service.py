@@ -353,6 +353,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
 
     def import_configuration(self, device_id, request):
         payload = request.model_dump(mode="json")
+        if "prime_discovery" not in request.document.configuration.preferences.model_fields_set:
+            payload["document"]["configuration"]["preferences"].pop("prime_discovery")
         if "discovery_leagues" not in request.document.configuration.preferences.model_fields_set:
             payload["document"]["configuration"]["preferences"].pop("discovery_leagues")
 
@@ -455,6 +457,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         }
         # Existing clients/receipts predate discovery settings. Hash their
         # original payload and preserve today's selection when the field is absent.
+        if "prime_discovery" not in update.preferences.model_fields_set:
+            data["preferences"].pop("prime_discovery")
         if "discovery_leagues" not in update.preferences.model_fields_set:
             data["preferences"].pop("discovery_leagues")
 
@@ -467,6 +471,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 rules=data["rules"],
                 team_ranks=data["team_ranks"],
                 preferences={
+                    **device["preferences"],
                     **data["preferences"],
                     "discovery_leagues": data["preferences"].get(
                         "discovery_leagues", device["preferences"]["discovery_leagues"]
@@ -547,6 +552,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             d["automation"] = update.mode
             d["force_switch"] = True
             if update.mode == "paused":
+                if d["prime_pages"]["state"] == "refreshing":
+                    d["prime_pages"]["state"] = "queued"
                 d["intent_version"] += 1
                 db.execute(
                     "UPDATE jobs SET state='cancelled' WHERE device_id=? AND state='pending'", (device_id,)

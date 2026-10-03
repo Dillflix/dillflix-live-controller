@@ -35,12 +35,35 @@ class Rule(StrictModel):
     kind: Literal["event", "session", "broadcast"] | None = None
 
 
+class PrimeDiscovery(StrictModel):
+    enabled_pages: list[str] = Field(default_factory=list, max_length=8)
+    brief: str = Field(
+        default="Choose an interesting live sporting event using my priorities and team preferences.",
+        max_length=2000,
+    )
+    limit_per_page: int = Field(default=20, strict=True, ge=1, le=100)
+    max_rows: int = Field(default=2, strict=True, ge=1, le=6)
+
+    @field_validator("enabled_pages")
+    @classmethod
+    def unique_pages(cls, value):
+        if len(value) != len(set(value)) or any(not p.strip() or len(p) > 256 for p in value):
+            raise ValueError("Use up to eight unique discovered page IDs")
+        return value
+
+
+class PageRefreshCommand(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+
+
 class Preferences(StrictModel):
     timezone: str = "America/Vancouver"
     minimum_viewing_seconds: int = Field(default=300, ge=0, le=3600)
     switch_cooldown_seconds: int = Field(default=30, ge=0, le=600)
     same_tier_switching: bool = False
     discovery_leagues: list[str] = Field(default_factory=lambda: list(DEFAULT_LEAGUES), max_length=20)
+    prime_discovery: PrimeDiscovery = Field(default_factory=PrimeDiscovery)
 
     @field_validator("discovery_leagues")
     @classmethod

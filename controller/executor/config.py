@@ -19,6 +19,7 @@ class ExecutorConfig:
     retention_days: int = 7
     prime_socket: str = ""
     prime_match_model: str = ""
+    prime_discovery_model: str = ""
     prime_search_timeout: float = 100
     prime_status_timeout: float = 10
     # Explicit self-hosted sampler extensions are opt-in, never assumed by the client.
@@ -38,7 +39,7 @@ class ExecutorConfig:
                 raise ValueError("PRIME_PLAYER_SOCKET must be an absolute Unix socket path")
             if not 60 <= self.prime_search_timeout <= 120 or not 5 <= self.prime_status_timeout <= 60:
                 raise ValueError("Prime Player search/status timeouts must be within service limits")
-        needs_model = bool(self.prime_match_model)
+        needs_model = bool(self.prime_match_model or self.prime_discovery_model)
         url = urlsplit(self.base_url)
         if needs_model and (
             url.scheme not in {"http", "https"}
@@ -88,6 +89,7 @@ class ExecutorConfig:
             cancel_timeout=float(os.getenv("EXECUTOR_CANCEL_TIMEOUT_SECONDS", "80")),
             monitor_interval=float(os.getenv("EXECUTOR_MONITOR_INTERVAL_SECONDS", "5")),
             prime_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
+            prime_discovery_model=os.getenv("PRIME_PLAYER_DISCOVERY_MODEL", ""),
             prime_match_model=os.getenv("PRIME_PLAYER_MATCH_MODEL", ""),
             prime_search_timeout=float(os.getenv("PRIME_PLAYER_SEARCH_TIMEOUT_SECONDS", "100")),
             prime_status_timeout=float(os.getenv("PRIME_PLAYER_STATUS_TIMEOUT_SECONDS", "10")),
