@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.8
+
+- Add College Football (`college-football`) to schedule discovery and readable event, priority and team-preference labels. New installations discover it by default; existing discovery choices are preserved and the league can be enabled in Settings.
+- Use Teamarr's existing ESPN college schedule and team identities with its new default Prime Video route. Live matching, startup verification and event lifecycle rules are unchanged.
+
 ## 0.14.7
 
 - Persist model request bodies (including prompts, options and transmitted schema), response bodies, HTTP status, timestamps and outcomes with each playback token. Diagnostic exports include this evidence on success, HTTP rejection, malformed response, timeout and cancellation.
@@ -239,4 +244,3 @@ Upgrade from the existing checkout with `git pull --ff-only` and `docker compose
 ## 0.1.0
 
 Initial independent controller: responsive events, watch plan, priorities, settings and activity; Teamarr feed ingestion; persistent SQLite state; live-only selection; and simulated playback/status adapters.
-

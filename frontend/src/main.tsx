@@ -76,6 +76,7 @@ type Modal =
   | { type: "playback" }
   | null;
 const leagueLabels: Record<string, string> = {
+  "college-football": "College Football",
   pga: "Golf",
   tennis: "Tennis",
   "uefa.champions": "UEFA Champions League",

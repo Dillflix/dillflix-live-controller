@@ -2,6 +2,7 @@
 
 LEAGUE_NAMES = {
     "nfl": "NFL",
+    "college-football": "College Football",
     "nhl": "NHL",
     "mlb": "MLB",
     "nba": "NBA",

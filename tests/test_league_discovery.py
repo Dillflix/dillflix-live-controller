@@ -1,4 +1,6 @@
 import copy
+import json
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
@@ -8,8 +10,82 @@ from test_controller import overview
 from controller.config import Settings
 from controller.fixtures import fixtures
 from controller.leagues import DEFAULT_LEAGUES
+from controller.models import Rule
 from controller.service import Controller
 from controller.teamarr import TeamarrClient
+
+
+@pytest.mark.parametrize("season,priority", [("regular", 1), ("postseason", 0)])
+async def test_college_feed_reaches_priorities_team_directory_and_playback_request(tmp_path, season, priority):
+    service = Controller(Settings(
+        database=str(tmp_path / "college.db"), mode="teamarr", teamarr_url="http://teamarr"
+    ))
+    entry = copy.deepcopy(fixtures()[0][1])
+    entry.pop("_simulation")
+    entry.update(
+        id="event:espn:college-football:fixture",
+        provider="espn", competition="college-football", sports=["football"],
+        title="Michigan Wolverines at Ohio State Buckeyes", status="live",
+        start_time=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        expected_end_time=(datetime.now(UTC) + timedelta(hours=3)).isoformat(),
+        viewing_options=[{
+            "id": "route:college-football:prime_video", "app": "prime_video",
+            "decision": "eligible", "basis": "configured_route",
+            "reasons": ["user_configured_league_route"],
+        }],
+    )
+    entry["event"].update(
+        league="college-football", provider="espn", event_id="fixture", season_type=season,
+        home_team="Ohio State Buckeyes", away_team="Michigan Wolverines",
+    )
+    for field, team_id, name in [
+        ("away_team_details", "130", "Michigan Wolverines"),
+        ("home_team_details", "194", "Ohio State Buckeyes"),
+    ]:
+        entry["event"][field].update(
+            id=team_id, provider="espn", full_name=name, short_name=name,
+            name=name, city=None, abbreviation="MICH" if team_id == "130" else "OSU",
+        )
+    requests = []
+
+    def handler(request):
+        requests.append(request.url)
+        if request.url.path.endswith("/teams"):
+            return httpx.Response(200, json=[{
+                "provider_team_id": "130", "provider": "espn",
+                "league": "college-football", "team_name": "Michigan Wolverines",
+                "team_abbrev": "MICH",
+            }])
+        assert request.url.params.get_list("league") == ["college-football"]
+        return httpx.Response(200, json={"schema_version": 1, "items": [entry], "next_cursor": None})
+
+    try:
+        service.client = TeamarrClient("http://teamarr", transport=httpx.MockTransport(handler))
+        with service.db.transaction() as db:
+            device = service.db.device(db)
+            device["preferences"]["discovery_leagues"] = ["college-football"]
+            device["rules"] = [
+                Rule(id="cfb-postseason", name="College postseason", league="college-football", phase="playoffs").model_dump(),
+                Rule(id="cfb-regular", name="College regular season", league="college-football", phase="regular").model_dump(),
+            ]
+            service.db.save_device(db, device)
+        await service.refresh_catalog()
+        await service.refresh_team_directory()
+        view = service.overview()
+        assert view["meta"]["league_choices"]["college-football"] == "College Football"
+        assert view["events"][0]["priority"] == priority
+        assert view["events"][0]["playable"] is True
+        assert any(t["key"] == "espn:college-football:130" for t in view["teams"])
+        assert any(url.path.endswith("/cache/leagues/college-football/teams") for url in requests)
+        service.tick()
+        with service.db.transaction() as db:
+            row = db.execute("SELECT payload FROM jobs ORDER BY rowid DESC LIMIT 1").fetchone()
+            issued = json.loads(row["payload"])
+        assert issued["content_id"] == entry["id"]
+        assert issued["content_snapshot"] == entry
+        assert issued["allowed_viewing_options"] == entry["viewing_options"]
+    finally:
+        await service.stop()
 
 
 def select(client, leagues):
@@ -64,8 +140,8 @@ async def test_selected_leagues_survive_cursor_expiry_and_cursor_pages_use_no_fi
         })
 
     client = TeamarrClient("http://teamarr", transport=httpx.MockTransport(handler))
-    await client.fetch_snapshot(leagues=["cfl", "uefa.champions", "f1"])
-    assert requests[0].get_list("league") == ["cfl", "uefa.champions", "f1"]
+    await client.fetch_snapshot(leagues=["college-football", "cfl", "uefa.champions", "f1"])
+    assert requests[0].get_list("league") == ["college-football", "cfl", "uefa.champions", "f1"]
     assert dict(requests[1]) == {"cursor": "next"}
     assert requests[2].get_list("league") == requests[0].get_list("league")
     await client.fetch_snapshot(leagues=[])
