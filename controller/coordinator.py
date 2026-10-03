@@ -62,6 +62,20 @@ class PlaybackCoordinator(PlaybackRecovery):
                 "SELECT * FROM jobs WHERE device_id=? AND intent=? AND state='pending'",
                 (d["id"], d["intent_version"]),
             ).fetchone()
+            if decision.get("retry_after"):
+                # Preserve the requested event while its launch is backed off.
+                # Fence fallback work issued by an older controller version,
+                # then let cancellation drain before the due retry is delivered.
+                if target != d.get("desired") or pending:
+                    d["intent_version"] += 1
+                    d["desired"] = target
+                    db.execute(
+                        "UPDATE jobs SET state='superseded' WHERE device_id=? AND state='pending'",
+                        (d["id"],),
+                    )
+                d["playback_state"] = "failed"
+                self.db.save_device(db, d)
+                return True
             if not target and self.keep_pending_launch(d, pending, indexed.get(d.get("desired"))):
                 target = pending["content_id"]
                 d["reason"] = "Verifying the issued live launch; event status temporarily unavailable"

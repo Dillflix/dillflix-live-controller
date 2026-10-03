@@ -199,6 +199,14 @@ must resolve the live action and verify startup. Future, unknown, delayed, postp
 suspended and terminal statuses do not qualify via this rule. Expected end times
 never prove completion. Failed matches use the existing retry backoff.
 
+A playable watch-plan commitment keeps its priority during launch retry backoff.
+The controller retains that desired event and waits for the retry deadline rather
+than launching an automatic event or a lower plan entry in the gap. Removing or
+reordering the plan, confirmed completion, or loss of all permitted routes still
+changes selection normally. Automatic candidates continue to use failure backoff
+to allow other automatic events. Prime launch failures preserve the service's
+bounded reason in the activity detail and durable job error.
+
 Expired nonterminal status records copied from Teamarr use current catalog evidence
 regardless of whether the event is selected/tracked. Selecting an event must not
 change the precedence of an expired feed copy. This fallback preserves catalog

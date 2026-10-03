@@ -109,16 +109,20 @@ def choose(device, items, now, real_now):
     indexed = {e["content_id"]: e for e in items}
     current_id = (device.get("observed") or {}).get("content_id")
     committed = {p["content_id"] for p in device["plan"]}
+    eligible = []
     candidates = []
     for item in items:
         if not item["active"] and item["content_id"] not in committed | {current_id}:
             continue
         failure = device.get("failures", {}).get(item["content_id"], {})
         cooldown = failure.get("retry_after")
-        if item["playable"] and (not cooldown or real_now >= parse_time(cooldown)):
-            candidates.append(item)
+        if item["playable"]:
+            eligible.append(item)
+            if not cooldown or real_now >= parse_time(cooldown):
+                candidates.append(item)
     ids = {e["content_id"] for e in candidates}
-    manual = next((p for p in device["plan"] if p["content_id"] in ids), None)
+    eligible_ids = {e["content_id"] for e in eligible}
+    manual = next((p for p in device["plan"] if p["content_id"] in eligible_ids), None)
     if manual:
         result = {
             "content_id": manual["content_id"],
@@ -126,6 +130,13 @@ def choose(device, items, now, real_now):
             "rule_id": None,
             "reason": "Protected by your watch plan",
         }
+        # Backoff delays another launch; it does not relinquish a live manual
+        # commitment to an automatic event or a lower watch-plan entry.
+        if manual["content_id"] not in ids:
+            result.update(
+                retry_after=device["failures"][manual["content_id"]]["retry_after"],
+                reason="Watch-plan playback retry pending; waiting before another attempt",
+            )
     else:
         candidates = [e for e in candidates if priority(device, e) < 1_000_000]
         candidates.sort(
