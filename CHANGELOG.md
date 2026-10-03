@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.4
+
+- Retain bounded model-provider JSON rejection details (message, parameter, code and type) in playback errors and diagnostic exports, redacting the configured API key and bearer/key patterns. Do not retain arbitrary error pages or extra response fields.
+- No model request, selection, playback or retry-policy changes. The provider rejection must be diagnosed from its actual response.
+
 ## 0.14.3
 
 - Accept Prime Player's verified launch directly; current playback inspection remains monitoring, not an extra startup gate.

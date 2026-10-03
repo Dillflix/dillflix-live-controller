@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 
 import httpx
 
@@ -38,6 +39,32 @@ class ChatClient:
     async def close(self):
         await self.client.aclose()
 
+    async def error_message(self, response):
+        """Retain bounded provider rejection details, never arbitrary error pages."""
+        prefix = f"Model service returned HTTP {response.status_code}"
+        raw = bytearray()
+        try:
+            async for chunk in response.aiter_bytes():
+                if len(raw) + len(chunk) > 16384:
+                    return prefix + " (error body exceeded diagnostic limit)"
+                raw.extend(chunk)
+            payload = json.loads(raw)
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if not isinstance(error, dict):
+                return prefix
+            fields = []
+            for key in ("type", "code", "param", "message"):
+                value = error.get(key)
+                if not isinstance(value, str):
+                    continue
+                if self.config.api_key:
+                    value = value.replace(self.config.api_key, "[redacted]")
+                value = re.sub(r"(?i)Bearer\s+[^\s\"']+|\bsk-[A-Za-z0-9_-]+", "[redacted]", value)
+                fields.append(f"{key}=" + " ".join(value.split())[:1200])
+            return prefix + (": " + "; ".join(fields) if fields else "")
+        except (ValueError, httpx.HTTPError):
+            return prefix + " (error body unavailable or not JSON)"
+
     async def completion(self, model, messages, schema=None, name="event_match", max_tokens=1800):
         body = {
             **self.config.model_options,
@@ -67,7 +94,7 @@ class ChatClient:
                             retryable = response.status_code in {408, 429} or response.status_code >= 500
                             raise ExecutorError(
                                 "model_http_error",
-                                f"Model service returned HTTP {response.status_code}",
+                                await self.error_message(response),
                                 retryable=retryable,
                             )
                         raw = bytearray()

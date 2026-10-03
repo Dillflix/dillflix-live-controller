@@ -49,3 +49,10 @@ selection eligibility and “Retry pending”. The latter means playback retry b
 (5 seconds after the first failure, 15 after the second, 300 thereafter), not an
 event lifecycle state. Upload a new export while the symptom is visible; an older
 overview cannot explain a later failure.
+
+Model HTTP failures in 0.14.4 retain the provider JSON error message, parameter,
+code and type in the existing job error and export. Collection is capped at 16 KiB
+and individual fields at 1,200 characters; configured API keys and common bearer/key
+patterns are redacted. Arbitrary non-JSON bodies and other response fields are omitted.
+Provider messages can still contain quoted model names or input excerpts. Existing
+failures cannot be enriched retroactively: a subsequent request must capture the response.
