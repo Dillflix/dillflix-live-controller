@@ -3,10 +3,14 @@
 import asyncio
 import json
 import re
+import time
+from datetime import UTC, datetime
+from uuid import uuid4
 
 import httpx
 
 from .executor.models import ExecutorError
+from .model_diagnostics import body_evidence, publish
 
 
 def strict_schema(schema):
@@ -45,13 +49,16 @@ class ChatClient:
     async def close(self):
         await self.client.aclose()
 
-    async def error_message(self, response):
+    async def error_message(self, response, trace=None):
         """Retain bounded provider rejection details, never arbitrary error pages."""
         prefix = f"Model service returned HTTP {response.status_code}"
         raw = bytearray()
         try:
             async for chunk in response.aiter_bytes():
                 if len(raw) + len(chunk) > 16384:
+                    raw.extend(chunk[:16384 - len(raw)])
+                    if trace is not None:
+                        trace["response"] = body_evidence(raw, self.config.api_key, 16384, truncated=True)
                     return prefix + " (error body exceeded diagnostic limit)"
                 raw.extend(chunk)
             payload = json.loads(raw)
@@ -70,6 +77,9 @@ class ChatClient:
             return prefix + (": " + "; ".join(fields) if fields else "")
         except (ValueError, httpx.HTTPError):
             return prefix + " (error body unavailable or not JSON)"
+        finally:
+            if trace is not None and trace.get("response") is None:
+                trace["response"] = body_evidence(raw, self.config.api_key, 16384)
 
     async def completion(self, model, messages, schema=None, name="event_match", max_tokens=1800):
         body = {
@@ -91,22 +101,35 @@ class ChatClient:
                     *messages,
                     {"role": "user", "content": "Return JSON matching this schema: " + json.dumps(schema)},
                 ]
+        started = time.monotonic()
+        trace = {
+            "call_id": uuid4().hex,
+            "started_at": datetime.now(UTC).isoformat(),
+            "state": "pending",
+            "request": body_evidence(json.dumps(body).encode(), self.config.api_key, 1024 * 1024),
+            "http_status": None,
+            "response": None,
+        }
+        publish(trace)
+        raw = bytearray()
         try:
             # Bound queueing plus network plus decoding, not only inactivity per socket read.
             async with asyncio.timeout(self.config.model_timeout):
                 async with self.lock:
                     async with self.client.stream("POST", "chat/completions", json=body) as response:
+                        trace["http_status"] = response.status_code
                         if response.status_code != 200:
                             retryable = response.status_code in {408, 429} or response.status_code >= 500
                             raise ExecutorError(
                                 "model_http_error",
-                                await self.error_message(response),
+                                await self.error_message(response, trace),
                                 retryable=retryable,
                             )
-                        raw = bytearray()
                         async for chunk in response.aiter_bytes():
-                            raw.extend(chunk)
-                            if len(raw) > 512 * 1024:
+                            overflow = len(raw) + len(chunk) > 512 * 1024
+                            raw.extend(chunk[:512 * 1024 - len(raw)])
+                            if overflow:
+                                trace["response_truncated"] = True
                                 raise ExecutorError("model_output_limit", "Model response exceeded its limit")
                 payload = json.loads(raw)
                 choices = payload.get("choices")
@@ -119,12 +142,27 @@ class ChatClient:
                 content = choices[0]["message"]["content"]
                 if not isinstance(content, str) or len(content) > 32768:
                     raise ExecutorError("model_invalid", "Model response has no bounded text answer")
+                trace["state"] = "returned"
                 return content
-        except ExecutorError:
+        except ExecutorError as error:
+            trace.update(state="failed", error_code=error.code)
             raise
         except (httpx.HTTPError, TimeoutError) as error:
+            trace.update(state="failed", error_code="model_unavailable")
             raise ExecutorError(
                 "model_unavailable", "Model service was unavailable or exceeded its deadline"
             ) from error
         except (ValueError, KeyError, TypeError) as error:
+            trace.update(state="failed", error_code="model_invalid")
             raise ExecutorError("model_invalid", "Model service returned malformed data") from error
+        except asyncio.CancelledError:
+            trace.update(state="cancelled", error_code="cancelled")
+            raise
+        finally:
+            if trace["response"] is None and trace["http_status"] is not None:
+                trace["response"] = body_evidence(
+                    raw, self.config.api_key, 512 * 1024,
+                    truncated=trace.pop("response_truncated", False),
+                )
+            trace.update(finished_at=datetime.now(UTC).isoformat(), duration_seconds=time.monotonic() - started)
+            publish(trace)

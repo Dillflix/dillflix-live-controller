@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.7
+
+- Persist model request bodies (including prompts, options and transmitted schema), response bodies, HTTP status, timestamps and outcomes with each playback token. Diagnostic exports include this evidence on success, HTTP rejection, malformed response, timeout and cancellation.
+- Retain up to three calls per token under existing job retention, with explicit body truncation flags and credential redaction. Requests are recorded before the call; interrupted process records remain pending. No model or player requests are made by export.
+
 ## 0.14.6
 
 - Omit `maxLength` from the transmitted strict JSON schema to avoid the reproduced model-backend grammar initialization failure. Keep `json_schema`, `strict: true`, all other schema constraints, and existing local length/selection validation.

@@ -14,6 +14,7 @@ from uuid import uuid4
 from ..executor.models import ExecutorError
 from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
+from ..model_diagnostics import capture_model_calls
 from ..planner import parse_time
 from .client import PrimePlayerClient
 from .labels import search_queries
@@ -66,6 +67,19 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             row = self.store.allowed(db, token)
             report = json.loads(row["report"])
             report.setdefault("prime_player", {}).update(fields)
+            self.store.write(db, token, report)
+
+    def save_model_call(self, token, evidence):
+        # Diagnostic writes must survive cancellation without granting navigation
+        # authority or changing the job's state/cancellation fields.
+        with self.db.transaction() as db:
+            row = self.store.get_row(db, token)
+            if row["request"] is None:
+                return
+            report = json.loads(row["report"])
+            prime = report.setdefault("prime_player", {})
+            calls = [c for c in prime.get("model_calls", []) if c["call_id"] != evidence["call_id"]]
+            prime["model_calls"] = [*calls, evidence][-3:]
             self.store.write(db, token, report)
 
     async def mutation(self, token, action, function):
@@ -160,7 +174,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         # the service's own expiring handle. The service remains the final check.
         received = time.monotonic()
         self.store.phase(token, "matching")
-        selected, audit = await self.matcher.choose(request, results, timezone)
+        with capture_model_calls(lambda evidence: self.save_model_call(token, evidence)):
+            selected, audit = await self.matcher.choose(request, results, timezone)
         self.save_workflow(
             token,
             selection=audit,

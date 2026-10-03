@@ -605,3 +605,31 @@ async def test_due_scheduled_prime_event_can_be_selected_without_claiming_live(
         assert bool(decision["content_id"]) is eligible
     finally:
         await cleanup(controller)
+
+
+async def test_model_failure_prompt_and_response_survive_into_export(tmp_path):
+    from controller.llm import ChatClient
+    from controller.prime_player.diagnostics import collect
+    from controller.prime_player.matching import EventMatcher
+
+    controller, workflow = rig(tmp_path)
+    try:
+        async def rejected_choice(request, results, timezone):
+            await client.completion('test', [{'role': 'user', 'content': 'actual matching prompt'}])
+
+        client = ChatClient(workflow.config, transport=httpx.MockTransport(
+            lambda request: httpx.Response(400, json={'error': {'message': 'failed to parse grammar'}})))
+        await workflow.matcher.close()
+        workflow.matcher = EventMatcher(workflow.config, model=client)
+        workflow.matcher.choose = rejected_choice
+        token = await launch(workflow)
+        bundle = collect(controller.settings.database)
+        job = next(j for j in bundle['playbacks'] if j['token'] == token)
+        evidence = job['workflow']['model_calls'][0]
+        assert evidence['request']['json']['messages'][0]['content'] == 'actual matching prompt'
+        assert evidence['response']['json']['error']['message'] == 'failed to parse grammar'
+        assert evidence['http_status'] == 400
+        assert evidence['state'] == 'failed'
+        assert job['operation']['error']['code'] == 'model_http_error'
+    finally:
+        await cleanup(controller)

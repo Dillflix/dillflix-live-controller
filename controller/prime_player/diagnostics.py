@@ -128,7 +128,7 @@ def collect(path, device_id="living-room"):
                 "limits": {"activity": 1000, "jobs": 100, "executor_actions": 1000, "catalog_status": 10000},
                 "excluded": [
                     "credentials",
-                    "request/source snapshots",
+                    "standalone request/source snapshots (model prompts may contain source data)",
                     "screenshots",
                     "host journal and Docker stdout",
                 ],

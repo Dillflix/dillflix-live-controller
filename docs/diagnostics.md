@@ -6,7 +6,7 @@ Use **Activity → Export diagnostics** during an incident, before restarting ei
 
 Prime Player 0.1.0a7 additionally supplies its last 1,000 completed RPC records and currently running RPCs with elapsed durations. This history is bounded to the current player process and omits search strings, handles and request bodies. The export works with older/unreachable players and records which collection failed. Database collection precedes service collection; timestamps describe each snapshot rather than claiming an atomic cross-service snapshot.
 
-Credentials/configuration and full catalog/request snapshots are excluded. Content titles, searches in retained controller matching evidence, and device identifiers can be present. This is a support bundle, not an exhaustive export of host journal, Docker stdout or Frida debug output. Those logs remain separate:
+Credentials/configuration and standalone full catalog/request snapshots are excluded; captured model prompts include the source data actually sent to the model. Content titles, searches in retained controller matching evidence, and device identifiers can be present. This is a support bundle, not an exhaustive export of host journal, Docker stdout or Frida debug output. Those logs remain separate:
 
 ```sh
 sudo journalctl -u dillflix-prime-player -u dillflix-controller --since '30 minutes ago' --no-pager > dillflix-service.log
@@ -62,3 +62,31 @@ because the deployed backend failed to initialize its grammar with these bounds.
 `json_schema` and `strict: true` remain enabled, as do nullable types, required
 fields, `additionalProperties: false`, `minLength` and `maxItems`. The original
 local model retains every length ceiling and rejects overlength answers.
+
+
+## Model request and response evidence (0.14.7)
+
+Each exported `playbacks[].workflow.model_calls[]` record belongs to that playback's
+`token` and `request_id`. It includes a call ID, start/finish timestamps, duration,
+HTTP status, outcome, and the actual model request body: model name, messages with
+full prompts, sampling options, token budget, and transmitted response schema.
+Responses include the provider envelope and returned assistant content, or error
+body. Valid bodies use `request.json` / `response.json`; non-JSON or cut bodies use
+`text`. Bodies are captured before local output/selection validation, so rejected
+answers remain available. `returned` means transport decoding succeeded, not that
+matching or playback succeeded; consult the operation error and selection audit.
+
+The request is persisted before waiting for inference. A process crash can leave
+`pending`; this is not proof the provider never received the request. Cancellation
+and timeouts retain the request and any acquired response. No response is invented
+when no HTTP response arrived. Evidence survives controller restarts under existing
+executor-job retention; up to three calls are retained per token, with the export's
+existing 100-job limit. Request bodies are capped at 1 MiB, success responses at
+512 KiB, and HTTP-error bodies at 16 KiB, with explicit truncation flags.
+
+Authorization headers are never stored. The configured model API key, common bearer
+and key patterns, and structured credential fields are redacted before storage.
+Prompts can contain event titles and source metadata; responses can quote them.
+Only calls made after upgrading are captured. Deterministic selection makes no
+model call and therefore produces no model-call record. Standalone CLI test scripts
+outside a playback workflow do not write into playback exports.
