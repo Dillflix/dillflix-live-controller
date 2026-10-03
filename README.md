@@ -105,6 +105,11 @@ Settings shows content-status health independently of schedule and team-director
 
 ## Connect the Teamarr catalog
 
+Version 0.13.0 adds **continuous DAZN tennis coverage through Prime Video**.
+Teamarr imports the actual Canadian broadcast listings, including day/session
+titles and artwork; Tennis is available in Events and Priorities. Update
+Teamarr first. See [tennis setup and validation](docs/tennis-coverage.md).
+
 Set these values in `.env` and recreate the service:
 
 ```dotenv

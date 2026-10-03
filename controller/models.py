@@ -134,6 +134,7 @@ class SimulationCommand(StrictModel):
         "outside_feed",
         "coverage_switch",
         "device_outage",
+        "tennis",
     ] = "normal"
 
 

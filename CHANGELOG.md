@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.0 — Continuous DAZN tennis coverage
+
+- Consume Teamarr's DAZN Canadian day/session/court broadcast listings through Prime Video. Keep titles, artwork, source identities, and unknown ends intact; individual ATP/WTA match discovery is unchanged.
+- Add Tennis filtering and the DAZN tennis priority source, plus a dedicated demo scenario and phone browser test.
+- Preserve upstream status acquisition time across feed cache hits. A match's Final signal cannot finish the encompassing broadcast; failures and elapsed estimates preserve reservations.
+- No database migration. Update Teamarr first. The real public schedule was checked; installed deployment and Fire TV playback validation remain outstanding.
+
 ## 0.12.0 — Configurable leagues and expanded Prime Video coverage
 
 - Add Settings controls for NFL, NHL, MLB, NBA, CFL, UEFA Champions League and Formula 1 discovery. Selection persists across restarts and supports configuration export/import and undo.

@@ -147,6 +147,7 @@ def fixtures(scenario="normal"):
         "outside_feed": 870,
         "coverage_switch": 800,
         "device_outage": 800,
+        "tennis": 800,
     }[scenario]
     if scenario == "overtime":
         next(x for x in entries if x["id"] == "demo:canadiens")["_simulation"]["actual_end_time"] = instant(
@@ -167,6 +168,23 @@ def fixtures(scenario="normal"):
         golf = next(x for x in entries if x["id"] == "demo:golf")
         golf["_simulation"]["route_switch_at"] = instant(815)
         golf["viewing_options"][0]["expected_end_time"] = instant(815)
+    if scenario == "tennis":
+        entries.append({
+            "id": "demo:tennis", "kind": "broadcast", "source": "dazn_tennis",
+            "title": "Beijing Open: Day 4", "competition": "tennis", "sports": ["tennis"],
+            "provider": "demo", "start_time": instant(720), "expected_end_time": None,
+            "end_time_estimated": True, "timing_basis": "demo", "status": "unknown",
+            "event": None, "sessions": [], "related_ids": [], "artwork": {},
+            "broadcast": {"title": "Beijing Open: Day 4", "kind": "tournament_coverage",
+                          "tournament_name": "WTA Beijing, China Women Singles 2026"},
+            "viewing_options": [{
+                "id": "demo-option:tennis:prime_video", "app": "prime_video", "channel": "DAZN",
+                "stream_title": "Beijing Open: Day 4", "decision": "review",
+                "reasons": ["end_time_unknown"], "presentation": "live", "basis": "demo",
+                "coverage_type": "tournament_coverage",
+            }],
+            "_simulation": {"actual_end_time": instant(1080)},
+        })
     return entries, instant(now)
 
 

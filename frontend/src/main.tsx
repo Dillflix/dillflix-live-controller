@@ -76,6 +76,7 @@ type Modal =
   | null;
 const leagueLabels: Record<string, string> = {
   pga: "Golf",
+  tennis: "Tennis",
   "uefa.champions": "UEFA Champions League",
   f1: "Formula 1",
 };
@@ -319,6 +320,7 @@ function RuleForm({
           <option value="">Any source</option>
           <option value="nfl_redzone">NFL RedZone</option>
           <option value="golf">Golf coverage</option>
+          <option value="dazn_tennis">Tennis coverage · DAZN</option>
           <option value="games">Games</option>
           <option value="special_events">Special events</option>
         </select>
@@ -469,6 +471,7 @@ function App() {
       ...Object.keys(data.meta.league_choices),
       ...d.preferences.discovery_leagues,
       "pga",
+      "tennis",
     ]),
   ].sort();
   const observed = find(d.observed?.content_id || null),
@@ -1326,7 +1329,7 @@ function App() {
                     Choose the leagues to discover. Saved watch-plan entries and
                     current playback stay protected when a league is turned off.
                     New leagues appear after the next schedule refresh. RedZone,
-                    golf coverage, and special broadcasts are managed
+                    golf and tennis coverage, and special broadcasts are managed
                     separately.
                   </p>
                   {Object.entries({
@@ -1603,6 +1606,7 @@ function App() {
                         <option value="coverage_switch">
                           Same-event coverage change
                         </option>
+                        <option value="tennis">Tennis coverage · DAZN</option>
                         <option value="device_outage">
                           Playback service outage
                         </option>

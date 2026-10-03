@@ -70,7 +70,7 @@ async def test_selected_leagues_survive_cursor_expiry_and_cursor_pages_use_no_fi
     assert requests[2].get_list("league") == requests[0].get_list("league")
     await client.fetch_snapshot(leagues=[])
     assert "league" not in requests[-1]
-    assert requests[-1].get_list("source") == ["nfl_redzone", "golf", "special_events"]
+    assert requests[-1].get_list("source") == ["nfl_redzone", "golf", "special_events", "dazn_tennis"]
 
 
 async def test_inflight_old_selection_cannot_replace_catalog(tmp_path):
