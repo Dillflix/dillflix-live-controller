@@ -1,0 +1,7 @@
+services:
+  controller:
+    environment:
+      PRIME_PLAYER_SOCKET: /run/prime-player/player.sock
+      PLAYBACK_ADAPTER: simulator
+    volumes:
+      - ${PRIME_PLAYER_STATE_DIR:?Set PRIME_PLAYER_STATE_DIR to the host socket directory}:/run/prime-player:ro

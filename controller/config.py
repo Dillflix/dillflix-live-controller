@@ -26,6 +26,7 @@ class Settings:
     job_history_limit: int = 1000
     command_history_limit: int = 10000
     catalog_retention_days: int = 30
+    prime_player_socket: str = ""
     screen_adb_serial: str = ""
     screen_adb_path: str = "adb"
     screen_server_path: Path = Path("data/scrcpy-server-v3.3.4")
@@ -44,6 +45,7 @@ class Settings:
         if mode == "teamarr" and not url:
             raise ValueError("TEAMARR_URL is required in teamarr mode")
         return cls(
+            prime_player_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
             database=os.getenv("CONTROLLER_DATABASE", "data/controller.sqlite3"),
             mode=mode,
             teamarr_url=url,
@@ -63,3 +65,4 @@ class Settings:
             screen_bit_rate=min(12000000, max(250000, int(os.getenv("SCREEN_BIT_RATE", "2000000")))),
             executor=ExecutorConfig.from_env(),
         )
+

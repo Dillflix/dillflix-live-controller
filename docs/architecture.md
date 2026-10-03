@@ -160,3 +160,8 @@ commitments, batching within Teamarr's 20-league limit. Every page is validated
 before atomic replacement. A selection changed during fetch discards that result.
 Cursor requests carry no filters. Zero selected leagues explicitly omits the
 `games` source rather than falling back to Teamarr's defaults.
+
+
+## Prime Player ownership boundary
+
+When configured, `PrimeOwnership` acquires an acknowledged service receipt before the manual remote becomes available. Prime Player revokes automatic work and fences resolver callbacks; the gateway forwards bounded keys/text with that receipt and an increasing sequence. Release drains writes, then releases only the matching durable manual session. A failed acknowledgement grants no input. HTTP worker cancellation is drained before cleanup. Screen streaming remains read-only. See [deployment constraints](prime-player-ownership.md).

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dillflix-controller"
-version = "0.13.0"
+version = "0.13.1"
 description = "Persistent live-sports planner with Prime Video playback, token status, and manual control"
 requires-python = ">=3.12"
 dependencies = ["fastapi==0.141.1", "uvicorn==0.53.0", "httpx==0.28.1", "websockets==16.0", "Pillow==12.3.0"]
@@ -28,3 +28,4 @@ select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.setuptools.package-data]
 "controller.executor" = ["*.txt", "assets/*.apk"]
+

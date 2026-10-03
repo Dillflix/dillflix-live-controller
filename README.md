@@ -221,3 +221,8 @@ The [API implementation guide](docs/executor-api-handoff.md), [OpenAPI contract]
 See [the roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) for boundaries and remaining host validation. Run the target-TV procedure before relying on unattended navigation. Real model accuracy, Prime account availability, protected video visibility, physical mobile browsers, Docker/nginx and live endurance have not been validated in this development environment. Other streaming app adapters and independent sports-results providers remain future integrations.
 
 Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillflix/dillflix-live-controller). This application is versioned and deployed independently of Teamarr.
+
+
+## Prime Player manual ownership (optional)
+
+With Prime Player API 4 / 0.1.0a5, set `PRIME_PLAYER_SOCKET` to its Unix socket to require an acknowledged service handoff before remote input. Wake, keys and text then go through Prime Player. There is no direct-input fallback when configured. See [setup and validation](docs/prime-player-ownership.md). This integrates the manual gateway; the automated planner/playback adapter is unchanged.

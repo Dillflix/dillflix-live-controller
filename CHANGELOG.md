@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.1 — Prime Player manual ownership
+
+- Add opt-in API 4 service handoff before manual input, including wake and text.
+- Drain in-flight writes and reject stale session release; no direct-ADB fallback when configured.
+- Reject coexistence with the legacy mutation executor on the same gateway. Automated planner integration is unchanged.
+- Simulated handoff tests pass; target-device acceptance remains pending.
+
 ## 0.13.0 — Continuous DAZN tennis coverage
 
 - Consume Teamarr's DAZN Canadian day/session/court broadcast listings through Prime Video. Keep titles, artwork, source identities, and unknown ends intact; individual ATP/WTA match discovery is unchanged.
@@ -194,3 +201,4 @@ Upgrade from the existing checkout with `git pull --ff-only` and `docker compose
 ## 0.1.0
 
 Initial independent controller: responsive events, watch plan, priorities, settings and activity; Teamarr feed ingestion; persistent SQLite state; live-only selection; and simulated playback/status adapters.
+
