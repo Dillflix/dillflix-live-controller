@@ -237,8 +237,12 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             self.validate_outcome(outcome, workflow)
             self.save_workflow(token, launch_outcome=outcome)
             if outcome["state"] in {"failed", "unknown", "cancelled", "stopped"}:
+                reason = outcome.get("reason")
+                message = "Prime could not verify the requested playback"
+                if isinstance(reason, str) and reason.strip():
+                    message += ": " + reason.strip()[:800]
                 raise ExecutorError(
-                    "prime_launch_unverified", "Prime could not verify the requested playback"
+                    "prime_launch_unverified", message
                 )
             if outcome["state"] == "playing":
                 resolution = outcome.get("evidence", {}).get("resolution", {})

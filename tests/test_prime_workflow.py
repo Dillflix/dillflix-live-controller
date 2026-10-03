@@ -210,6 +210,30 @@ async def test_search_match_play_verify_and_read_only_monitor(tmp_path, lost):
         await cleanup(controller)
 
 
+async def test_resolver_refusal_reason_reaches_controller_failure_and_export(tmp_path):
+    from controller.executor.integration import IntegratedPlaybackAdapter
+    from controller.prime_player.diagnostics import collect
+
+    controller, workflow = rig(tmp_path)
+    reason = "resolver returned a non-playback result (for example details, entitlement or error page)"
+    try:
+        original = workflow.player.outcome
+        workflow.player.outcome = lambda: {
+            **original(), "state": "unknown", "resolved_id": None, "reason": reason, "evidence": {}
+        }
+        token = await launch(workflow)
+        report = workflow.store.report(token)
+        assert report["operation"]["state"] == "failed"
+        assert reason in IntegratedPlaybackAdapter.project(report)["reason"]
+        exported = next(p for p in collect(controller.settings.database)["playbacks"] if p["token"] == token)
+        assert exported["workflow"]["launch_outcome"]["reason"] == reason
+        assert reason in exported["operation"]["error"]["message"]
+        assert len([call for call in workflow.player.calls if call[0] == "play"]) == 1
+        assert not any(call[0] == "status" for call in workflow.player.calls)
+    finally:
+        await cleanup(controller)
+
+
 @pytest.mark.parametrize(
     "state", ["paused", "buffering", "stopped", "not_current", "ended", "unknown", "error"]
 )

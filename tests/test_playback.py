@@ -128,7 +128,7 @@ async def test_restart_adopts_playback_verified_before_the_coordinator_saved_it(
     assert len(jobs(c)) == 1
 
 
-def test_navigation_deadline_keeps_manual_intent_and_uses_live_fallback(rig):
+def test_navigation_deadline_keeps_manual_intent_and_waits_for_retry(rig):
     c, s, settings = rig
     job = pending(rig)
     request = job["payload"]
@@ -146,8 +146,67 @@ def test_navigation_deadline_keeps_manual_intent_and_uses_live_fallback(rig):
     object.__setattr__(settings, "simulation_delay", 0)
     s.tick()
     d = overview(c)["device"]
-    assert d["observed"]["content_id"] == "demo:redzone"
+    assert d["observed"] is None
+    assert d["desired"] == "demo:lions"
+    assert d["playback_state"] == "failed"
+    assert len(jobs(c)) == 1
     assert d["plan"][0]["content_id"] == "demo:lions"
+
+
+@pytest.mark.parametrize("prior_attempts,delay", [(0, 5), (1, 15), (2, 300)])
+def test_manual_retry_delay_never_launches_an_automatic_or_lower_plan_event(rig, prior_attempts, delay):
+    c, s, settings = rig
+    command(c, {"type": "add", "content_id": "demo:golf"})
+    job = pending(rig)
+    with s.db.transaction() as db:
+        d = s.db.device(db)
+        d["failures"][job["content_id"]] = {"attempts": prior_attempts}
+        s.fail_attempt(db, d, job, "Resolver refused playback")
+        s.db.save_device(db, d)
+    before = overview(c)["device"]
+    retry_at = datetime.fromisoformat(before["failures"][job["content_id"]]["retry_after"])
+    assert delay - 1 <= (retry_at - datetime.now(UTC)).total_seconds() <= delay
+    object.__setattr__(settings, "simulation_delay", 0)
+    for _ in range(3):
+        s.tick()
+    after = overview(c)["device"]
+    assert after["desired"] == job["content_id"]
+    assert after["intent_version"] == before["intent_version"]
+    assert after["plan"] == before["plan"]
+    assert after["observed"] is None
+    assert "retry pending" in after["reason"]
+    assert len(jobs(c)) == 1
+    with s.db.transaction() as db:
+        d = s.db.device(db)
+        d["failures"][job["content_id"]]["retry_after"] = (
+            datetime.now(UTC) - timedelta(seconds=1)
+        ).isoformat()
+        s.db.save_device(db, d)
+    s.tick()
+    assert len(jobs(c)) == 2
+    assert overview(c)["device"]["observed"]["content_id"] == job["content_id"]
+
+
+async def test_manual_retry_hold_survives_controller_restart_and_plan_removal(rig):
+    c, s, settings = rig
+    job = pending(rig)
+    with s.db.transaction() as db:
+        d = s.db.device(db)
+        s.fail_attempt(db, d, job, "Resolver refused playback")
+        s.db.save_device(db, d)
+    await s.stop()
+    restarted = Controller(settings)
+    try:
+        restarted.tick()
+        assert restarted.overview()["device"]["desired"] == job["content_id"]
+        assert len(jobs(c)) == 1
+        entry = overview(c)["device"]["plan"][0]
+        command(c, {"type": "remove", "entry_id": entry["id"]})
+        object.__setattr__(settings, "simulation_delay", 0)
+        restarted.tick()
+        assert restarted.overview()["device"]["observed"]["content_id"] == "demo:redzone"
+    finally:
+        await restarted.stop()
 
 
 @pytest.mark.parametrize(
