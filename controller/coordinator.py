@@ -11,6 +11,27 @@ from .recovery import PlaybackRecovery, compatible_options
 
 
 class PlaybackCoordinator(PlaybackRecovery):
+    @staticmethod
+    def keep_pending_launch(device, job, item):
+        """Preserve an issued launch through unknown status, within its deadline."""
+        return bool(
+            job
+            and item
+            and job["state"] == "pending"
+            and job["progress"] in {"accepted", "navigating"}
+            and job["intent"] == device["intent_version"]
+            and job["content_id"] == device.get("desired")
+            and job["deadline_at"] is not None
+            and job["deadline_at"] > time.time()
+            and item["lifecycle"]["state"] == "unknown"
+            and not device.get("manual_control")
+            and not device.get("input_handoff")
+            and device["automation"] == "active"
+            and compatible_options(
+                json.loads(job["payload"])["allowed_viewing_options"], item["viewing_options"]
+            )
+        )
+
     def owns_device(self, db, device_id):
         row = db.execute(
             "SELECT owner,expires FROM leases WHERE resource=?", (f"device:{device_id}",)
@@ -41,6 +62,9 @@ class PlaybackCoordinator(PlaybackRecovery):
                 "SELECT * FROM jobs WHERE device_id=? AND intent=? AND state='pending'",
                 (d["id"], d["intent_version"]),
             ).fetchone()
+            if not target and self.keep_pending_launch(d, pending, indexed.get(d.get("desired"))):
+                target = pending["content_id"]
+                d["reason"] = "Verifying the issued live launch; event status temporarily unavailable"
             observed = d.get("observed") or {}
             if observed.get("verified") and observed.get("content_id") == d.get("retry_playback"):
                 d["retry_playback"] = None
@@ -226,15 +250,16 @@ class PlaybackCoordinator(PlaybackRecovery):
             items = self.items(db, d["id"])
             decision = choose(d, items, self.now(db), datetime.now(UTC))
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)
+            holding = not decision["content_id"] and self.keep_pending_launch(d, job, item)
             if (
                 d.get("manual_control")
                 or d.get("input_handoff")
                 or d["automation"] == "paused"
                 or job["intent"] != d["intent_version"]
                 or job["content_id"] != d["desired"]
-                or decision["content_id"] != job["content_id"]
+                or (decision["content_id"] != job["content_id"] and not holding)
                 or not item
-                or not item["playable"]
+                or (not item["playable"] and not holding)
                 or not compatible_options(
                     json.loads(job["payload"])["allowed_viewing_options"], item["viewing_options"]
                 )

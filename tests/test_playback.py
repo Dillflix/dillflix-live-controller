@@ -28,6 +28,64 @@ def successful_report(service, job):
     return service.playback.inspect(job["id"])
 
 
+def issued_launch_with_unknown_status(rig, monkeypatch):
+    _, service, _ = rig
+    job = pending(rig)
+    success = successful_report(service, job)
+    assert service.receive_playback_report(job["id"], {**success, "state": "navigating", "observation": None})
+    with service.db.transaction() as db:
+        item = next(i for i in service.items(db) if i["content_id"] == job["content_id"])
+    item = copy.deepcopy(item)
+    item["playable"] = False
+    item["lifecycle"]["state"] = "unknown"
+    monkeypatch.setattr(service, "items", lambda *args, **kwargs: [item])
+    return job, success, item
+
+
+def test_issued_launch_survives_unknown_status_and_accepts_verified_result(rig, monkeypatch):
+    client, service, _ = rig
+    job, success, _ = issued_launch_with_unknown_status(rig, monkeypatch)
+    service.stage_playback()
+    retained = jobs(client)[0]
+    assert retained["id"] == job["id"] and retained["state"] == "pending"
+    assert retained["deadline_at"] == job["deadline_at"]
+    assert service.receive_playback_report(job["id"], success)
+    assert jobs(client)[0]["state"] == "verified"
+    assert len(jobs(client)) == 1
+
+
+@pytest.mark.parametrize(
+    "change", ["ended", "cancelled", "route_withdrawn", "expired", "new_intent", "queued"]
+)
+def test_unknown_status_does_not_preserve_invalid_launch(rig, monkeypatch, change):
+    client, service, _ = rig
+    job, success, item = issued_launch_with_unknown_status(rig, monkeypatch)
+    if change in {"ended", "cancelled"}:
+        item["lifecycle"]["state"] = change
+    elif change == "route_withdrawn":
+        item["viewing_options"] = []
+    else:
+        with service.db.transaction() as db:
+            if change == "expired":
+                db.execute("UPDATE jobs SET deadline_at=0 WHERE id=?", (job["id"],))
+            elif change == "queued":
+                db.execute("UPDATE jobs SET progress='queued' WHERE id=?", (job["id"],))
+            else:
+                device = service.db.device(db)
+                device["intent_version"] += 1
+                service.db.save_device(db, device)
+    assert not service.receive_playback_report(job["id"], success)
+    assert jobs(client)[0]["state"] != "verified"
+
+
+def test_unknown_status_never_substitutes_for_playback_proof(rig, monkeypatch):
+    client, service, _ = rig
+    job, success, _ = issued_launch_with_unknown_status(rig, monkeypatch)
+    success["observation"]["verified"] = False
+    service.receive_playback_report(job["id"], success)
+    assert jobs(client)[0]["state"] == "rejected"
+
+
 def test_lost_ack_is_reconciled_without_duplicate_delivery(rig, monkeypatch):
     c, s, _ = rig
     submit = s.playback.submit

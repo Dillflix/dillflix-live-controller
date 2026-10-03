@@ -29,6 +29,8 @@ Teamarr remains the catalog and event-lifecycle dependency. Player stopping, swi
 
 ## Selection rules
 
+An accepted or navigating launch remains pending when its event status temporarily becomes unknown and the planner has no other eligible selection. It retains the same request, intent and deadline. Fresh, valid playback verification can complete that existing request during the uncertainty. Explicit lifecycle changes, withdrawn routes, changed intent, manual control and the original deadline still invalidate it. Unknown status never authorizes a queued or new launch.
+
 1. Candidates need live status and at least one permitted viewing option. A recent failed attempt temporarily defers that content. Inactive catalog entries remain candidates only when already observed or manually committed.
 2. The first eligible watch-plan entry wins. Its rank only matters during overlap; all other entries remain reserved for their remaining live windows.
 3. Otherwise, the first enabled matching rule wins. Conditions within a rule are ANDed. Within that tier, the best team rank wins, followed by the current event, scheduled start, and opaque content ID for stable ties.
