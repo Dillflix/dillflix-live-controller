@@ -269,7 +269,7 @@ class DeviceInput:
         if self.service.executor:
             async with self.service.executor.input_lock:
                 self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
-                self.service.executor.device.invalidate_focus()
+                self.service.executor.invalidate_input_context()
                 await source.send(packet)
         else:
             await source.send(packet)

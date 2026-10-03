@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Prime Player orchestration (cancel/stop integration pending)
+
+- Add a separate Prime Player workflow over its existing Unix HTTP/RPC service. Prime Player owns application execution; the controller retains scheduling, intent and durable tokens. No ADB navigation, accessibility collector or MediaSession probe runs in this path.
+- Select live results using exact matchup labels/provider aliases where unambiguous, otherwise an optional text LLM with bounded candidates, exact evidence and abstention. Preserve the original Teamarr ID and snapshot independently of Prime GTIs.
+- Persist service session and attempt association before Play; inspect uncertain launches without replay. Monitor current attempt-bound status, retain acquisition age, and never convert stopped/switched/player-ended into sports-event completion.
+- Extract shared worker lifecycle and model transport without changing legacy behavior. Preserve manual ownership and cancellation barriers. Another agent owns the service cancel/stop implementation; its adapter seam remains explicit and playback activation is blocked until connected.
+- Document read-only diagnostics, Unix-socket Docker mounting/permissions, rollout and target-device acceptance. Existing `simulator` and explicit `prime-video` deployments retain their behavior; there is no automatic legacy fallback.
+
 ## 0.12.0 — Configurable leagues and expanded Prime Video coverage
 
 - Add Settings controls for NFL, NHL, MLB, NBA, CFL, UEFA Champions League and Formula 1 discovery. Selection persists across restarts and supports configuration export/import and undo.

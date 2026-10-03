@@ -41,9 +41,14 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 if settings.mode != "teamarr":
                     raise ValueError("Real playback requires Teamarr mode; demo fixtures cannot control a TV")
                 from .executor.integration import ExecutorContentStatusAdapter, IntegratedPlaybackAdapter
-                from .executor.runtime import PlaybackExecutor
+                if settings.executor.mode == "prime-player":
+                    from .prime_player.workflow import PrimePlaybackWorkflow
 
-                self.executor = PlaybackExecutor(self.db, settings)
+                    self.executor = PrimePlaybackWorkflow(self.db, settings)
+                else:
+                    from .executor.runtime import PlaybackExecutor
+
+                    self.executor = PlaybackExecutor(self.db, settings)
                 playback = playback or IntegratedPlaybackAdapter(self.executor)
                 status = status or ExecutorContentStatusAdapter(self.executor)
             self.playback = playback or SimulatedPlaybackAdapter(self.db, settings.observation_ttl)
@@ -82,12 +87,12 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             previous_adapter = self.db.meta(db, "playback_adapter", "simulator")
             if previous_adapter != self.settings.executor.mode:
                 if (
-                    self.settings.executor.mode == "simulator"
+                    previous_adapter != "simulator"
                     and db.execute(
                         "SELECT 1 FROM executor_jobs WHERE cancel_requested!=2 AND retired_at IS NULL LIMIT 1"
                     ).fetchone()
                 ):
-                    raise ValueError("Cancel real playback before switching to the simulator")
+                    raise ValueError("Cancel real playback before switching playback adapters")
                 device = self.db.device(db)
                 device.update(
                     desired=None,

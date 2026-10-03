@@ -2,6 +2,13 @@
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 
+**In development: Prime Player service integration.** The new `prime-player`
+workflow replaces screenshot navigation with service search, title/label matching
+(deterministic first, optional text LLM), live launch and attempt-scoped current
+status. Scheduling and durable intent stay in this controller. Activation awaits
+the separately developed cancel/stop service contract; no device mutations are
+enabled through this mode yet. See [architecture, setup and acceptance](docs/prime-player.md).
+
 **Version 0.9 adds an integrated Prime Video executor: Play, status by token, and Cancel, with durable jobs, LLM-powered navigation, playback/completion evidence, and the same input gate as manual control.** The default remains simulated; real playback is opt-in with `PLAYBACK_ADAPTER=prime-video`. Start with [executor setup](docs/executor-setup.md) and the [implemented API guide](docs/executor-api-handoff.md). Automated tests use controlled ADB/model boundaries; actual Fire TV, account, inference-service, Docker/nginx and mobile compatibility require target-host validation.
 
 **Version 0.9.1 integrates the exploration's native accessibility collector:** separate focus channels, action timing, Prime window-burst handling, screenshot association and stale-input checks. Native metadata accompanies actor screenshots; the visual observer remains separate. Full search-to-play behavior on the target TV is still unvalidated. See the [evidence audit and implementation status](docs/accessibility-critical-path.md).

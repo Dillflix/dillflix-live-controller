@@ -28,16 +28,28 @@ class ExecutorConfig:
     media_probe: bool = True
     visual_monitor_interval: float = 30
     runtime_max_age: float = 15
+    prime_socket: str = ""
+    prime_match_model: str = ""
+    prime_search_timeout: float = 100
+    prime_status_timeout: float = 10
     # Explicit self-hosted sampler extensions are opt-in, never assumed by the client.
     model_options: dict = field(default_factory=lambda: {"temperature": 0, "top_p": 1})
 
     def validate(self):
-        if self.mode not in {"simulator", "prime-video"}:
-            raise ValueError("PLAYBACK_ADAPTER must be simulator or prime-video")
+        if self.mode not in {"simulator", "prime-video", "prime-player"}:
+            raise ValueError("PLAYBACK_ADAPTER must be simulator, prime-video or prime-player")
         if self.mode == "simulator":
             return
+        if self.api_token and len(self.api_token) < 32:
+            raise ValueError("EXECUTOR_API_TOKEN must contain at least 32 characters")
+        if self.mode == "prime-player":
+            if not self.prime_socket.startswith("/"):
+                raise ValueError("PRIME_PLAYER_SOCKET must be an absolute Unix socket path")
+            if not 60 <= self.prime_search_timeout <= 120 or not 5 <= self.prime_status_timeout <= 60:
+                raise ValueError("Prime Player search/status timeouts must be within service limits")
+        needs_model = self.mode == "prime-video" or bool(self.prime_match_model)
         url = urlsplit(self.base_url)
-        if (
+        if needs_model and (
             url.scheme not in {"http", "https"}
             or not url.netloc
             or url.username
@@ -48,10 +60,8 @@ class ExecutorConfig:
             raise ValueError(
                 "EXECUTOR_LLM_BASE_URL must be an HTTP(S) server URL without embedded credentials"
             )
-        if not self.actor_model or not self.observer_model:
+        if self.mode == "prime-video" and (not self.actor_model or not self.observer_model):
             raise ValueError("EXECUTOR_ACTOR_MODEL and EXECUTOR_OBSERVER_MODEL are required")
-        if self.api_token and len(self.api_token) < 32:
-            raise ValueError("EXECUTOR_API_TOKEN must contain at least 32 characters")
         if self.actor_protocol not in {"json", "tvtheseus"}:
             raise ValueError("EXECUTOR_ACTOR_PROTOCOL must be json or tvtheseus")
         if self.structured_output not in {"json_schema", "json_object"}:
@@ -108,6 +118,10 @@ class ExecutorConfig:
             media_probe=os.getenv("EXECUTOR_MEDIA_PROBE", "true").lower() not in {"0", "false", "no"},
             visual_monitor_interval=float(os.getenv("EXECUTOR_VISUAL_MONITOR_INTERVAL_SECONDS", "30")),
             runtime_max_age=float(os.getenv("EXECUTOR_RUNTIME_MAX_AGE_SECONDS", "15")),
+            prime_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
+            prime_match_model=os.getenv("PRIME_PLAYER_MATCH_MODEL", ""),
+            prime_search_timeout=float(os.getenv("PRIME_PLAYER_SEARCH_TIMEOUT_SECONDS", "100")),
+            prime_status_timeout=float(os.getenv("PRIME_PLAYER_STATUS_TIMEOUT_SECONDS", "10")),
             model_options=json.loads(os.getenv("EXECUTOR_LLM_OPTIONS_JSON") or '{"temperature":0,"top_p":1}'),
         )
         value.validate()

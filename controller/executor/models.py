@@ -285,6 +285,7 @@ class PlaybackReport(Strict):
     cancellation: Cancellation
     retained_until: datetime | None
     runtime: RuntimeStatus | None = None
+    prime_player: dict | None = None
 
 
 class CancelResult(Strict):

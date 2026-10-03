@@ -591,6 +591,13 @@ components:
           - $ref: '#/components/schemas/RuntimeStatus'
           - type: 'null'
           default: null
+        prime_player:
+          anyOf:
+          - type: object
+            additionalProperties: true
+          - type: 'null'
+          description: Prime Player service session, selection audit, attempt and current status; present only for the service workflow.
+          default: null
       required:
       - schema_version
       - token

@@ -2,6 +2,15 @@
 
 The controller integrates deterministic selection, persistent user intent and an opt-in Prime Video executor. The planner never interprets screenshots or chooses streaming apps; `controller/executor/` owns navigation and evidence. Public APIs remain Play, token status and Cancel. See [implementation](executor-api-handoff.md) and [deployment](executor-setup.md).
 
+The new Prime Player direction replaces the Prime application execution engine
+with the existing external runtime service. `controller/prime_player/` owns only
+event matching and durable orchestration. Prime Player owns search, resolution,
+launch verification and current-session observation. Common token/worker mechanics
+live in `executor/store.py` and `executor/worker.py`; the old screenshot/ADB path
+is an explicit legacy adapter, not a fallback. See [the complete boundary and
+current activation status](prime-player.md). Teamarr remains the sports catalog
+and lifecycle dependency. Prime playback ending is not sports-event completion.
+
 ## Responsibilities
 
 | Module | Responsibility |
