@@ -101,6 +101,17 @@ Settings shows content-status health independently of schedule and team-director
 
 ## Connect the Teamarr catalog
 
+**College Football:** update Teamarr and the controller, then enable **Settings →
+Leagues in your schedule → College Football** on existing installations. New
+installations include it by default. The feed and team-directory code is
+`college-football`. Events, priority rules (including regular season and playoffs),
+and preferred college teams use the same scheduling and Prime Player workflow as
+other leagues. Prime matching still requires a playable live result; a schedule
+entry alone does not establish availability. If Teamarr uses an explicit
+`controller.league_apps` mapping in `TEAMARR_BROADCAST_CONFIG`, add
+`"college-football": "prime_video"` alongside its other routes. Existing controller
+league selections are preserved on upgrade.
+
 Version 0.13.0 adds **continuous DAZN tennis coverage through Prime Video**.
 Teamarr imports the actual Canadian broadcast listings, including day/session
 titles and artwork; Tennis is available in Events and Priorities. Update

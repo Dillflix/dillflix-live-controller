@@ -50,7 +50,11 @@ export function TeamRanking({
         >
           {leagues.map((l) => (
             <option key={l} value={l}>
-              {l === "pga" ? "Golf" : l.toUpperCase()}
+              {l === "pga"
+                ? "Golf"
+                : l === "college-football"
+                  ? "College Football"
+                  : l.toUpperCase()}
             </option>
           ))}
         </select>
