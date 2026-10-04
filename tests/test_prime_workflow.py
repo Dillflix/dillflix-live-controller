@@ -364,7 +364,7 @@ async def test_manual_takeover_during_search_prevents_late_play(tmp_path):
         token = report["token"]
         workflow.player.search_release = asyncio.Event()
         task = asyncio.create_task(workflow.navigate(row(workflow, token)))
-        await workflow.player.search_entered.wait()
+        await asyncio.wait_for(workflow.player.search_entered.wait(), 2)
         workflow.store.request_cancel(CancelRequest(device_id="living-room", token=token))
         task.cancel()
         await asyncio.sleep(0)
@@ -427,13 +427,13 @@ async def test_transport_matches_service_wire_and_never_retries_mutations():
     client = PrimePlayerClient("/test/player.sock", transport=httpx.MockTransport(handler))
     try:
         with pytest.raises(ExecutorError) as exc:
-            await client.play("fresh-handle", "a" * 32, {"epoch": 2})
+            await client.play(GTI, "a" * 32, {"epoch": 2})
         assert exc.value.code == "prime_operation_unknown"
         assert calls == [
             {
                 "method": "play",
                 "params": {
-                    "handle": "fresh-handle",
+                    "content_id": GTI,
                     "mode": "live",
                     "attempt_id": "a" * 32,
                     "ownership": {"epoch": 2},

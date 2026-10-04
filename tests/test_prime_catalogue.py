@@ -95,7 +95,7 @@ async def test_late_catalogue_result_is_discarded(tmp_path, monkeypatch, change)
         controller.stage_playback()
         _, probe = saved(controller)
         task = asyncio.create_task(workflow.observe_catalogue(probe))
-        await workflow.player.search_entered.wait()
+        await asyncio.wait_for(workflow.player.search_entered.wait(), 2)
         with controller.db.transaction() as db:
             device = controller.db.device(db)
             if change in {"revision", "intent_version"}:

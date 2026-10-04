@@ -2,7 +2,7 @@
 
 ## Status
 
-Controller 0.14.15 requires Prime Player **API 9 / 0.1.0a20** for tile access and feed-readiness handling. Search, matching, Play, current status, native completion, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
+Controller 0.14.16 requires Prime Player **API 11 / 0.1.0a23** for non-navigational catalogue search and explicit launch-refusal evidence. Search, matching, Play, current status, native completion, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
 
 Host tests cover durable workflow behavior, RPC delivery and the actual service ownership engine with a controlled runtime. Physical TV, live inference and deployment acceptance remain pending.
 
@@ -27,30 +27,40 @@ authority-renewal, or lifecycle-by-content API is added.
 
 ## Matching
 
-1. The planner commits to initiating/switching playback, then the workflow searches
-   using supplied opponent names (or the event title when there are no teams).
-2. Live, upcoming and unavailable tiles with a valid GTI, sufficiently correlated
-   identity, and a fresh handle can identify the event. Explicit replay/highlight/recap variants and recognized
-   conflicting dates are excluded. Collection IDs and ambiguous candidate IDs
-   are never promoted into playable identities.
-3. A unique exact event title or matchup using provider-supplied opponent aliases
-   can be selected deterministically. Duplicate copies of the same GTI are grouped.
-4. Otherwise the LLM receives the original event, permitted Prime routes, and
-   eligible titles/labels/date text. Ordinary labels like “Packers vs. Ravens” are
-   sufficient inputs; richer Prime team/league metadata is not a prerequisite.
-5. The model returns a supplied GTI and route plus a reason and exact supporting
-   labels, or abstains. It cannot choose excluded results or invent identifiers.
-   A sole eligible result is not automatically treated as the requested event.
-6. An unlocked match with a resolved Watch action proceeds to playback. Other
-   matches follow the readiness policy below. The service receives the selected
-   **handle**, live mode, and a persisted UUID
-   attempt ID. Its fresh resolver retains responsibility for entitlement and
-   Watch Now semantics. Model output is selection evidence, not playback proof.
+1. When a planned event becomes eligible (including scheduled start), the controller
+   searches through the authenticated Find data path **before changing playback
+   intent**. It does not navigate, cancel the current attempt or stop playback.
+2. The matcher reads `containers[].items`: content ID/type, full title, synopsis,
+   entitlement, native event state and exact feed start/end timestamps. Only EVENT
+   entries with a GTI and title qualify. Replay/highlight/recap variants and explicit
+   conflicting local dates are excluded; feed start need not equal kickoff.
+3. A unique exact event title or matchup using source opponent aliases can be
+   selected deterministically. Duplicate GTIs are grouped; conflicting entitlement
+   or event states become unknown. Otherwise the bounded text model selects only
+   a supplied GTI and permitted route, with exact supporting title evidence.
+4. Entitled LIVE matches are launch candidates. Entitled UPCOMING matches wait;
+   UNENTITLED alternatives are skipped. Missing/conflicting state or entitlement
+   remains unknown. ENDED feeds cannot authorize a new live launch.
+5. After a ready result, the coordinator reevaluates the latest plan and ownership.
+   Only then does it advance intent and create a playback request. The recent
+   result is tied to device revision, prior intent, event snapshot, viewing options,
+   service session and expiry. A changed plan or stale response cannot launch.
+6. Play receives the **content ID**, live mode and a persisted attempt UUID. The
+   player performs fresh metadata resolution and invokes its live Watch Now result.
+   Catalogue eligibility is not proof that launch succeeded; tile actions and
+   renderer handles are not used by this controller.
 
-Selection records, candidate exclusions, service session/search generation,
-chosen IDs, launch outcome and current status are exposed in the token report's
-optional `prime_player` object. No screenshots are captured. Search coverage stays
-`loaded_renderer`/incomplete; no match does not establish catalog absence.
+The complete latest catalogue response, timings, matching audit and model calls
+are retained in `catalogue_probe` in the diagnostic export. The launch record
+retains the consumed catalogue and probe ID alongside attempt/status evidence.
+Persistent RPC diagnostics retain subsequent responses. Native state strings and
+backend cache behavior will be observed in production; no transition capture is
+required to enable this path. Research hooks remain outside production payloads.
+
+Coverage is `find_initial_response`. Pagination and normalized provider/language
+identifiers are deferred. A no-match decision does not establish catalogue-wide
+absence. Full artwork, provider logos, overlays, messaging and native metadata
+remain available from the player; the controller uses the fields needed to match.
 
 Without `PRIME_PLAYER_MATCH_MODEL`, unambiguous deterministic matches still work;
 other cases abstain. Identical titles with different IDs can remain genuinely
@@ -61,8 +71,9 @@ ambiguous. No arbitrary first-row tie-break is used.
 The mapping is Teamarr content ID → controller token → Prime service session →
 Prime attempt → requested/resolved GTI. Persist the attempt ID before dispatch.
 Lost Play responses and controller restarts use read-only inspection of that same
-attempt; they never resend Play or repeat a stale search handle. Interrupted
-searches are cancelled rather than automatically repeated during recovery.
+attempt; they never resend an uncertain Play. Unfinished catalogue probes are
+discarded on restart and the current plan is reevaluated. API 9 tile-access
+observations are cleared once during the API 11 controller upgrade.
 
 The launch outcome must establish `live_watch_now` and verified playback. Current
 status must independently match the saved service/attempt/IDs and report fresh
@@ -86,8 +97,8 @@ does not renew itself when no successful check arrives.
 Existing `.env` files can retain the old explicit value. Change
 `PRIME_PLAYER_STATUS_TIMEOUT_SECONDS=10` to `60`, then rebuild/recreate the
 controller. Changing only the request timeout leaves the old 15-second evidence
-expiry problem in earlier controller versions. For tile access, upgrade the
-Prime Player service to API 9 before upgrading the controller.
+expiry problem in earlier controller versions. For catalogue search, upgrade the
+Prime Player service to API 11 before upgrading the controller.
 
 Paused, buffering and temporarily unknown results immediately remove the playing
 claim, but automatic recovery waits through the remaining five-minute window from
@@ -125,7 +136,13 @@ Every Search and Play includes a current acknowledged **automatic ownership enve
 
 Cancellation first persists the controller's intent fence, then interrupts in-flight remote work through the service's out-of-band cancellation lane. It does not wait for a long search HTTP response before asking the runtime to cancel. Only an acknowledged input barrier permits the next controller or manual input operation.
 
-For an owned launch, the controller calls `stop(session_id, attempt_id, ownership)` after cancellation. It records dispatch **before** sending, so a lost response or restart cannot replay a physical stop. Uncertain delivery is followed by a fresh cancellation barrier and recorded as unknown. Service restart, manual ownership and superseded attempts never authorize stopping unrelated playback.
+When a verified attempt is being replaced, cancellation fences its work but does
+not stop playback in advance; the new launch replaces it. A confirmed refusal
+with `evidence.launch.disposition=not_invoked` waits for a fresh catalogue check
+and is not treated as missing subscription. Uncertain delivery remains tied to
+the saved attempt and is never relabelled as a pre-navigation refusal.
+
+For an explicit cancellation of an owned launch, the controller calls `stop(session_id, attempt_id, ownership)` after cancellation. It records dispatch **before** sending, so a lost response or restart cannot replay a physical stop. Uncertain delivery is followed by a fresh cancellation barrier and recorded as unknown. Service restart, manual ownership and superseded attempts never authorize stopping unrelated playback.
 
 | Cancel `active_playback` | Meaning |
 | --- | --- |
@@ -155,9 +172,10 @@ NAVIGATION_TIMEOUT_SECONDS=300
 ```
 
 The model settings reuse the existing structured-completion transport. No actor
-or observer model is required. Search defaults to 100 seconds; current-status
-inspection defaults to 10 seconds (configurable 5–60). The whole workflow has one
-durable deadline, including matching and service launch verification.
+or observer model is required. Catalogue search defaults to 45 seconds
+(configurable 5–120); current status defaults to 60 seconds (5–60). Catalogue
+checks have a bounded search/matching budget; an authorized launch gets its own
+durable deadline. Existing explicit search budgets up to 120 remain supported.
 
 For Docker, the service exposes a **mode-0600 Unix socket**, not a TCP port. Use
 the optional overlay and set `PRIME_PLAYER_STATE_DIR` to its parent directory:
@@ -204,40 +222,24 @@ Host tests exercise controlled boundaries. Actual live search/launch, matching
 accuracy, cancellation, Docker permissions and sustained device monitoring still
 require this acceptance run.
 
-## Scheduled feed readiness and tile access
+## Scheduled feed readiness
 
-Requires Prime Player API 9 (`0.1.0a20` or newer). At scheduled start, the
-controller searches even if that interrupts current playback. It matches live,
-upcoming and unavailable event tiles by identity/date before considering access.
-Replay, highlights, start-over and ambiguous identities remain excluded.
+The controller checks the eligible event on demand and refreshes identified
+UPCOMING or uncertain matches after 60 seconds. Current playback continues while
+these checks run; neither playback intent nor the existing executor token changes.
+Only one check runs at a time, serialized with native status collection. Waiting
+is not a playback failure and preserves the watch plan. Pause, manual takeover,
+configuration/intent changes and revised event routes invalidate pending evidence.
 
-The player's `is_locked` field describes the visible tile decoration. A locked
-feed is skipped in favor of a matching unlocked alternative. An unlocked tile
-with a resolved `action=watch` proceeds through the existing live-only launch and
-verification. Unlocked non-watch results finish the search as `waiting_for_feed`.
-Unknown lock/action evidence finishes as `access_unknown`, without claiming a
-subscription is missing. If search enrichment did not resolve the selected
-unlocked tile, the controller uses the existing metadata-only `resolve` API.
+`feeds_locked` is retained as a durable/API outcome name for compatibility; it now
+means matching catalogue entries were explicitly UNENTITLED, not that artwork
+showed a lock. The planner considers another permitted event while retaining the
+original plan entry. **Play now** clears the exclusion; changed viewing options
+also permit a new check. No provider-wide subscription assumption is stored.
 
-Waiting results save a retry time 60 seconds after search completion. Each fresh
-search gets its own bounded navigation deadline; waiting does not count toward
-playback-failure backoff. The selected event is retained between searches, with
-no filler playback. The retry time survives restart; pause, manual takeover,
-changed plans, and event eligibility are checked before another attempt. A Play
-with an uncertain outcome still follows the original attempt-verification path
-and is never converted into a search retry.
-
-When only locked matching feeds are found, the controller records `feeds_locked`,
-retains the watch-plan entry, and considers the next eligible event. The record
-is scoped to the event's permitted viewing options, not a global provider
-subscription. **Play now** clears it for an explicit retry; changed viewing
-options also allow a new search. This avoids repeatedly interrupting fallback
-playback. Activity and the device's `prime_access` read model retain the reason.
-
-No preview/drawer inspection or `inspect_access` navigation is used. Full artwork
-and resolver entitlement metadata remain available in player results. Device
-acceptance of this controller policy remains pending; its searches interrupt
-current viewing and a ready match launches playback.
+A catalogue ENDED state prevents a new launch for that feed. It does not mark the
+sporting event completed or stop an already playing event. Existing native
+completion and Teamarr lifecycle handling retain that responsibility.
 
 ### No matching feed versus a feed that has not started
 
@@ -247,8 +249,8 @@ matching feed, `no_matching_feed` suppresses automatic retries for the unchanged
 viewing options. The watch-plan entry remains. **Play now** clears the result,
 and changed viewing options allow another search. Incomplete search coverage
 remains recorded; this is a scheduling decision, not a claim of catalog-wide
-absence or missing subscription. Only an identified tile enters the readiness
-retry path.
+absence or missing subscription. Identified upcoming/unknown matches and ambiguous matching alternatives enter
+the refresh path.
 
 An automatic candidate recovering from a transient failure cannot cancel the
 fallback attempt that was started during its backoff merely because the retry

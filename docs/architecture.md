@@ -196,8 +196,8 @@ native stopping may remain unknown.
 
 In Prime Player mode, a fresh `scheduled` event with a permitted Prime route becomes
 a search candidate once its start time arrives. Its Teamarr lifecycle stays scheduled.
-Search matching still requires a playable live tile with a content ID; Prime Player
-must resolve the live action and verify startup. Future, unknown, delayed, postponed,
+Catalogue matching requires an entitled LIVE event with a content ID before a
+launch; Prime Player must resolve the live action and verify startup. Future, unknown, delayed, postponed,
 suspended and terminal statuses do not qualify via this rule. Expected end times
 never prove completion. Failed matches use the existing retry backoff.
 
@@ -214,13 +214,30 @@ regardless of whether the event is selected/tracked. Selecting an event must not
 change the precedence of an expired feed copy. This fallback preserves catalog
 receipt age and retained terminal observations; it does not renew stale evidence.
 
-## Prime search outcomes
+## Prime catalogue checks and launch outcomes
 
-A completed search can return `waiting_for_feed`, `access_unknown`, or
-`feeds_locked` or `no_matching_feed` without a playback error. These are terminal outcomes of that
-bounded executor request. The coordinator stores event-scoped `prime_access`
-evidence in the existing device payload, fences the completed request, and
-schedules fresh searches for waiting/unknown outcomes after 60 seconds. Locked or unmatched-feed
-evidence excludes those unchanged viewing options until explicit retry or a
-route change. It never marks an event ended or removes a manual commitment.
-Ordinary playback failures retain their existing recovery/backoff semantics.
+API 11 catalogue search runs before the coordinator changes playback intent. The
+latest probe is stored under a device-scoped metadata key, independent of executor
+tokens, and carries the full result, matching audit and timing evidence. Search is
+non-navigational and shares the RPC lane with native monitoring. A ready result
+is consumed only after the current plan, configuration, snapshot, routes and
+service session are rechecked; its brief expiry prevents indefinitely reusing it.
+
+ENTITLED/LIVE permits a live launch attempt. ENTITLED/UPCOMING waits and retries
+in 60 seconds. Missing/conflicting entitlement or native state is unknown and
+refreshes. UNENTITLED matches (`feeds_locked`, retained outcome spelling) and no
+matching feed exclude unchanged routes until explicit retry or route change.
+Catalogue ENDED prevents new live launches; it never proves sporting completion.
+Pagination remains deferred and no-match is not a catalogue-wide absence claim.
+
+Only a ready selection advances intent. Replacement cancellation fences old work
+without stopping its verified playback first. Play uses a content ID and fresh
+player resolution. Explicit `not_invoked` refusal becomes waiting, retaining the
+full reason in diagnostics; uncertain delivery remains an attempt-inspection and
+failure/recovery condition. External executor requests use the same catalogue
+policy inside their already-authorized workflow. No UI action/handle is required.
+
+Waiting and unknown catalogue checks preserve current playback and its observation.
+The latest complete response is included in diagnostic exports; bounded persistent
+RPC records allow comparing native state and timings across retries. Research
+instrumentation is not included in this production path.
