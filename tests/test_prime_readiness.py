@@ -290,3 +290,25 @@ def test_waiting_target_is_not_displaced_by_old_playback_recovery(rig):
         decision = choose(device, items, service.now(db), datetime.now(UTC))
     assert decision["content_id"] == job["content_id"]
     assert decision["prime_readiness"] == "waiting_for_feed"
+
+
+def test_locked_current_event_cannot_regain_selection_through_recovery_grace(rig):
+    from controller.planner import choose
+
+    _, service, _ = rig
+    job, _ = complete_search(rig, "feeds_locked")
+    with service.db.transaction() as db:
+        device = service.db.device(db)
+        items = service.items(db)
+        target = next(i for i in items if i["content_id"] == job["content_id"])
+        device["observed"] = {
+            "content_id": job["content_id"],
+            "verified": False,
+            "viewing_option_id": target["viewing_options"][0]["id"],
+        }
+        device["recovery"] = {
+            "content_id": job["content_id"],
+            "retry_after": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+        }
+        decision = choose(device, items, service.now(db), datetime.now(UTC))
+    assert decision["content_id"] != job["content_id"]

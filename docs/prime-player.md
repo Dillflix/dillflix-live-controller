@@ -2,7 +2,7 @@
 
 ## Status
 
-Controller 0.14.0 integrates Prime Player **API 4 / 0.1.0a5**, reviewed at commit `55e296ac1179478733c5efa89389a0743e1b728b`. Search, matching, Play, current status, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
+Controller 0.14.13 requires Prime Player **API 9 / 0.1.0a20** for tile access and feed-readiness handling. Search, matching, Play, current status, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
 
 Host tests cover durable workflow behavior, RPC delivery and the actual service ownership engine with a controlled runtime. Physical TV, live inference and deployment acceptance remain pending.
 
@@ -29,8 +29,8 @@ authority-renewal, or lifecycle-by-content API is added.
 
 1. The planner commits to initiating/switching playback, then the workflow searches
    using supplied opponent names (or the event title when there are no teams).
-2. Only live tiles with a valid GTI, sufficiently correlated identity, and a fresh
-   handle are eligible. Explicit replay/highlight/recap variants and recognized
+2. Live, upcoming and unavailable tiles with a valid GTI, sufficiently correlated
+   identity, and a fresh handle can identify the event. Explicit replay/highlight/recap variants and recognized
    conflicting dates are excluded. Collection IDs and ambiguous candidate IDs
    are never promoted into playable identities.
 3. A unique exact event title or matchup using provider-supplied opponent aliases
@@ -41,7 +41,9 @@ authority-renewal, or lifecycle-by-content API is added.
 5. The model returns a supplied GTI and route plus a reason and exact supporting
    labels, or abstains. It cannot choose excluded results or invent identifiers.
    A sole eligible result is not automatically treated as the requested event.
-6. The service receives the selected **handle**, live mode, and a persisted UUID
+6. An unlocked match with a resolved Watch action proceeds to playback. Other
+   matches follow the readiness policy below. The service receives the selected
+   **handle**, live mode, and a persisted UUID
    attempt ID. Its fresh resolver retains responsibility for entitlement and
    Watch Now semantics. Model output is selection evidence, not playback proof.
 
@@ -84,8 +86,8 @@ does not renew itself when no successful check arrives.
 Existing `.env` files can retain the old explicit value. Change
 `PRIME_PLAYER_STATUS_TIMEOUT_SECONDS=10` to `60`, then rebuild/recreate the
 controller. Changing only the request timeout leaves the old 15-second evidence
-expiry problem in earlier controller versions. Updating the controller does not
-require restarting Prime Player.
+expiry problem in earlier controller versions. For tile access, upgrade the
+Prime Player service to API 9 before upgrading the controller.
 
 Paused, buffering and temporarily unknown results immediately remove the playing
 claim, but automatic recovery waits through the remaining five-minute window from

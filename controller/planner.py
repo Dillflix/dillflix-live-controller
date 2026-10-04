@@ -183,12 +183,21 @@ def choose(device, items, now, real_now):
     recovery = device.get("recovery") or {}
     grace = recovery.get("retry_after")
     holding = bool(grace and recovery.get("content_id") == current_id and real_now < parse_time(grace))
-    route_present = current and observed.get("viewing_option_id") in {
-        o["id"] for o in current["viewing_options"]
-    }
-    leaving_current = (device.get("playback_state") == "navigating" or waiting_for_search) and device.get(
-        "desired"
-    ) != current_id
+    current_access = access.get(current_id, {})
+    current_locked = (
+        current
+        and current_access.get("state") == "feeds_locked"
+        and current_access.get("options") == current["viewing_options"]
+    )
+    route_present = (
+        current
+        and not current_locked
+        and observed.get("viewing_option_id") in {o["id"] for o in current["viewing_options"]}
+    )
+    leaving_current = (
+        device.get("playback_state") == "navigating"
+        or waiting.get("state") in {"waiting_for_feed", "access_unknown", "feeds_locked"}
+    ) and device.get("desired") != current_id
     if (
         route_present
         and not leaving_current
