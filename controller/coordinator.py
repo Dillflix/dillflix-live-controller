@@ -62,6 +62,10 @@ class PlaybackCoordinator(PlaybackRecovery):
                 "SELECT * FROM jobs WHERE device_id=? AND intent=? AND state='pending'",
                 (d["id"], d["intent_version"]),
             ).fetchone()
+            if decision.get("retry_after") and decision.get("prime_readiness") and self.executor:
+                # Catalogue waiting is an observation, not a new playback intent.
+                self.db.save_device(db, d)
+                return True
             if decision.get("retry_after"):
                 # Preserve the requested event while its launch is backed off.
                 # Fence fallback work issued by an older controller version,
@@ -135,6 +139,12 @@ class PlaybackCoordinator(PlaybackRecovery):
             # Retaining unknown current playback is not permission to reopen it.
             if target and not indexed[target]["playable"]:
                 needs_request = False
+            if needs_request and target and self.executor:
+                if not self.executor.prepare_selection(db, d, indexed[target]):
+                    d["reason"] = "Checking Prime catalogue before switching playback"
+                    d["next_candidate"] = decision
+                    self.db.save_device(db, d)
+                    return True
             if needs_request:
                 d["intent_version"] += 1
                 d["desired"] = target
@@ -339,7 +349,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 reason = {
                     "waiting_for_feed": "Waiting for the live feed; search will retry in 60 seconds",
                     "access_unknown": "Prime access or readiness is unknown; search will retry in 60 seconds",
-                    "feeds_locked": "Matching feeds are locked; watch-plan entry retained",
+                    "feeds_locked": "Matching feeds are not entitled; watch-plan entry retained",
                     "no_matching_feed": "No matching Prime feed found; automatic retry suppressed; watch-plan entry retained",
                 }[readiness]
                 d.setdefault("prime_access", {})[job["content_id"]] = {

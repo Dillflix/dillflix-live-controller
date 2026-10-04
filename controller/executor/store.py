@@ -95,6 +95,8 @@ class ExecutorStore:
             ).fetchall():
                 report = json.loads(old["report"])
                 report["cancellation"] = {"state": "requested", "input_quiescent": False}
+                if self.settings.executor.mode == "prime-player" and old["state"] == "playing_verified":
+                    report.setdefault("prime_player", {})["replacement_request_id"] = body["request_id"]
                 if old["state"] not in {"playing_verified", "completed"}:
                     report["operation"].update(state="superseded", phase="superseded", finished_at=utc())
                 self.write(db, old["token"], report, cancel_requested=1, next_check=0)

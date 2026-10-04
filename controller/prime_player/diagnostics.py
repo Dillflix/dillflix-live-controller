@@ -117,6 +117,14 @@ def collect(path, device_id="living-room"):
                 "activity": activity,
                 "controller_jobs": controller_jobs,
                 "catalog_status": catalog,
+                "catalogue_probe": json.loads(
+                    (
+                        db.execute(
+                            "SELECT value FROM metadata WHERE key=?", ("prime_catalogue_probe:" + device_id,)
+                        ).fetchone()
+                        or ["null"]
+                    )[0]
+                ),
                 "playbacks": jobs,
                 "executor_actions": actions,
                 "catalog_health": {

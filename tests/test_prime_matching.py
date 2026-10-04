@@ -13,23 +13,30 @@ GTI = "amzn1.dv.gti.live-event"
 
 def tile(title="Jets vs. Lions", cid=GTI, **changes):
     return {
-        "handle": "handle:" + cid,
         "title": title,
         "content_id": cid,
-        "identity_status": "structure_slot_artwork_correlated",
-        "availability": "live",
-        "is_locked": False,
-        "action": "watch",
-        "resolution_status": "resolved",
-        "labels": [title, "LIVE"],
-        "date_label": None,
-        "collection": "Top Sports",
+        "content_type": "EVENT",
+        "entitlement_status": "ENTITLED",
+        "event_state": "LIVE",
+        "entitlement_messaging": {},
+        "starts_at": None,
+        "ends_at": None,
+        "synopsis": None,
+        "artwork": {},
+        "action": {"target": "detail"},
+        "actions": [],
+        "metadata": {},
         **changes,
     }
 
 
-def results(*tiles):
-    return {"tiles": list(tiles), "complete": False, "coverage": "loaded_renderer", "warnings": []}
+def results(*items):
+    return {
+        "containers": [{"items": list(items), "has_more": True}],
+        "complete": False,
+        "coverage": "find_initial_response",
+        "warnings": [],
+    }
 
 
 class Model:
@@ -55,15 +62,15 @@ async def test_deterministic_match_needs_only_normal_matchup_label(title):
 @pytest.mark.parametrize(
     "changes",
     [
-        {"availability": "replay"},
-        {"availability": None},
+        {"content_type": "MOVIE"},
+        {"content_type": None},
         {"content_id": "amzn1.dv.icid.collection"},
         {"content_id": None},
-        {"identity_status": "ambiguous"},
-        {"handle": None},
-        {"labels": ["Jets vs Lions", "Rapid Recap"]},
+        {"title": None},
+        {"title": ""},
+        {"title": "Jets vs Lions Rapid Recap"},
         {"title": "Jets vs Lions Highlights"},
-        {"date_label": "2000-01-01"},
+        {"starts_at": "2000-01-01T00:00:00Z"},
     ],
 )
 async def test_hard_exclusions_cannot_reach_model(changes):
@@ -84,7 +91,7 @@ async def test_single_live_wrong_opponent_is_not_automatically_chosen():
 
 async def test_duplicate_content_does_not_create_false_ambiguity():
     choice, audit = await EventMatcher(ExecutorConfig()).choose(
-        payload(), results(tile(), tile(handle="another-row")), "America/Vancouver"
+        payload(), results(tile(), tile(metadata={"occurrence": "another-row"})), "America/Vancouver"
     )
     assert choice["content_id"] == GTI
     assert len(audit["candidates"]) == 1

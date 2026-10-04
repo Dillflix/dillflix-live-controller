@@ -52,7 +52,7 @@ class Player:
     async def health(self):
         return {
             "session_id": self.session,
-            "api_version": 9,
+            "api_version": 11,
             "serial": "fixture",
             "ownership": {
                 "session_id": self.session,
@@ -111,9 +111,9 @@ class Player:
         self.calls.append(("resolve", content_id))
         return {"session_id": self.session, "requested_id": content_id, "action": None, "status": "unknown"}
 
-    async def play(self, handle, attempt_id, ownership):
+    async def play(self, content_id, attempt_id, ownership):
         assert ownership["epoch"] == self.epoch and ownership["session_id"] == self.session
-        self.calls.append(("play", handle, attempt_id))
+        self.calls.append(("play", content_id, attempt_id))
         self.attempt_id = attempt_id
         if self.lost_response:
             raise ExecutorError("prime_transport_unknown", "Response lost after execution")

@@ -1,7 +1,7 @@
 """Durable event-to-Prime orchestration; no ADB, vision, or app execution engine.
 
-Search/selection/launch run once after a scheduling decision. Monitoring is read
-only and always scoped to the saved service session and playback attempt.
+Catalogue checks precede playback intent changes. Launches use fresh resolution;
+monitoring stays scoped to the saved service session and playback attempt.
 """
 
 import asyncio
@@ -17,12 +17,13 @@ from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
 from ..model_diagnostics import capture_model_calls
 from ..planner import parse_time
+from .catalogue import CatalogueChecks
 from .client import PrimePlayerClient, correlated
 from .labels import search_queries
-from .matching import EventMatcher, tile_state
+from .matching import EventMatcher, selection_state
 
 
-class PrimePlaybackWorkflow(PlaybackWorker):
+class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
     def __init__(self, database, settings, *, player=None, matcher=None):
         super().__init__(database, settings)
         self.player = player or PrimePlayerClient(self.config.prime_socket)
@@ -30,11 +31,22 @@ class PrimePlaybackWorkflow(PlaybackWorker):
 
     async def close_resources(self):
         # Closing the client never restarts, detaches, or terminates Prime Player.
+        task = getattr(self, "catalogue_task", None)
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         await self.matcher.close()
         await self.player.close()
 
     def recover(self):
         with self.db.transaction() as db:
+            db.execute("DELETE FROM metadata WHERE key LIKE 'prime_catalogue_probe:%'")
+            if self.db.meta(db, "prime_catalogue_contract") != 11:
+                for row in db.execute("SELECT id FROM devices").fetchall():
+                    device = self.db.device(db, row[0])
+                    device["prime_access"] = {}
+                    self.db.save_device(db, device)
+                self.db.set_meta(db, "prime_catalogue_contract", 11)
             for row in db.execute(
                 "SELECT * FROM executor_jobs WHERE request IS NOT NULL AND cancel_requested=0"
             ).fetchall():
@@ -163,9 +175,10 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         health = await self.check_session(
             capabilities=("search", "play", "playback_status", "cancel", "stop")
         )
-        if health.get("api_version", 0) < 9:
+        if health.get("api_version", 0) < 11:
             raise ExecutorError(
-                "prime_incompatible", "Prime Player API 9 or newer is required for tile access"
+                "prime_incompatible",
+                "Prime Player API 11 or newer is required for catalogue search and launch refusal evidence",
             )
         ownership = self.player.ownership(health, automatic=True)
         session = health["session_id"]
@@ -177,19 +190,24 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             token, session_id=session, query=query, source="prime_player", selection=None, ownership=ownership
         )
         self.store.phase(token, "searching")
-        results = await self.mutation(
-            token,
-            "PRIME_SEARCH",
-            lambda: self.player.search(query, self.config.prime_search_timeout, ownership),
-        )
-        if results.get("session_id") != session or results.get("query") != query:
-            raise ExecutorError("prime_stale_result", "Search result belongs to another session or query")
-        # Local monotonic age is independent of host clock skew and cannot extend
-        # the service's own expiring handle. The service remains the final check.
-        received = time.monotonic()
-        self.store.phase(token, "matching")
-        with capture_model_calls(lambda evidence: self.save_model_call(token, evidence)):
-            selected, audit = await self.matcher.choose(request, results, timezone)
+        prepared = self.prepared_catalogue(request, session)
+        if prepared:
+            results, selected, audit = prepared["results"], prepared["selected"], prepared["audit"]
+            received = time.monotonic() - (time.time() - prepared["received_at"])
+            self.save_workflow(token, catalogue_probe_id=prepared["id"], catalogue=results)
+        else:
+            results = await self.mutation(
+                token,
+                "PRIME_SEARCH",
+                lambda: self.player.search(query, self.config.prime_search_timeout, ownership),
+            )
+            if results.get("session_id") != session or results.get("query") != query:
+                raise ExecutorError("prime_stale_result", "Search result belongs to another session or query")
+            received = time.monotonic()
+            self.store.phase(token, "matching")
+            self.save_workflow(token, catalogue=results)
+            with capture_model_calls(lambda evidence: self.save_model_call(token, evidence)):
+                selected, audit = await self.matcher.choose(request, results, timezone)
         self.save_workflow(
             token,
             selection=audit,
@@ -198,30 +216,13 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             search_observed_at=results.get("observed_at"),
         )
         if not selected:
-            self.complete_search(token, "no_matching_feed")
+            self.complete_search(token, selection_state(selected, audit))
             return False
-        if selected["is_locked"] is False and selected["resolution_status"] != "resolved":
-            # Search enrichment has a shared budget. A late matching tile may
-            # not have been resolved; use the existing metadata-only operation.
-            health = await self.check_session(session, capabilities=("resolve",))
-            ownership = self.player.ownership(health, automatic=True)
-            self.save_workflow(token, ownership=ownership)
-            resolution = await self.mutation(
-                token, "PRIME_RESOLVE", lambda: self.player.resolve(selected["content_id"], ownership)
-            )
-            if (
-                resolution.get("session_id") != session
-                or resolution.get("requested_id") != selected["content_id"]
-            ):
-                raise ExecutorError("prime_stale_result", "Resolution belongs to another session or title")
-            selected.update(action=resolution.get("action"), resolution_status=resolution.get("status"))
-            selected["readiness"] = tile_state(selected)
-            self.save_workflow(token, selected_resolution=resolution)
         if selected["readiness"] != "ready":
             self.complete_search(token, selected["readiness"], selected)
             return False
         if time.monotonic() - received > 90:
-            raise ExecutorError("prime_stale_result", "Result selection outlived its usable handle")
+            raise ExecutorError("prime_stale_result", "Catalogue selection is stale; refresh before launch")
         health = await self.check_session(session, capabilities=("play",))
         ownership = self.player.ownership(health, automatic=True)
         attempt = uuid4().hex
@@ -231,7 +232,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         self.store.phase(token, "launching")
         try:
             outcome = await self.mutation(
-                token, "PRIME_PLAY", lambda: self.player.play(selected["handle"], attempt, ownership)
+                token, "PRIME_PLAY", lambda: self.player.play(selected["content_id"], attempt, ownership)
             )
             self.validate_outcome(outcome, self.store.report(token)["prime_player"])
             self.save_workflow(token, launch_outcome=outcome)
@@ -263,6 +264,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             raise ExecutorError(
                 "prime_attempt_mismatch", "Prime attempt identity does not match the selection"
             )
+        if outcome.get("evidence", {}).get("launch", {}).get("disposition") == "not_invoked":
+            return
         resolution = outcome.get("evidence", {}).get("resolution", {})
         if resolution and resolution.get("playbackClass") != "live_watch_now":
             raise ExecutorError(
@@ -281,6 +284,12 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 outcome = await self.player.attempt(workflow["attempt_id"])
             self.validate_outcome(outcome, workflow)
             self.save_workflow(token, launch_outcome=outcome)
+            if (
+                outcome["state"] == "failed"
+                and outcome.get("evidence", {}).get("launch", {}).get("disposition") == "not_invoked"
+            ):
+                self.complete_search(token, "waiting_for_feed", workflow.get("selected"))
+                return
             if outcome["state"] in {"failed", "unknown", "cancelled", "stopped"}:
                 reason = outcome.get("reason")
                 message = "Prime could not verify the requested playback"
@@ -542,7 +551,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         try:
             workflow = self.store.report(token)["prime_player"]
             await self.check_session(workflow["session_id"], capabilities=("playback_status",))
-            status = await self.player.status(workflow["attempt_id"], self.config.prime_status_timeout)
+            async with self.input_lock:
+                status = await self.player.status(workflow["attempt_id"], self.config.prime_status_timeout)
             self.record_status(token, status)
         except asyncio.CancelledError:
             raise
@@ -644,6 +654,15 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 receipt = await self.interrupt(token)
                 attempt = workflow.get("attempt_id")
                 if workflow.get("session_id") != receipt["session_id"] or receipt["mode"] != "automatic":
+                    active = "not_current"
+                elif workflow.get("replacement_request_id"):
+                    # The acknowledged barrier quiesces the old request. The new
+                    # launch will replace playback; do not stop it in advance.
+                    active = "unknown"
+                    self.save_cancellation(token, playback_preserved_for_replacement=True)
+                elif (workflow.get("launch_outcome") or {}).get("evidence", {}).get("launch", {}).get(
+                    "disposition"
+                ) == "not_invoked":
                     active = "not_current"
                 elif attempt:
                     active = "unknown"

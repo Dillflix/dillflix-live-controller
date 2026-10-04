@@ -16,6 +16,8 @@ async def check(settings):
     try:
         health = await client.health()
         client.require(health, "search", "play", "playback_status", "cancel", "stop", "manual_input")
+        if health.get("api_version", 0) < 11:
+            raise ValueError("Prime Player API 11 or newer is required")
         client.ownership(health)
         if health.get("serial") != settings.screen_adb_serial:
             raise ValueError("Prime Player serial differs from SCREEN_ADB_SERIAL")

@@ -16,18 +16,26 @@ from controller.prime_player.matching import EventMatcher
 from controller.service import Controller
 
 
-@pytest.mark.parametrize("availability", ["upcoming", "unavailable", "live"])
-async def test_unlocked_non_watch_event_is_identified_for_waiting(availability):
+@pytest.mark.parametrize(
+    "event_state,expected",
+    [
+        ("UPCOMING", "waiting_for_feed"),
+        ("LIVE", "ready"),
+        ("UNAVAILABLE", "access_unknown"),
+        ("ENDED", "no_matching_feed"),
+    ],
+)
+async def test_catalogue_state_does_not_depend_on_action(event_state, expected):
     selected, _ = await EventMatcher(ExecutorConfig()).choose(
-        payload(), results(tile(availability=availability, action="detail")), "America/Vancouver"
+        payload(), results(tile(event_state=event_state, action={"target": "detail"})), "America/Vancouver"
     )
-    assert selected["readiness"] == "waiting_for_feed"
+    assert selected["readiness"] == expected
 
 
 async def test_accessible_alternative_wins_regardless_of_tile_order():
     for tiles in [
-        (tile(is_locked=True), tile(cid=GTI + "-open")),
-        (tile(cid=GTI + "-open"), tile(is_locked=True)),
+        (tile(entitlement_status="UNENTITLED"), tile(cid=GTI + "-open")),
+        (tile(cid=GTI + "-open"), tile(entitlement_status="UNENTITLED")),
     ]:
         selected, _ = await EventMatcher(ExecutorConfig()).choose(
             payload(), results(*tiles), "America/Vancouver"
@@ -37,7 +45,13 @@ async def test_accessible_alternative_wins_regardless_of_tile_order():
 
 
 @pytest.mark.parametrize(
-    "changes", [{"is_locked": None}, {"resolution_status": "unknown"}, {"action": None}, {"is_locked": 0}]
+    "changes",
+    [
+        {"entitlement_status": None},
+        {"entitlement_status": "UNKNOWN"},
+        {"event_state": None},
+        {"event_state": "NEW_STATE"},
+    ],
 )
 async def test_missing_or_malformed_evidence_is_unknown(changes):
     selected, _ = await EventMatcher(ExecutorConfig()).choose(
@@ -48,7 +62,9 @@ async def test_missing_or_malformed_evidence_is_unknown(changes):
 
 async def test_conflicting_occurrences_do_not_silently_use_first_lock_state():
     selected, _ = await EventMatcher(ExecutorConfig()).choose(
-        payload(), results(tile(), tile(is_locked=True, handle="another")), "America/Vancouver"
+        payload(),
+        results(tile(), tile(entitlement_status="UNENTITLED", handle="another")),
+        "America/Vancouver",
     )
     assert selected["readiness"] == "access_unknown"
 
@@ -56,9 +72,9 @@ async def test_conflicting_occurrences_do_not_silently_use_first_lock_state():
 @pytest.mark.parametrize(
     "state,changes",
     [
-        ("waiting_for_feed", {"action": "detail", "availability": "upcoming"}),
-        ("feeds_locked", {"is_locked": True}),
-        ("access_unknown", {"resolution_status": "unknown", "action": None}),
+        ("waiting_for_feed", {"event_state": "UPCOMING"}),
+        ("feeds_locked", {"entitlement_status": "UNENTITLED"}),
+        ("access_unknown", {"entitlement_status": "UNKNOWN"}),
     ],
 )
 async def test_completed_search_never_plays_and_survives_restart(tmp_path, state, changes):
@@ -92,7 +108,7 @@ async def test_new_search_can_launch_after_feed_becomes_ready(tmp_path):
     original = workflow.player.search
 
     async def upcoming(*args):
-        return {**await original(*args), **results(tile(action="detail", availability="upcoming"))}
+        return {**await original(*args), **results(tile(event_state="UPCOMING"))}
 
     workflow.player.search = upcoming
     try:
@@ -218,36 +234,25 @@ def test_late_readiness_result_cannot_override_current_control(rig, control):
 async def test_unrelated_watchable_tile_does_not_hide_locked_target():
     selected, _ = await EventMatcher(ExecutorConfig()).choose(
         payload(),
-        results(tile("Jets vs Ravens", cid=GTI + "-wrong"), tile(is_locked=True)),
+        results(tile("Jets vs Ravens", cid=GTI + "-wrong"), tile(entitlement_status="UNENTITLED")),
         "America/Vancouver",
     )
     assert selected["readiness"] == "feeds_locked"
 
 
-@pytest.mark.parametrize("stale", [False, True])
-async def test_selected_unresolved_tile_uses_existing_metadata_resolver(tmp_path, stale):
+async def test_catalogue_launch_needs_no_tile_action_or_controller_resolution(tmp_path):
     controller, workflow = workflow_rig(tmp_path)
     original = workflow.player.search
 
-    async def unresolved(*args):
-        return {**await original(*args), **results(tile(action=None, resolution_status="not_requested"))}
+    async def search(*args):
+        return {**await original(*args), **results(tile(action=None))}
 
-    async def resolve(content_id, ownership):
-        workflow.player.calls.append(("resolve", content_id))
-        return {
-            "session_id": "old" if stale else workflow.player.session,
-            "requested_id": content_id,
-            "action": "watch",
-            "status": "resolved",
-        }
-
-    workflow.player.search, workflow.player.resolve = unresolved, resolve
+    workflow.player.search = search
     try:
         token = await launch(workflow)
-        report = workflow.store.report(token)
-        assert report["operation"]["state"] == ("failed" if stale else "playing_verified")
-        assert [c[0] for c in workflow.player.calls].count("resolve") == 1
-        assert [c[0] for c in workflow.player.calls].count("play") == (0 if stale else 1)
+        assert workflow.store.report(token)["operation"]["state"] == "playing_verified"
+        assert not any(c[0] == "resolve" for c in workflow.player.calls)
+        assert [c[1] for c in workflow.player.calls if c[0] == "play"] == [GTI]
     finally:
         await cleanup(controller)
 
