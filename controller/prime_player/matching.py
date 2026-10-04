@@ -5,6 +5,7 @@ The model selects from supplied IDs. It cannot create an ID or change eligibilit
 
 import json
 import re
+from typing import Literal
 
 from pydantic import Field, ValidationError
 
@@ -61,7 +62,11 @@ value from the selected candidate: title, titles.N, synopsis, starts_at, ends_at
 entitlement_messaging paths. Include title or synopsis evidence for event identity; additional
 route/time evidence may support it. Examples: {"field":"title","quote":"Jets vs. Lions"}
 or {"field":"entitlement_messaging.message","quote":"Included with your subscription"}.
-Return empty evidence with null IDs when abstaining. No playback or input instructions.
+Set match_status to matched for a supported selection, no_match only when all supplied
+candidates can be ruled out as the requested event/route, or uncertain when missing or
+ambiguous identity/route evidence prevents a decision. no_match is about identity, never
+subscription or readiness. For no_match/uncertain return null IDs and empty evidence.
+No playback or input instructions.
 """
 
 
@@ -71,6 +76,7 @@ class Evidence(Strict):
 
 
 class Choice(Strict):
+    match_status: Literal["matched", "no_match", "uncertain"]
     content_id: str | None = Field(max_length=256)
     viewing_option_id: str | None = Field(max_length=1024)
     reason: str = Field(min_length=1, max_length=2000)
@@ -170,7 +176,7 @@ def candidates(results, snapshot, timezone):
 def selection_state(selected, audit):
     if selected:
         return selected["readiness"]
-    if audit.get("method") in {"abstain", "llm"} and audit.get("candidates"):
+    if audit.get("match_status") == "uncertain":
         return "access_unknown"
     return "no_matching_feed"
 
@@ -230,10 +236,13 @@ class EventMatcher:
                 tile = next(t for t in pool if t["content_id"] == selected["content_id"])
                 # Ambiguous higher-ranked results cannot establish that *all*
                 # matching alternatives are locked.
-                if state == "feeds_locked" and any(a["method"] in {"abstain", "llm"} for a in history[:-1]):
+                if state == "feeds_locked" and any(
+                    a.get("match_status") == "uncertain" for a in history[:-1]
+                ):
                     return None, {
                         **audit,
                         "method": "abstain",
+                        "match_status": "uncertain",
                         "candidates": eligible,
                         "reason": "Access alternatives remain ambiguous",
                         "passes": history,
@@ -245,6 +254,9 @@ class EventMatcher:
                 }, {**audit, "readiness": state, "passes": history}
         return None, {
             "reason": "No matching Prime event",
+            "match_status": "uncertain"
+            if any(a.get("match_status") == "uncertain" for a in history)
+            else "no_match",
             "coverage": results.get("coverage"),
             "complete": results.get("complete"),
             "warnings": results.get("warnings", []),
@@ -268,7 +280,12 @@ class EventMatcher:
             "warnings": results.get("warnings", []),
         }
         if not eligible or not options:
-            return None, {**audit, "method": "filter", "reason": "No identifiable Prime event result"}
+            return None, {
+                **audit,
+                "method": "filter",
+                "match_status": "no_match",
+                "reason": "No identifiable Prime event result",
+            }
         exact = [t for t in eligible if exact_title(t, request["content_snapshot"])]
         # Explicit language is an additional constraint; let the model read the
         # labels instead of claiming a language from a bare matchup title.
@@ -279,6 +296,7 @@ class EventMatcher:
         ):
             exact.sort(key=lambda t: t["content_id"])
             choice = {
+                "match_status": "matched",
                 "content_id": exact[0]["content_id"],
                 "viewing_option_id": options[0]["id"],
                 "reason": "Exact event title/opponent aliases; equivalent feeds ordered by content ID",
@@ -289,6 +307,7 @@ class EventMatcher:
             return None, {
                 **audit,
                 "method": "abstain",
+                "match_status": "uncertain",
                 "reason": "Label matching needs PRIME_PLAYER_MATCH_MODEL",
             }
         goal = {
@@ -313,8 +332,14 @@ class EventMatcher:
         except ValidationError as exc:
             raise ExecutorError("prime_selection_invalid", "Matcher returned an invalid selection") from exc
         audit.update(method="llm", **choice)
-        if choice["content_id"] is None and choice["viewing_option_id"] is None and not choice["evidence"]:
-            return None, audit
+        if choice["match_status"] != "matched":
+            if (
+                choice["content_id"] is None
+                and choice["viewing_option_id"] is None
+                and not choice["evidence"]
+            ):
+                return None, audit
+            raise ExecutorError("prime_selection_invalid", "Matcher selected outside the supplied evidence")
         selected = next((t for t in eligible if t["content_id"] == choice["content_id"]), None)
         supplied = evidence_fields(selected) if selected else {}
         if (

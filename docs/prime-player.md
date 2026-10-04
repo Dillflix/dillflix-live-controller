@@ -68,7 +68,10 @@ Without `PRIME_PLAYER_MATCH_MODEL`, unambiguous deterministic matches still work
 other cases abstain. The shared prompt is versioned with the candidate contract: it
 explains feed windows, structured source identities and explicit route constraints.
 Both catalogue preflight and playback use it for the same identity task; readiness
-and launch decisions remain in code. The model may choose a stable content-ID tie
+and launch decisions remain in code. Each model request receives one readiness
+group, with entitled LIVE candidates considered first. Explicit no-match is
+distinct from uncertain identity: unrelated entitled results do not hide a known
+unentitled target, while uncertain alternatives prevent a false denial. The model may choose a stable content-ID tie
 between positively identified equivalent feeds; uncertain identities still abstain.
 A general catalogue-association API that needs all matching variants would require
 a multi-match output, rather than reusing this single-feed selection contract.

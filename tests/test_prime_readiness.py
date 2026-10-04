@@ -446,3 +446,25 @@ async def test_model_cannot_select_unentitled_id_outside_launch_candidate_pool()
             "America/Vancouver",
         )
     assert all(c["entitlement_status"] == "ENTITLED" for c in model.calls[0]["candidates"])
+
+
+async def test_ruled_out_entitled_results_allow_identifying_unentitled_target():
+    from test_prime_matching import Model
+
+    model = Model(
+        {
+            "match_status": "no_match",
+            "content_id": None,
+            "viewing_option_id": None,
+            "reason": "Ravens are a different opponent from Lions",
+            "evidence": [],
+        }
+    )
+    selected, _ = await EventMatcher(ExecutorConfig(), model=model).choose(
+        payload(),
+        results(tile("Jets vs Ravens", cid=GTI + "-other"), tile(entitlement_status="UNENTITLED")),
+        "America/Vancouver",
+    )
+    assert selected["readiness"] == "feeds_locked"
+    assert len(model.calls) == 1
+    assert all(c["entitlement_status"] == "ENTITLED" for c in model.calls[0]["candidates"])

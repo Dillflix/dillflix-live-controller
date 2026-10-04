@@ -45,7 +45,9 @@ class Model:
 
     async def completion(self, model, messages, schema, **kwargs):
         self.calls.append(json.loads(messages[1]["content"]))
-        return json.dumps(self.value)
+        return json.dumps(
+            {"match_status": "matched" if self.value.get("content_id") else "uncertain", **self.value}
+        )
 
     async def close(self):
         pass

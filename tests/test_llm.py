@@ -67,7 +67,7 @@ async def test_strict_wire_schema_omits_length_ceilings_but_local_model_retains_
         return httpx.Response(200, json={'choices': [{
             'finish_reason': 'stop', 'message': {'content': json.dumps({
                 'content_id': None, 'viewing_option_id': None,
-                'reason': 'No candidates', 'evidence': [],
+                'match_status': 'no_match', 'reason': 'No candidates', 'evidence': [],
             })},
         }]})
 
