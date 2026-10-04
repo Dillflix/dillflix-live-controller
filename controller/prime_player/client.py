@@ -182,6 +182,9 @@ class PrimePlayerClient:
     async def search(self, query, timeout, ownership):
         return await self.rpc("search", query=query, timeout=timeout, ownership=ownership, budget=timeout + 5)
 
+    async def resolve(self, content_id, ownership):
+        return await self.rpc("resolve", content_id=content_id, timeout=30, ownership=ownership, budget=35)
+
     async def play(self, handle, attempt_id, ownership):
         return await self.rpc("play", handle=handle, mode="live", attempt_id=attempt_id, ownership=ownership)
 

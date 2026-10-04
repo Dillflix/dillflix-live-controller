@@ -191,3 +191,38 @@ For gateway-only testing use `PLAYBACK_ADAPTER=simulator` with the same socket. 
 Host tests exercise controlled boundaries. Actual live search/launch, matching
 accuracy, cancellation, Docker permissions and sustained device monitoring still
 require this acceptance run.
+
+## Scheduled feed readiness and tile access
+
+Requires Prime Player API 9 (`0.1.0a20` or newer). At scheduled start, the
+controller searches even if that interrupts current playback. It matches live,
+upcoming and unavailable event tiles by identity/date before considering access.
+Replay, highlights, start-over and ambiguous identities remain excluded.
+
+The player's `is_locked` field describes the visible tile decoration. A locked
+feed is skipped in favor of a matching unlocked alternative. An unlocked tile
+with a resolved `action=watch` proceeds through the existing live-only launch and
+verification. Unlocked non-watch results finish the search as `waiting_for_feed`.
+Unknown lock/action evidence finishes as `access_unknown`, without claiming a
+subscription is missing. If search enrichment did not resolve the selected
+unlocked tile, the controller uses the existing metadata-only `resolve` API.
+
+Waiting results save a retry time 60 seconds after search completion. Each fresh
+search gets its own bounded navigation deadline; waiting does not count toward
+playback-failure backoff. The selected event is retained between searches, with
+no filler playback. The retry time survives restart; pause, manual takeover,
+changed plans, and event eligibility are checked before another attempt. A Play
+with an uncertain outcome still follows the original attempt-verification path
+and is never converted into a search retry.
+
+When only locked matching feeds are found, the controller records `feeds_locked`,
+retains the watch-plan entry, and considers the next eligible event. The record
+is scoped to the event's permitted viewing options, not a global provider
+subscription. **Play now** clears it for an explicit retry; changed viewing
+options also allow a new search. This avoids repeatedly interrupting fallback
+playback. Activity and the device's `prime_access` read model retain the reason.
+
+No preview/drawer inspection or `inspect_access` navigation is used. Full artwork
+and resolver entitlement metadata remain available in player results. Device
+acceptance of this controller policy remains pending; its searches interrupt
+current viewing and a ready match launches playback.

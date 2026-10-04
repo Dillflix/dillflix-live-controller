@@ -108,11 +108,18 @@ def team_priority(device, item):
 def choose(device, items, now, real_now):
     indexed = {e["content_id"]: e for e in items}
     current_id = (device.get("observed") or {}).get("content_id")
+    access = device.get("prime_access", {})
+    waiting = access.get(device.get("desired"), {})
+    waiting_for_search = waiting.get("state") in {"waiting_for_feed", "access_unknown"}
+    preferred_id = device.get("desired") if waiting_for_search else current_id
     committed = {p["content_id"] for p in device["plan"]}
     eligible = []
     candidates = []
     for item in items:
         if not item["active"] and item["content_id"] not in committed | {current_id}:
+            continue
+        evidence = access.get(item["content_id"], {})
+        if evidence.get("options") == item["viewing_options"] and evidence.get("state") == "feeds_locked":
             continue
         failure = device.get("failures", {}).get(item["content_id"], {})
         cooldown = failure.get("retry_after")
@@ -143,7 +150,7 @@ def choose(device, items, now, real_now):
             key=lambda e: (
                 priority(device, e),
                 team_priority(device, e),
-                e["content_id"] != current_id,
+                e["content_id"] != preferred_id,
                 e["start_time"],
                 e["content_id"],
             )
@@ -158,6 +165,19 @@ def choose(device, items, now, real_now):
             if rule
             else "Waiting for an eligible live event",
         }
+    selected_access = access.get(result["content_id"], {})
+    selected_item = indexed.get(result["content_id"])
+    if (
+        selected_item
+        and selected_access.get("options") == selected_item["viewing_options"]
+        and selected_access.get("state") in {"waiting_for_feed", "access_unknown"}
+        and real_now < parse_time(selected_access["retry_after"])
+    ):
+        result.update(
+            retry_after=selected_access["retry_after"],
+            prime_readiness=selected_access["state"],
+            reason=selected_access["reason"],
+        )
     current = indexed.get(current_id)
     observed = device.get("observed") or {}
     recovery = device.get("recovery") or {}
@@ -166,7 +186,9 @@ def choose(device, items, now, real_now):
     route_present = current and observed.get("viewing_option_id") in {
         o["id"] for o in current["viewing_options"]
     }
-    leaving_current = device.get("playback_state") == "navigating" and device.get("desired") != current_id
+    leaving_current = (device.get("playback_state") == "navigating" or waiting_for_search) and device.get(
+        "desired"
+    ) != current_id
     if (
         route_present
         and not leaving_current

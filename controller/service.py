@@ -404,6 +404,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             if op == "play_now":
                 device["automation"] = "active"
                 device["failures"].pop(content_id, None)
+                device.setdefault("prime_access", {}).pop(content_id, None)
                 device["retry_playback"] = content_id
         elif op == "remove":
             entry_id = action.get("entry_id")
@@ -613,6 +614,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 d.update(
                     {
                         "failures": {},
+                        "prime_access": {},
                         "manual_completions": {},
                         "observed": None,
                         "desired": None,

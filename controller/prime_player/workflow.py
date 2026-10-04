@@ -18,7 +18,7 @@ from ..model_diagnostics import capture_model_calls
 from ..planner import parse_time
 from .client import PrimePlayerClient, correlated
 from .labels import search_queries
-from .matching import EventMatcher
+from .matching import EventMatcher, tile_state
 
 
 class PrimePlaybackWorkflow(PlaybackWorker):
@@ -42,6 +42,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 if report["observation"]:
                     report["observation"]["verified"] = False
                 report["observation_status"]["state"] = "unavailable"
+                if report["operation"]["state"] in {"waiting_for_feed", "access_unknown", "feeds_locked"}:
+                    continue
                 if row["touched_device"] and not workflow.get("attempt_id"):
                     # An interrupted search has no playback attempt to reconcile.
                     # Quiesce it before any new search; do not repeat on startup.
@@ -137,7 +139,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             async with asyncio.timeout(budget):
                 workflow = self.store.report(token).get("prime_player") or {}
                 if not workflow.get("attempt_id"):
-                    await self.select_and_launch(token, request)
+                    if not await self.select_and_launch(token, request):
+                        return
                 # Even after a lost acknowledgement/restart, only inspect the
                 # original attempt. Never resend Play, switch to GTI, or re-search.
                 await self.verify_launch(token)
@@ -154,6 +157,10 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         health = await self.check_session(
             capabilities=("search", "play", "playback_status", "cancel", "stop")
         )
+        if health.get("api_version", 0) < 9:
+            raise ExecutorError(
+                "prime_incompatible", "Prime Player API 9 or newer is required for tile access"
+            )
         ownership = self.player.ownership(health, automatic=True)
         session = health["session_id"]
         with self.db.transaction() as db:
@@ -186,6 +193,34 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         )
         if not selected:
             raise ExecutorError("prime_no_match", audit["reason"], retryable=False)
+        if selected["is_locked"] is False and selected["resolution_status"] != "resolved":
+            # Search enrichment has a shared budget. A late matching tile may
+            # not have been resolved; use the existing metadata-only operation.
+            health = await self.check_session(session, capabilities=("resolve",))
+            ownership = self.player.ownership(health, automatic=True)
+            self.save_workflow(token, ownership=ownership)
+            resolution = await self.mutation(
+                token, "PRIME_RESOLVE", lambda: self.player.resolve(selected["content_id"], ownership)
+            )
+            if (
+                resolution.get("session_id") != session
+                or resolution.get("requested_id") != selected["content_id"]
+            ):
+                raise ExecutorError("prime_stale_result", "Resolution belongs to another session or title")
+            selected.update(action=resolution.get("action"), resolution_status=resolution.get("status"))
+            selected["readiness"] = tile_state(selected)
+            self.save_workflow(token, selected_resolution=resolution)
+        if selected["readiness"] != "ready":
+            state = selected["readiness"]
+            with self.db.transaction() as db:
+                row = self.store.allowed(db, token, navigation=True)
+                report = json.loads(row["report"])
+                report["prime_player"].update(selected=selected, readiness=state)
+                report["operation"].update(
+                    state=state, phase=state, finished_at=utc(), updated_at=utc(), error=None
+                )
+                self.store.write(db, token, report, state=state)
+            return False
         if time.monotonic() - received > 90:
             raise ExecutorError("prime_stale_result", "Result selection outlived its usable handle")
         health = await self.check_session(session, capabilities=("play",))
@@ -207,6 +242,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             if exc.code not in {"prime_transport_unknown", "prime_operation_unknown"}:
                 raise
             self.save_workflow(token, launch_error=exc.detail())
+        return True
 
     @staticmethod
     def validate_outcome(outcome, workflow):
@@ -241,9 +277,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 message = "Prime could not verify the requested playback"
                 if isinstance(reason, str) and reason.strip():
                     message += ": " + reason.strip()[:800]
-                raise ExecutorError(
-                    "prime_launch_unverified", message
-                )
+                raise ExecutorError("prime_launch_unverified", message)
             if outcome["state"] == "playing":
                 resolution = outcome.get("evidence", {}).get("resolution", {})
                 if resolution.get("playbackClass") != "live_watch_now" or not outcome.get("resolved_id"):
@@ -353,7 +387,9 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                     "simulated": False,
                     "health": "healthy",
                     "observed_at": observed.isoformat(),
-                    "valid_until": (observed + timedelta(seconds=self.settings.playback_evidence_ttl)).isoformat(),
+                    "valid_until": (
+                        observed + timedelta(seconds=self.settings.playback_evidence_ttl)
+                    ).isoformat(),
                     "evidence": {
                         "method": "device_observation",
                         "evidence_id": f"prime:{workflow['session_id']}:{workflow['attempt_id']}",
@@ -467,7 +503,9 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         report = json.loads(row["report"])
         checked = parse_time(report["observation_status"].get("checked_at"))
         in_flight = self.active_token == row["token"] and self.active and not self.active.done()
-        recent = checked and 0 <= (datetime.now(UTC) - checked).total_seconds() < self.settings.observation_ttl
+        recent = (
+            checked and 0 <= (datetime.now(UTC) - checked).total_seconds() < self.settings.observation_ttl
+        )
         if recent and checked >= after and not in_flight:
             # A resumed result may arrive between the coordinator's observation
             # read and this staging transaction. Let the next tick adopt it.

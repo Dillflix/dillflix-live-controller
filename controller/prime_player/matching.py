@@ -53,7 +53,7 @@ def candidates(results, snapshot, timezone):
         if not isinstance(labels, (list, tuple)) or any(not isinstance(x, str) for x in labels):
             raise ExecutorError("prime_invalid_search", "Invalid search labels")
         reason = None
-        if tile.get("availability") != "live":
+        if tile.get("availability") not in {"live", "upcoming", "unavailable"}:
             reason = "not_live"
         elif not isinstance(cid, str) or not GTI.fullmatch(cid):
             reason = "no_playable_id"
@@ -92,19 +92,39 @@ def candidates(results, snapshot, timezone):
                 "availability",
                 "identity_status",
                 "collection",
+                "is_locked",
+                "action",
+                "resolution_status",
             )
         }
+        if type(candidate["is_locked"]) is not bool:
+            candidate["is_locked"] = None
         candidate["labels"] = list(labels)
         if len(json.dumps(candidate)) > 16000:
             raise ExecutorError("prime_invalid_search", "Search tile exceeds matcher bounds")
         if cid in grouped:
             current = grouped[cid]
             current["labels"] = list(dict.fromkeys([*current["labels"], title, *labels]))
+            for field in ("is_locked", "action", "resolution_status", "availability"):
+                if current[field] != candidate[field]:
+                    current[field] = None
         else:
             grouped[cid] = candidate
     if len(grouped) > 200 or len(json.dumps(list(grouped.values()))) > 256000:
         raise ExecutorError("prime_selection_limit", "Too many eligible results for one bounded selection")
     return list(grouped.values()), rejected
+
+
+def tile_state(tile):
+    if tile.get("is_locked") is True:
+        return "feeds_locked"
+    if tile.get("is_locked") is not False or tile.get("resolution_status") != "resolved":
+        return "access_unknown"
+    if tile.get("action") == "watch":
+        return "ready"
+    if isinstance(tile.get("action"), str) and tile["action"]:
+        return "waiting_for_feed"
+    return "access_unknown"
 
 
 def exact_title(tile, snapshot):
@@ -134,6 +154,44 @@ class EventMatcher:
 
     async def choose(self, request, results, timezone):
         eligible, rejected = candidates(results, request["content_snapshot"], timezone)
+        # Identity matching is independent of readiness. Consider accessible
+        # alternatives first; a locked tile never hides an unlocked same-event feed.
+        options = [o for o in request["allowed_viewing_options"] if prime_option(o)]
+        exact = [t for t in eligible if exact_title(t, request["content_snapshot"])]
+        if exact and len(options) == 1 and not options[0].get("language"):
+            eligible = exact
+        history = []
+        for state in ("ready", "waiting_for_feed", "access_unknown", "feeds_locked"):
+            pool = [t for t in eligible if tile_state(t) == state]
+            if not pool:
+                continue
+            selected, audit = await self._choose(request, {**results, "tiles": pool}, timezone)
+            history.append(audit)
+            if selected:
+                tile = next(t for t in pool if t["content_id"] == selected["content_id"])
+                # Ambiguous higher-ranked results cannot establish that *all*
+                # matching alternatives are locked.
+                if state == "feeds_locked" and any(a["method"] in {"abstain", "llm"} for a in history[:-1]):
+                    return None, {
+                        **audit,
+                        "reason": "Access alternatives remain ambiguous",
+                        "passes": history,
+                    }
+                return {
+                    **selected,
+                    **{k: tile[k] for k in ("is_locked", "action", "resolution_status", "availability")},
+                    "readiness": state,
+                }, {**audit, "readiness": state, "passes": history}
+        return None, {
+            "reason": "No matching Prime event",
+            "method": history[-1]["method"] if history else "filter",
+            "candidates": eligible,
+            "rejected": rejected,
+            "passes": history,
+        }
+
+    async def _choose(self, request, results, timezone):
+        eligible, rejected = candidates(results, request["content_snapshot"], timezone)
         options = [o for o in request["allowed_viewing_options"] if prime_option(o)]
         audit = {
             "candidates": eligible,
@@ -147,11 +205,16 @@ class EventMatcher:
         exact = [t for t in eligible if exact_title(t, request["content_snapshot"])]
         # Explicit language is an additional constraint; let the model read the
         # labels instead of claiming a language from a bare matchup title.
-        if len(exact) == 1 and len(options) == 1 and not options[0].get("language"):
+        if (
+            (len(exact) == 1 or (exact and all(t["is_locked"] is True for t in exact)))
+            and len(options) == 1
+            and not options[0].get("language")
+        ):
+            exact.sort(key=lambda t: t["content_id"])
             choice = {
                 "content_id": exact[0]["content_id"],
                 "viewing_option_id": options[0]["id"],
-                "reason": "Unique exact event title/opponent aliases",
+                "reason": "Exact event title/opponent aliases; equivalent feeds ordered by content ID",
                 "evidence_labels": [exact[0]["title"]],
             }
             return {**choice, "handle": exact[0]["handle"]}, {**audit, "method": "deterministic", **choice}

@@ -21,6 +21,7 @@ class IntegratedPlaybackAdapter:
             "content_id": report["content_id"],
             "state": report["operation"]["state"],
             "observation": report["observation"],
+            "finished_at": report["operation"].get("finished_at"),
             "reason": (report["operation"]["error"] or {}).get("message"),
         }
 

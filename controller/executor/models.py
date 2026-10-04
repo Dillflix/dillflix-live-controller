@@ -108,7 +108,16 @@ class RouteAttempt(Strict):
 
 class Operation(Strict):
     state: Literal[
-        "accepted", "navigating", "playing_verified", "failed", "cancelled", "superseded", "timed_out"
+        "accepted",
+        "navigating",
+        "playing_verified",
+        "failed",
+        "cancelled",
+        "superseded",
+        "timed_out",
+        "waiting_for_feed",
+        "access_unknown",
+        "feeds_locked",
     ]
     phase: str
     created_at: datetime

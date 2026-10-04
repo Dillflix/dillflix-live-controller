@@ -90,7 +90,7 @@ class ExecutorStore:
             )
             for old in db.execute(
                 "SELECT * FROM executor_jobs WHERE device_id=? AND cancel_requested=0 AND retired_at IS NULL "
-                "AND state IN ('accepted','navigating','playing_verified')",
+                "AND state IN ('accepted','navigating','playing_verified','waiting_for_feed','access_unknown','feeds_locked')",
                 (body["device_id"],),
             ).fetchall():
                 report = json.loads(old["report"])

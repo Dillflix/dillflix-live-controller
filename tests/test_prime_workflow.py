@@ -52,7 +52,7 @@ class Player:
     async def health(self):
         return {
             "session_id": self.session,
-            "api_version": 4,
+            "api_version": 9,
             "serial": "fixture",
             "ownership": {
                 "session_id": self.session,
@@ -63,7 +63,7 @@ class Player:
             },
             "closed": False,
             "failure": None,
-            "capabilities": ["search", "play", "playback_status", "cancel", "stop"],
+            "capabilities": ["search", "play", "playback_status", "cancel", "stop", "resolve"],
             "suspended": self.suspended,
             "compatibility": {
                 "capabilities": {
@@ -106,6 +106,10 @@ class Player:
             "reason": None,
             "evidence": {"resolution": {"playbackClass": "live_watch_now"}},
         }
+
+    async def resolve(self, content_id, ownership):
+        self.calls.append(("resolve", content_id))
+        return {"session_id": self.session, "requested_id": content_id, "action": None, "status": "unknown"}
 
     async def play(self, handle, attempt_id, ownership):
         assert ownership["epoch"] == self.epoch and ownership["session_id"] == self.session
@@ -219,7 +223,11 @@ async def test_resolver_refusal_reason_reaches_controller_failure_and_export(tmp
     try:
         original = workflow.player.outcome
         workflow.player.outcome = lambda: {
-            **original(), "state": "unknown", "resolved_id": None, "reason": reason, "evidence": {}
+            **original(),
+            "state": "unknown",
+            "resolved_id": None,
+            "reason": reason,
+            "evidence": {},
         }
         token = await launch(workflow)
         report = workflow.store.report(token)
@@ -286,9 +294,13 @@ async def test_verified_evidence_expires_after_five_minutes(tmp_path, monkeypatc
             assert lifetime == 300
             assert (until - start).total_seconds() == 300
             request = payload()
-            job = {"device_id": report["device_id"], "id": report["request_id"],
-                   "intent": observation["intent_version"], "content_id": report["content_id"],
-                   "payload": json.dumps(request)}
+            job = {
+                "device_id": report["device_id"],
+                "id": report["request_id"],
+                "intent": observation["intent_version"],
+                "content_id": report["content_id"],
+                "payload": json.dumps(request),
+            }
             # A full status request can finish after the old 15s evidence deadline.
             now = start + timedelta(seconds=299)
             monkeypatch.setattr("controller.coordinator.datetime", SimpleNamespace(now=lambda _: now))
@@ -684,22 +696,27 @@ async def test_model_failure_prompt_and_response_survive_into_export(tmp_path):
 
     controller, workflow = rig(tmp_path)
     try:
-        async def rejected_choice(request, results, timezone):
-            await client.completion('test', [{'role': 'user', 'content': 'actual matching prompt'}])
 
-        client = ChatClient(workflow.config, transport=httpx.MockTransport(
-            lambda request: httpx.Response(400, json={'error': {'message': 'failed to parse grammar'}})))
+        async def rejected_choice(request, results, timezone):
+            await client.completion("test", [{"role": "user", "content": "actual matching prompt"}])
+
+        client = ChatClient(
+            workflow.config,
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(400, json={"error": {"message": "failed to parse grammar"}})
+            ),
+        )
         await workflow.matcher.close()
         workflow.matcher = EventMatcher(workflow.config, model=client)
         workflow.matcher.choose = rejected_choice
         token = await launch(workflow)
         bundle = collect(controller.settings.database)
-        job = next(j for j in bundle['playbacks'] if j['token'] == token)
-        evidence = job['workflow']['model_calls'][0]
-        assert evidence['request']['json']['messages'][0]['content'] == 'actual matching prompt'
-        assert evidence['response']['json']['error']['message'] == 'failed to parse grammar'
-        assert evidence['http_status'] == 400
-        assert evidence['state'] == 'failed'
-        assert job['operation']['error']['code'] == 'model_http_error'
+        job = next(j for j in bundle["playbacks"] if j["token"] == token)
+        evidence = job["workflow"]["model_calls"][0]
+        assert evidence["request"]["json"]["messages"][0]["content"] == "actual matching prompt"
+        assert evidence["response"]["json"]["error"]["message"] == "failed to parse grammar"
+        assert evidence["http_status"] == 400
+        assert evidence["state"] == "failed"
+        assert job["operation"]["error"]["code"] == "model_http_error"
     finally:
         await cleanup(controller)

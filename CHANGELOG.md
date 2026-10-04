@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.13
+
+- Match upcoming/unavailable Prime event tiles and use API 9 tile lock evidence to distinguish waiting feeds from locked alternatives.
+- Persist 60-second search retries without playback failure counts; retain selection, deadlines, cancellation and restart protections.
+- Skip locked matching feeds until Play now or changed viewing options, retaining watch-plan entries.
+- Require Prime Player 0.1.0a20 / API 9 for search-to-play workflows. Add Linux host CI.
+
 ## 0.14.11
 
 - Honor the five-minute Prime evidence lifetime in the coordinator's refresh path as well as result acceptance. A remaining 15-second expiry check could still start recovery early.

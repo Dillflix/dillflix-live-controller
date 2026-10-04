@@ -6,7 +6,7 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 
 **0.14.0 integrates [Dillflix Prime Player](https://github.com/Dillflix/dillflix-prime-player)** for search, live playback and current status. The controller retains scheduling, durable intent and Play/status/Cancel APIs, with label matching and an optional text LLM for ambiguous results. Automated playback and manual input use the same acknowledged service ownership boundary.
 
-Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 4 / 0.1.0a5 or newer, and a shared Unix socket. The screenshot navigator, accessibility/MediaSession collectors and bundled probe have been removed. See [setup and acceptance](docs/prime-player.md) and [API semantics](docs/executor-api-handoff.md). Target-TV and deployment acceptance remain pending.
+Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 9 / 0.1.0a20 or newer, and a shared Unix socket. The screenshot navigator, accessibility/MediaSession collectors and bundled probe have been removed. See [setup and acceptance](docs/prime-player.md) and [API semantics](docs/executor-api-handoff.md). Target-TV and deployment acceptance remain pending.
 
 ## What works
 
@@ -238,4 +238,4 @@ Source repository: [Dillflix/dillflix-live-controller](https://github.com/Dillfl
 
 ## Prime Player manual ownership (optional)
 
-With Prime Player API 4 / 0.1.0a5, set `PRIME_PLAYER_SOCKET` to its Unix socket to require an acknowledged service handoff before remote input. Wake, keys and text then go through Prime Player. There is no direct-input fallback when configured. See [setup and validation](docs/prime-player-ownership.md). The same gateway is used by the `prime-player` workflow. Simulator mode can also use the service for manual input.
+With Prime Player API 9 / 0.1.0a20, set `PRIME_PLAYER_SOCKET` to its Unix socket to require an acknowledged service handoff before remote input. Wake, keys and text then go through Prime Player. There is no direct-input fallback when configured. See [setup and validation](docs/prime-player-ownership.md). The same gateway is used by the `prime-player` workflow. Simulator mode can also use the service for manual input.

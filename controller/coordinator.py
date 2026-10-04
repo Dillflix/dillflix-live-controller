@@ -73,7 +73,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                         "UPDATE jobs SET state='superseded' WHERE device_id=? AND state='pending'",
                         (d["id"],),
                     )
-                d["playback_state"] = "failed"
+                d["playback_state"] = "waiting" if decision.get("prime_readiness") else "failed"
                 self.db.save_device(db, d)
                 return True
             if not target and self.keep_pending_launch(d, pending, indexed.get(d.get("desired"))):
@@ -169,6 +169,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                         recovery["attempts"] = recovery.get("attempts", 0) + 1
                         d["recovery"] = recovery
                     d["retry_playback"] = None
+                    d.setdefault("prime_access", {}).pop(target, None)
                     budget = self.settings.navigation_timeout
                     if self.settings.mode == "demo" and item["snapshot"].get("_simulation", {}).get(
                         "stall_navigation"
@@ -292,7 +293,19 @@ class PlaybackCoordinator(PlaybackRecovery):
             ):
                 db.execute("UPDATE jobs SET state='superseded' WHERE id=?", (request_id,))
                 return False
-            if job["deadline_at"] is not None and job["deadline_at"] <= time.time():
+            readiness = report.get("state") if isinstance(report, dict) else None
+            finished = None
+            try:
+                finished = parse_time(report.get("finished_at")) if isinstance(report, dict) else None
+            except (TypeError, ValueError):
+                pass
+            completed_search = (
+                readiness in {"waiting_for_feed", "access_unknown", "feeds_locked"}
+                and finished is not None
+                and job["deadline_at"] is not None
+                and finished.timestamp() <= min(job["deadline_at"], time.time())
+            )
+            if job["deadline_at"] is not None and job["deadline_at"] <= time.time() and not completed_search:
                 self.fail_attempt(db, d, job, "Navigation exceeded its deadline", "timed_out")
             elif not isinstance(report, dict) or any(
                 report.get(k) != v
@@ -305,6 +318,35 @@ class PlaybackCoordinator(PlaybackRecovery):
             ):
                 self.fail_attempt(
                     db, d, job, "Executor response identity does not match the request", "rejected"
+                )
+            elif completed_search:
+                reason = {
+                    "waiting_for_feed": "Waiting for the live feed; search will retry in 60 seconds",
+                    "access_unknown": "Prime access or readiness is unknown; search will retry in 60 seconds",
+                    "feeds_locked": "Matching feeds are locked; watch-plan entry retained",
+                }[readiness]
+                d.setdefault("prime_access", {})[job["content_id"]] = {
+                    "state": readiness,
+                    "reason": reason,
+                    "observed_at": finished.isoformat(),
+                    "retry_after": (finished + timedelta(seconds=60)).isoformat(),
+                    "options": json.loads(job["payload"])["allowed_viewing_options"],
+                }
+                d["failures"].pop(job["content_id"], None)
+                d["playback_state"], d["reason"] = "waiting", reason
+                if d.get("observed"):
+                    d["observed"]["verified"] = False
+                db.execute(
+                    "UPDATE jobs SET state=?,progress=?,executor_job_id=?,error=NULL WHERE id=?",
+                    (readiness, readiness, report.get("executor_job_id"), request_id),
+                )
+                self.db.log(
+                    db,
+                    self.now(db).isoformat(),
+                    reason,
+                    "Prime search completed without launching playback",
+                    "navigation",
+                    d["id"],
                 )
             elif report.get("state") in {"accepted", "navigating"}:
                 if job["progress"] != report["state"]:
@@ -380,15 +422,17 @@ class PlaybackCoordinator(PlaybackRecovery):
                 if job["deadline_at"] is None:
                     job["deadline_at"] = time.time() + self.settings.navigation_timeout
                     db.execute("UPDATE jobs SET deadline_at=? WHERE id=?", (job["deadline_at"], job["id"]))
-                if time.time() >= job["deadline_at"]:
-                    self.fail_attempt(db, d, job, "Navigation exceeded its deadline", "timed_out")
-                    self.db.save_device(db, d)
-                    continue
                 if job["ready_at"] > time.time():
                     continue
             # Calls happen after committing coordinator state; never hold a DB lock across executor I/O.
             try:
                 report = self.inspect_playback(job["id"])
+                if report is None and time.time() >= job["deadline_at"]:
+                    with self.db.transaction() as db:
+                        d = self.db.device(db, job["device_id"])
+                        self.fail_attempt(db, d, job, "Navigation exceeded its deadline", "timed_out")
+                        self.db.save_device(db, d)
+                    continue
                 if report is None:
                     with self.db.transaction() as db:
                         db.execute(
@@ -429,7 +473,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             jobs = [
                 dict(r)
                 for r in db.execute(
-                    "SELECT * FROM jobs WHERE device_id='living-room' AND state IN ('cancelled','superseded','failed','timed_out','rejected') AND cancel_sent=0"
+                    "SELECT * FROM jobs WHERE device_id='living-room' AND state IN ('cancelled','superseded','failed','timed_out','rejected','waiting_for_feed','access_unknown','feeds_locked') AND cancel_sent=0"
                 )
             ]
         for job in jobs:

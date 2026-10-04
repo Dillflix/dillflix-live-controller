@@ -18,6 +18,9 @@ def tile(title="Jets vs. Lions", cid=GTI, **changes):
         "content_id": cid,
         "identity_status": "structure_slot_artwork_correlated",
         "availability": "live",
+        "is_locked": False,
+        "action": "watch",
+        "resolution_status": "resolved",
         "labels": [title, "LIVE"],
         "date_label": None,
         "collection": "Top Sports",
@@ -53,7 +56,6 @@ async def test_deterministic_match_needs_only_normal_matchup_label(title):
     "changes",
     [
         {"availability": "replay"},
-        {"availability": "upcoming"},
         {"availability": None},
         {"content_id": "amzn1.dv.icid.collection"},
         {"content_id": None},

@@ -211,3 +211,14 @@ Expired nonterminal status records copied from Teamarr use current catalog evide
 regardless of whether the event is selected/tracked. Selecting an event must not
 change the precedence of an expired feed copy. This fallback preserves catalog
 receipt age and retained terminal observations; it does not renew stale evidence.
+
+## Prime search outcomes
+
+A completed search can return `waiting_for_feed`, `access_unknown`, or
+`feeds_locked` without a playback error. These are terminal outcomes of that
+bounded executor request. The coordinator stores event-scoped `prime_access`
+evidence in the existing device payload, fences the completed request, and
+schedules fresh searches for waiting/unknown outcomes after 60 seconds. Locked
+evidence excludes those unchanged viewing options until explicit retry or a
+route change. It never marks an event ended or removes a manual commitment.
+Ordinary playback failures retain their existing recovery/backoff semantics.
