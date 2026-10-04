@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.14
+
+- Stop automatically retrying events after search finds no matching feed. Preserve watch-plan entries; Play now or changed viewing options permit a new attempt.
+- Let an in-progress automatic fallback attempt finish when a failed higher-priority candidate exits backoff. Manual selections, configuration changes, route changes and deadlines still take precedence.
+- Preserve search coverage/warnings in no-match diagnostics.
+
 ## 0.14.13
 
 - Match upcoming/unavailable Prime event tiles and use API 9 tile lock evidence to distinguish waiting feeds from locked alternatives.

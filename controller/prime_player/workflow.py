@@ -42,7 +42,12 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 if report["observation"]:
                     report["observation"]["verified"] = False
                 report["observation_status"]["state"] = "unavailable"
-                if report["operation"]["state"] in {"waiting_for_feed", "access_unknown", "feeds_locked"}:
+                if report["operation"]["state"] in {
+                    "waiting_for_feed",
+                    "access_unknown",
+                    "feeds_locked",
+                    "no_matching_feed",
+                }:
                     continue
                 if row["touched_device"] and not workflow.get("attempt_id"):
                     # An interrupted search has no playback attempt to reconcile.
@@ -192,7 +197,8 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             search_observed_at=results.get("observed_at"),
         )
         if not selected:
-            raise ExecutorError("prime_no_match", audit["reason"], retryable=False)
+            self.complete_search(token, "no_matching_feed")
+            return False
         if selected["is_locked"] is False and selected["resolution_status"] != "resolved":
             # Search enrichment has a shared budget. A late matching tile may
             # not have been resolved; use the existing metadata-only operation.
@@ -211,15 +217,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
             selected["readiness"] = tile_state(selected)
             self.save_workflow(token, selected_resolution=resolution)
         if selected["readiness"] != "ready":
-            state = selected["readiness"]
-            with self.db.transaction() as db:
-                row = self.store.allowed(db, token, navigation=True)
-                report = json.loads(row["report"])
-                report["prime_player"].update(selected=selected, readiness=state)
-                report["operation"].update(
-                    state=state, phase=state, finished_at=utc(), updated_at=utc(), error=None
-                )
-                self.store.write(db, token, report, state=state)
+            self.complete_search(token, selected["readiness"], selected)
             return False
         if time.monotonic() - received > 90:
             raise ExecutorError("prime_stale_result", "Result selection outlived its usable handle")
@@ -243,6 +241,16 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 raise
             self.save_workflow(token, launch_error=exc.detail())
         return True
+
+    def complete_search(self, token, state, selected=None):
+        with self.db.transaction() as db:
+            row = self.store.allowed(db, token, navigation=True)
+            report = json.loads(row["report"])
+            report["prime_player"].update(selected=selected, readiness=state)
+            report["operation"].update(
+                state=state, phase=state, finished_at=utc(), updated_at=utc(), error=None
+            )
+            self.store.write(db, token, report, state=state)
 
     @staticmethod
     def validate_outcome(outcome, workflow):

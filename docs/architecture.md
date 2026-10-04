@@ -215,10 +215,10 @@ receipt age and retained terminal observations; it does not renew stale evidence
 ## Prime search outcomes
 
 A completed search can return `waiting_for_feed`, `access_unknown`, or
-`feeds_locked` without a playback error. These are terminal outcomes of that
+`feeds_locked` or `no_matching_feed` without a playback error. These are terminal outcomes of that
 bounded executor request. The coordinator stores event-scoped `prime_access`
 evidence in the existing device payload, fences the completed request, and
-schedules fresh searches for waiting/unknown outcomes after 60 seconds. Locked
+schedules fresh searches for waiting/unknown outcomes after 60 seconds. Locked or unmatched-feed
 evidence excludes those unchanged viewing options until explicit retry or a
 route change. It never marks an event ended or removes a manual commitment.
 Ordinary playback failures retain their existing recovery/backoff semantics.

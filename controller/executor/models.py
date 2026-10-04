@@ -118,6 +118,7 @@ class Operation(Strict):
         "waiting_for_feed",
         "access_unknown",
         "feeds_locked",
+        "no_matching_feed",
     ]
     phase: str
     created_at: datetime

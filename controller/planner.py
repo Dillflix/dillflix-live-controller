@@ -119,7 +119,10 @@ def choose(device, items, now, real_now):
         if not item["active"] and item["content_id"] not in committed | {current_id}:
             continue
         evidence = access.get(item["content_id"], {})
-        if evidence.get("options") == item["viewing_options"] and evidence.get("state") == "feeds_locked":
+        if evidence.get("options") == item["viewing_options"] and evidence.get("state") in {
+            "feeds_locked",
+            "no_matching_feed",
+        }:
             continue
         failure = device.get("failures", {}).get(item["content_id"], {})
         cooldown = failure.get("retry_after")
@@ -165,6 +168,33 @@ def choose(device, items, now, real_now):
             if rule
             else "Waiting for an eligible live event",
         }
+    # A backoff timer expiring must not repeatedly abort the fallback search it
+    # just enabled. This holds only that already-issued automatic attempt; new
+    # manual intent, configuration, routes, lifecycle, and deadlines still win.
+    attempt = device.get("automatic_attempt") or {}
+    pending = indexed.get(attempt.get("content_id"))
+    retried = result["content_id"]
+    prior_retry = attempt.get("deferred_retries", {}).get(retried)
+    if (
+        not result["manual"]
+        and pending
+        and pending["content_id"] in ids
+        and priority(device, pending) < 1_000_000
+        and device.get("playback_state") == "navigating"
+        and device.get("desired") == pending["content_id"]
+        and attempt.get("intent_version") == device.get("intent_version")
+        and attempt.get("revision") == device.get("revision")
+        and attempt.get("options") == pending["viewing_options"]
+        and real_now.timestamp() < attempt.get("deadline_at", 0)
+        and prior_retry
+        and prior_retry == device.get("failures", {}).get(retried, {}).get("retry_after")
+    ):
+        result = {
+            "content_id": pending["content_id"],
+            "manual": False,
+            "rule_id": device["rules"][priority(device, pending)]["id"],
+            "reason": "Finishing the current automatic playback attempt before retrying a failed event",
+        }
     selected_access = access.get(result["content_id"], {})
     selected_item = indexed.get(result["content_id"])
     if (
@@ -186,7 +216,7 @@ def choose(device, items, now, real_now):
     current_access = access.get(current_id, {})
     current_locked = (
         current
-        and current_access.get("state") == "feeds_locked"
+        and current_access.get("state") in {"feeds_locked", "no_matching_feed"}
         and current_access.get("options") == current["viewing_options"]
     )
     route_present = (
@@ -196,7 +226,7 @@ def choose(device, items, now, real_now):
     )
     leaving_current = (
         device.get("playback_state") == "navigating"
-        or waiting.get("state") in {"waiting_for_feed", "access_unknown", "feeds_locked"}
+        or waiting.get("state") in {"waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"}
     ) and device.get("desired") != current_id
     if (
         route_present

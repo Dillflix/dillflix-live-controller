@@ -190,6 +190,22 @@ class PlaybackCoordinator(PlaybackRecovery):
                             "queued",
                         ),
                     )
+                    d["automatic_attempt"] = (
+                        None
+                        if decision["manual"]
+                        else {
+                            "content_id": target,
+                            "intent_version": d["intent_version"],
+                            "revision": d["revision"],
+                            "deadline_at": time.time() + budget,
+                            "options": item["viewing_options"],
+                            "deferred_retries": {
+                                cid: failure["retry_after"]
+                                for cid, failure in d["failures"].items()
+                                if failure.get("retry_after") and real < parse_time(failure["retry_after"])
+                            },
+                        }
+                    )
                     d["playback_state"] = "navigating"
                     self.db.log(
                         db,
@@ -300,7 +316,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             except (TypeError, ValueError):
                 pass
             completed_search = (
-                readiness in {"waiting_for_feed", "access_unknown", "feeds_locked"}
+                readiness in {"waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"}
                 and finished is not None
                 and job["deadline_at"] is not None
                 and finished.timestamp() <= min(job["deadline_at"], time.time())
@@ -324,12 +340,15 @@ class PlaybackCoordinator(PlaybackRecovery):
                     "waiting_for_feed": "Waiting for the live feed; search will retry in 60 seconds",
                     "access_unknown": "Prime access or readiness is unknown; search will retry in 60 seconds",
                     "feeds_locked": "Matching feeds are locked; watch-plan entry retained",
+                    "no_matching_feed": "No matching Prime feed found; automatic retry suppressed; watch-plan entry retained",
                 }[readiness]
                 d.setdefault("prime_access", {})[job["content_id"]] = {
                     "state": readiness,
                     "reason": reason,
                     "observed_at": finished.isoformat(),
-                    "retry_after": (finished + timedelta(seconds=60)).isoformat(),
+                    "retry_after": (finished + timedelta(seconds=60)).isoformat()
+                    if readiness in {"waiting_for_feed", "access_unknown"}
+                    else None,
                     "options": json.loads(job["payload"])["allowed_viewing_options"],
                 }
                 d["failures"].pop(job["content_id"], None)
@@ -473,7 +492,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             jobs = [
                 dict(r)
                 for r in db.execute(
-                    "SELECT * FROM jobs WHERE device_id='living-room' AND state IN ('cancelled','superseded','failed','timed_out','rejected','waiting_for_feed','access_unknown','feeds_locked') AND cancel_sent=0"
+                    "SELECT * FROM jobs WHERE device_id='living-room' AND state IN ('cancelled','superseded','failed','timed_out','rejected','waiting_for_feed','access_unknown','feeds_locked','no_matching_feed') AND cancel_sent=0"
                 )
             ]
         for job in jobs:

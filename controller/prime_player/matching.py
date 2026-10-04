@@ -186,6 +186,9 @@ class EventMatcher:
                 }, {**audit, "readiness": state, "passes": history}
         return None, {
             "reason": "No matching Prime event",
+            "coverage": results.get("coverage"),
+            "complete": results.get("complete"),
+            "warnings": results.get("warnings", []),
             "method": history[-1]["method"] if history else "filter",
             "candidates": eligible,
             "rejected": rejected,

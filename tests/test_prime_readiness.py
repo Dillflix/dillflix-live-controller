@@ -142,9 +142,10 @@ def test_waiting_holds_selection_without_failure_then_retries_with_new_deadline(
     assert jobs(client)[0]["deadline_at"] > job["deadline_at"]
 
 
-def test_locked_feed_falls_back_without_removing_plan_or_repeated_search(rig):
+@pytest.mark.parametrize("state", ["feeds_locked", "no_matching_feed"])
+def test_locked_feed_falls_back_without_removing_plan_or_repeated_search(rig, state):
     client, service, _ = rig
-    job, _ = complete_search(rig, "feeds_locked")
+    job, _ = complete_search(rig, state)
     service.stage_playback()
     device = overview(client)["device"]
     assert device["desired"] != job["content_id"]
@@ -158,9 +159,10 @@ def test_locked_feed_falls_back_without_removing_plan_or_repeated_search(rig):
     assert overview(client)["device"]["desired"] == job["content_id"]
 
 
-def test_changed_options_release_lock_exclusion(rig, monkeypatch):
+@pytest.mark.parametrize("state", ["feeds_locked", "no_matching_feed"])
+def test_changed_options_release_lock_exclusion(rig, monkeypatch, state):
     client, service, _ = rig
-    job, _ = complete_search(rig, "feeds_locked")
+    job, _ = complete_search(rig, state)
     original = service.items
 
     def changed(*args, **kwargs):
@@ -312,3 +314,40 @@ def test_locked_current_event_cannot_regain_selection_through_recovery_grace(rig
         }
         decision = choose(device, items, service.now(db), datetime.now(UTC))
     assert decision["content_id"] != job["content_id"]
+
+
+async def test_no_identifiable_tiles_completes_without_retry_or_play(tmp_path):
+    controller, workflow = workflow_rig(tmp_path)
+    original = workflow.player.search
+
+    async def unidentifiable(*args):
+        return {**await original(*args), **results(tile(title=None, availability=None, labels=["TRENDING"]))}
+
+    workflow.player.search = unidentifiable
+    try:
+        token = await launch(workflow)
+        report = workflow.store.report(token)
+        PlaybackReport.model_validate(report)
+        assert report["operation"]["state"] == "no_matching_feed"
+        assert report["operation"]["error"] is None
+        assert report["prime_player"]["selection"]["candidates"] == []
+        assert report["prime_player"]["selection"]["complete"] is False
+        assert [c[0] for c in workflow.player.calls] == ["search"]
+        workflow.recover()
+        assert workflow.store.report(token)["operation"]["state"] == "no_matching_feed"
+    finally:
+        await cleanup(controller)
+
+
+def test_no_match_remains_suppressed_beyond_former_backoff(rig):
+    from unittest.mock import patch
+
+    client, service, _ = rig
+    job, _ = complete_search(rig, "no_matching_feed")
+    with patch("controller.coordinator.datetime", wraps=datetime) as clock:
+        clock.now.return_value = datetime.now(UTC) + timedelta(minutes=10)
+        service.stage_playback()
+    device = overview(client)["device"]
+    assert device["desired"] != job["content_id"]
+    assert device["prime_access"][job["content_id"]]["retry_after"] is None
+    assert job["content_id"] not in device["failures"]

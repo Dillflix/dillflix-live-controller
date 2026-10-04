@@ -2,7 +2,7 @@
 
 ## Status
 
-Controller 0.14.13 requires Prime Player **API 9 / 0.1.0a20** for tile access and feed-readiness handling. Search, matching, Play, current status, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
+Controller 0.14.14 requires Prime Player **API 9 / 0.1.0a20** for tile access and feed-readiness handling. Search, matching, Play, current status, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
 
 Host tests cover durable workflow behavior, RPC delivery and the actual service ownership engine with a controlled runtime. Physical TV, live inference and deployment acceptance remain pending.
 
@@ -228,3 +228,20 @@ No preview/drawer inspection or `inspect_access` navigation is used. Full artwor
 and resolver entitlement metadata remain available in player results. Device
 acceptance of this controller policy remains pending; its searches interrupt
 current viewing and a ready match launches playback.
+
+### No matching feed versus a feed that has not started
+
+A Teamarr live event with a configured Prime league route qualifies for a search,
+not proof that Prime carries that event. When that search cannot identify a
+matching feed, `no_matching_feed` suppresses automatic retries for the unchanged
+viewing options. The watch-plan entry remains. **Play now** clears the result,
+and changed viewing options allow another search. Incomplete search coverage
+remains recorded; this is a scheduling decision, not a claim of catalog-wide
+absence or missing subscription. Only an identified tile enters the readiness
+retry path.
+
+An automatic candidate recovering from a transient failure cannot cancel the
+fallback attempt that was started during its backoff merely because the retry
+time arrives. This protection lasts only for that bounded navigation attempt
+with unchanged intent, configuration and routes. Manual selections and newly
+eligible events are still reevaluated.
