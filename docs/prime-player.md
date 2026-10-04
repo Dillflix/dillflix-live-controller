@@ -37,7 +37,9 @@ authority-renewal, or lifecycle-by-content API is added.
 3. A unique exact event title or matchup using source opponent aliases can be
    selected deterministically. Duplicate GTIs are grouped; conflicting entitlement
    or event states become unknown. Otherwise the bounded text model selects only
-   a supplied GTI and permitted route, with exact supporting title evidence.
+   a supplied GTI and permitted route, with field-attributed evidence from the full title, synopsis or other supplied
+   text. Evidence is checked against the named source field; entitlement/state
+   alone cannot establish event identity.
 4. Entitled LIVE matches are launch candidates. Entitled UPCOMING matches wait;
    UNENTITLED alternatives are skipped. Missing/conflicting state or entitlement
    remains unknown. ENDED feeds cannot authorize a new live launch.
@@ -63,8 +65,13 @@ absence. Full artwork, provider logos, overlays, messaging and native metadata
 remain available from the player; the controller uses the fields needed to match.
 
 Without `PRIME_PLAYER_MATCH_MODEL`, unambiguous deterministic matches still work;
-other cases abstain. Identical titles with different IDs can remain genuinely
-ambiguous. No arbitrary first-row tie-break is used.
+other cases abstain. The shared prompt is versioned with the candidate contract: it
+explains feed windows, structured source identities and explicit route constraints.
+Both catalogue preflight and playback use it for the same identity task; readiness
+and launch decisions remain in code. The model may choose a stable content-ID tie
+between positively identified equivalent feeds; uncertain identities still abstain.
+A general catalogue-association API that needs all matching variants would require
+a multi-match output, rather than reusing this single-feed selection contract.
 
 ## Persistence and monitoring
 

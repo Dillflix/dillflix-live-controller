@@ -103,7 +103,7 @@ async def test_llm_resolves_labels_without_structured_candidate_metadata():
             "content_id": GTI,
             "viewing_option_id": "prime-option",
             "reason": "NY Jets and Detroit identify the requested opponents",
-            "evidence_labels": ["NY Jets @ Detroit"],
+            "evidence": [{"field": "title", "quote": "NY Jets @ Detroit"}],
         }
     )
     config = replace(ExecutorConfig(), prime_match_model="text-model")
@@ -123,8 +123,8 @@ async def test_llm_resolves_labels_without_structured_candidate_metadata():
     [
         {"content_id": GTI + "-invented"},
         {"viewing_option_id": "invented-route"},
-        {"evidence_labels": ["invented label"]},
-        {"evidence_labels": []},
+        {"evidence": [{"field": "title", "quote": "invented label"}]},
+        {"evidence": []},
         {"content_id": None},
     ],
 )
@@ -133,7 +133,7 @@ async def test_llm_must_select_supplied_live_candidate_and_evidence(changes):
         "content_id": GTI,
         "viewing_option_id": "prime-option",
         "reason": "Match",
-        "evidence_labels": ["NYJ @ DET"],
+        "evidence": [{"field": "title", "quote": "NYJ @ DET"}],
         **changes,
     }
     with pytest.raises(ExecutorError, match="supplied evidence"):
@@ -151,10 +151,78 @@ async def test_identical_labels_different_ids_require_model_or_abstention():
             "content_id": None,
             "viewing_option_id": None,
             "reason": "Both labels are equally plausible",
-            "evidence_labels": [],
+            "evidence": [],
         }
     )
     choice, audit = await EventMatcher(ExecutorConfig(), model=model).choose(
         payload(), choices, "America/Vancouver"
     )
     assert choice is None and audit["method"] == "llm"
+
+
+async def test_rich_catalogue_fields_and_field_attributed_synopsis_evidence():
+    description = "New York Jets visit the Detroit Lions with live pregame coverage."
+    model = Model(
+        {
+            "content_id": GTI,
+            "viewing_option_id": "prime-option",
+            "reason": "Synopsis identifies both opponents",
+            "evidence": [{"field": "synopsis", "quote": description}],
+        }
+    )
+    choice, audit = await EventMatcher(ExecutorConfig(), model=model).choose(
+        payload(),
+        results(
+            tile(
+                "Sunday football",
+                synopsis=description,
+                entitlement_messaging={"message": "Included with your DAZN subscription"},
+            )
+        ),
+        "America/Vancouver",
+    )
+    assert choice["content_id"] == GTI
+    candidate = model.calls[0]["candidates"][0]
+    assert candidate["synopsis"] == description
+    assert candidate["titles"] == ["Sunday football"]
+    assert candidate["entitlement_messaging"]["message"].endswith("DAZN subscription")
+    assert "labels" not in candidate and "handle" not in candidate and "action" not in candidate
+    assert audit["evidence"] == [{"field": "synopsis", "quote": description}]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        [{"field": "synopsis", "quote": "invented competitors"}],
+        [{"field": "synopsis", "quote": "NYJ @ DET"}],  # Real text, wrong source field.
+        [{"field": "event_state", "quote": "LIVE"}],  # Not identity evidence.
+        [{"field": "entitlement_messaging.message", "quote": "Included"}],
+    ],
+)
+async def test_rich_evidence_must_come_from_its_claimed_field_and_establish_identity(evidence):
+    model = Model(
+        {"content_id": GTI, "viewing_option_id": "prime-option", "reason": "Match", "evidence": evidence}
+    )
+    with pytest.raises(ExecutorError, match="supplied evidence"):
+        await EventMatcher(ExecutorConfig(), model=model).choose(
+            payload(),
+            results(
+                tile("NYJ @ DET", synopsis="Sunday football", entitlement_messaging={"message": "Included"})
+            ),
+            "America/Vancouver",
+        )
+
+
+async def test_model_can_select_equivalent_valid_feed_instead_of_abstaining_for_duplicate_identity():
+    model = Model(
+        {
+            "content_id": GTI,
+            "viewing_option_id": "prime-option",
+            "reason": "Both feeds describe the same event; stable content ID tie-break",
+            "evidence": [{"field": "title", "quote": "Jets vs. Lions"}],
+        }
+    )
+    selected, _ = await EventMatcher(ExecutorConfig(), model=model).choose(
+        payload(), results(tile(cid=GTI + "-other"), tile()), "America/Vancouver"
+    )
+    assert selected["content_id"] == GTI and selected["readiness"] == "ready"

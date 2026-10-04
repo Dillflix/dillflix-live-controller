@@ -67,7 +67,7 @@ async def test_strict_wire_schema_omits_length_ceilings_but_local_model_retains_
         return httpx.Response(200, json={'choices': [{
             'finish_reason': 'stop', 'message': {'content': json.dumps({
                 'content_id': None, 'viewing_option_id': None,
-                'reason': 'No candidates', 'evidence_labels': [],
+                'reason': 'No candidates', 'evidence': [],
             })},
         }]})
 
@@ -86,7 +86,7 @@ async def test_strict_wire_schema_omits_length_ceilings_but_local_model_retains_
     assert wire['additionalProperties'] is False
     assert set(wire['required']) == set(original['properties'])
     assert wire['properties']['reason']['minLength'] == 1
-    assert wire['properties']['evidence_labels']['maxItems'] == 10
+    assert wire['properties']['evidence']['maxItems'] == 10
     assert wire['properties']['content_id']['anyOf'] == [{'type': 'string'}, {'type': 'null'}]
     assert original == saved == Choice.model_json_schema()
     valid = json.loads(answer)

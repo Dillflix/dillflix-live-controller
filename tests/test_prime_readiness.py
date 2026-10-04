@@ -370,14 +370,14 @@ async def test_ambiguous_entitled_alternative_cannot_become_a_durable_exclusion(
                     "content_id": None,
                     "viewing_option_id": None,
                     "reason": "Cannot distinguish this entitled candidate",
-                    "evidence_labels": [],
+                    "evidence": [],
                 }
                 if not self.calls
                 else {
                     "content_id": GTI,
                     "viewing_option_id": "prime-option",
                     "reason": "Matching subscription-only event",
-                    "evidence_labels": ["Jets vs. Lions"],
+                    "evidence": [{"field": "title", "quote": "Jets vs. Lions"}],
                 }
             )
             return await super().completion(*args, **kwargs)
