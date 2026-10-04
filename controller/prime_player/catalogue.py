@@ -170,7 +170,9 @@ class CatalogueChecks:
                 "state": state,
                 "reason": reason,
                 "observed_at": now.isoformat(),
-                "retry_after": (now + timedelta(seconds=60)).isoformat(),
+                "retry_after": (now + timedelta(seconds=60)).isoformat()
+                if state in {"waiting_for_feed", "access_unknown"}
+                else None,
                 "options": probe["request"]["allowed_viewing_options"],
                 "catalogue_probe_id": probe["id"],
             }

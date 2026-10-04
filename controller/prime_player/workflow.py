@@ -238,7 +238,7 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             self.save_workflow(token, launch_outcome=outcome)
         except ExecutorError as exc:
             # Delivery uncertainty is resolved by read-only inspection, not a
-            # fresh request or a repeated handle which Play may have invalidated.
+            # fresh request that could replace playback a second time.
             if exc.code not in {"prime_transport_unknown", "prime_operation_unknown"}:
                 raise
             self.save_workflow(token, launch_error=exc.detail())
@@ -700,7 +700,7 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                             # stop. A native stop confirmation remains unknown.
                             await self.interrupt(token, force=True)
                 else:
-                    # Search can replace existing content; no bound attempt exists
-                    # with which to prove what is playing or stopped.
+                    # No launch is bound to this token. A catalogue read alone
+                    # cannot prove what unrelated content is playing or stopped.
                     active = "unknown"
             self.store.acknowledge_cancel(token, active)
