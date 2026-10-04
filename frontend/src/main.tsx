@@ -463,6 +463,15 @@ function App() {
     }).format(new Date(s));
   const timelineTime = (s: string | null) =>
     s && date(s) !== date(data.meta.now) ? `${date(s)}, ${time(s)}` : time(s);
+  const monitoringTime = (s: string) =>
+    new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZone: d.preferences.timezone,
+    }).format(new Date(s));
   const allTeams = data.teams;
   const leagues = [
     ...new Set([
@@ -1309,12 +1318,29 @@ function App() {
                     Controller: {d.playback_state} · Executor:{" "}
                     {d.executor_health?.state ?? "not reported"}
                   </p>
+                  <p>
+                    Last playback evidence:{" "}
+                    {d.observed
+                      ? `${monitoringTime(d.observed.observed_at)} · ${d.observed.verified ? "verified" : "unverified"}`
+                      : "None received"}
+                  </p>
+                  <p>
+                    Last executor contact:{" "}
+                    {d.executor_health?.last_contact_at
+                      ? monitoringTime(d.executor_health.last_contact_at)
+                      : "None reported"}
+                  </p>
+                  <p>
+                    Routine successful checks update these timestamps without
+                    adding activity entries.
+                  </p>
                   {data.playback_job && (
                     <p>
                       Request: {data.playback_job.state} ·{" "}
                       {data.playback_job.progress ?? "No progress reported"}
-                      {data.playback_job.deadline_at
-                        ? ` · Deadline ${time(new Date(data.playback_job.deadline_at * 1000).toISOString())}`
+                      {data.playback_job.state === "pending" &&
+                      data.playback_job.deadline_at
+                        ? ` · Launch deadline ${time(new Date(data.playback_job.deadline_at * 1000).toISOString())}`
                         : ""}
                     </p>
                   )}

@@ -308,7 +308,7 @@ def test_editing_future_plan_does_not_interrupt_current_unknown_status(rig):
     command(c, {"type": "add", "content_id": "demo:jays"})
     s.tick()
     assert overview(c)["device"]["observed"]["content_id"] == "demo:lions"
-    assert "stale" in overview(c)["device"]["reason"]
+    assert "Event live status is unknown" in overview(c)["device"]["reason"]
     # An explicit, higher-priority live choice still takes effect immediately.
     command(c, {"type": "play_now", "content_id": "demo:golf"})
     s.tick()

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Distinguish unknown event lifecycle from stale status when retaining verified playback. Show the latest playback evidence and executor contact in Activity, and display launch deadlines only for pending requests. Routine successful monitoring remains separate from the decision history.
 - Allow fresh active Teamarr broadcasts with explicit unknown status, including NFL RedZone, to reach the existing Prime catalogue check after their start time. Priorities, watch-plan entries and Play now use the same eligibility rule.
 - Preserve unknown lifecycle and current playback while checking. Only an entitled LIVE Prime match authorizes a launch; stale/withdrawn listings, future starts, ordinary unknown events and terminal statuses do not gain eligibility.
 

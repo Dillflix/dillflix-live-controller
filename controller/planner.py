@@ -262,7 +262,9 @@ def choose(device, items, now, real_now):
                 "rule_id": None,
                 "reason": recovery.get("reason") or "Playback evidence is missing; allowing time for recovery"
                 if holding
-                else "Status is stale; retaining existing verified playback",
+                else "Event status is stale; retaining verified playback"
+                if current["lifecycle"].get("stale")
+                else "Event live status is unknown; retaining verified playback",
             }
     # Dwell/cooldown decides whether to start a switch. Once navigation is approved,
     # the previous event's timer must not reverse it while we await verification.

@@ -131,6 +131,7 @@ async def test_failure_preserves_fresh_evidence_then_expires_without_completing(
     assert card(s)["lifecycle"]["observed_at"] == old["observed_at"]
     assert data["device"]["observed"]["content_id"] == "demo:lions"
     assert data["device"]["plan"][0]["content_id"] == "demo:lions"
+    assert data["device"]["reason"] == "Event status is stale; retaining verified playback"
     assert data["health"]["state"] == "ok"
     assert data["status_health"]["state"] == "degraded"
     assert "credentials-must-not-leak" not in encode(data)

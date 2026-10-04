@@ -78,6 +78,12 @@ a multi-match output, rather than reusing this single-feed selection contract.
 
 ## Persistence and monitoring
 
+The Activity panel shows the latest playback evidence timestamp separately from
+the latest executor contact. Routine successful checks refresh these values
+without creating activity entries. Event lifecycle can remain unknown while
+Prime playback is freshly verified; the planner distinguishes that condition
+from expired event status. Launch deadlines apply only to pending requests.
+
 The mapping is Teamarr content ID → controller token → Prime service session →
 Prime attempt → requested/resolved GTI. Persist the attempt ID before dispatch.
 Lost Play responses and controller restarts use read-only inspection of that same
