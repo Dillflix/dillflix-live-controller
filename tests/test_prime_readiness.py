@@ -231,13 +231,16 @@ def test_late_readiness_result_cannot_override_current_control(rig, control):
         assert not service.db.device(db).get("prime_access")
 
 
-async def test_unrelated_watchable_tile_does_not_hide_locked_target():
-    selected, _ = await EventMatcher(ExecutorConfig()).choose(
+async def test_unresolved_entitled_identity_prevents_false_subscription_denial():
+    from controller.prime_player.matching import selection_state
+
+    selected, audit = await EventMatcher(ExecutorConfig()).choose(
         payload(),
         results(tile("Jets vs Ravens", cid=GTI + "-wrong"), tile(entitlement_status="UNENTITLED")),
         "America/Vancouver",
     )
-    assert selected["readiness"] == "feeds_locked"
+    assert selected is None
+    assert selection_state(selected, audit) == "access_unknown"
 
 
 async def test_catalogue_launch_needs_no_tile_action_or_controller_resolution(tmp_path):
@@ -391,3 +394,55 @@ async def test_ambiguous_entitled_alternative_cannot_become_a_durable_exclusion(
     )
     assert selected is None
     assert selection_state(selected, audit) == "access_unknown"
+
+
+async def test_entitlement_filter_precedes_model_and_locked_exact_title_cannot_hide_entitled_alias():
+    from test_prime_matching import Model
+
+    entitled_id = GTI + "-entitled"
+    model = Model(
+        {
+            "content_id": entitled_id,
+            "viewing_option_id": "prime-option",
+            "reason": "Both opponents match",
+            "evidence": [{"field": "title", "quote": "NYJ @ DET"}],
+        }
+    )
+    selected, _ = await EventMatcher(ExecutorConfig(), model=model).choose(
+        payload(),
+        results(
+            tile(entitlement_status="UNENTITLED"),
+            tile("NYJ @ DET", cid=entitled_id),
+            tile("NYJ @ DET", cid=GTI + "-upcoming", event_state="UPCOMING"),
+        ),
+        "America/Vancouver",
+    )
+    assert selected["content_id"] == entitled_id and selected["readiness"] == "ready"
+    assert len(model.calls) == 1
+    assert [c["content_id"] for c in model.calls[0]["candidates"]] == [entitled_id]
+    assert all(
+        c["entitlement_status"] == "ENTITLED" and c["event_state"] == "LIVE"
+        for c in model.calls[0]["candidates"]
+    )
+
+
+async def test_model_cannot_select_unentitled_id_outside_launch_candidate_pool():
+    from test_prime_matching import Model
+
+    from controller.executor.models import ExecutorError
+
+    model = Model(
+        {
+            "content_id": GTI,
+            "viewing_option_id": "prime-option",
+            "reason": "Attempt to select the excluded result",
+            "evidence": [{"field": "title", "quote": "Jets vs. Lions"}],
+        }
+    )
+    with pytest.raises(ExecutorError, match="supplied evidence"):
+        await EventMatcher(ExecutorConfig(), model=model).choose(
+            payload(),
+            results(tile(entitlement_status="UNENTITLED"), tile("NYJ @ DET", cid=GTI + "-entitled")),
+            "America/Vancouver",
+        )
+    assert all(c["entitlement_status"] == "ENTITLED" for c in model.calls[0]["candidates"])

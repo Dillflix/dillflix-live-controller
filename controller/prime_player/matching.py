@@ -219,10 +219,6 @@ class EventMatcher:
         eligible, rejected = candidates(results, request["content_snapshot"], timezone)
         # Identity matching is independent of readiness. Consider accessible
         # alternatives first; an unentitled result never hides an entitled feed.
-        options = [o for o in request["allowed_viewing_options"] if prime_option(o)]
-        exact = [t for t in eligible if exact_title(t, request["content_snapshot"])]
-        if exact and len(options) == 1 and not options[0].get("language"):
-            eligible = exact
         history = []
         for state in ("ready", "waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"):
             pool = [t for t in eligible if tile_state(t) == state]
