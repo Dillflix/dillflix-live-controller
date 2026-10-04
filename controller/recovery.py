@@ -136,6 +136,17 @@ class PlaybackRecovery:
             if existing:
                 job = db.execute("SELECT * FROM jobs WHERE id=?", (existing.get("request_id"),)).fetchone()
                 item = next((i for i in self.items(db) if i["content_id"] == existing["content_id"]), None)
+                if item and item["lifecycle"]["state"] in {"ended", "cancelled"}:
+                    # Retain request identity for scoped cancellation, but never
+                    # start recovery of a stream whose event has completed.
+                    existing["verified"] = False
+                    d["recovery"] = None
+                    if d.get("retry_playback") == existing["content_id"]:
+                        d["retry_playback"] = None
+                    if d["playback_state"] == "verified":
+                        d["playback_state"] = "unverified"
+                    self.db.save_device(db, d)
+                    return
                 route_valid = bool(
                     job
                     and item

@@ -122,7 +122,7 @@ async def test_temporary_state_waits_through_original_evidence_window(live_prime
     assert job_count(controller) == 1
 
 
-@pytest.mark.parametrize("state", ["stopped", "not_current", "ended", "error"])
+@pytest.mark.parametrize("state", ["stopped", "not_current", "error"])
 async def test_explicit_failure_keeps_normal_grace_without_completing_event(live_prime, state):
     controller, workflow, token, _ = live_prime
     workflow.player.state = state
@@ -132,6 +132,33 @@ async def test_explicit_failure_keeps_normal_grace_without_completing_event(live
     assert (parse_time(recovery["retry_after"]) - parse_time(recovery["since"])).total_seconds() == 60
     assert workflow.store.report(token)["content_status"]["effective_state"] != "ended"
     assert job_count(controller) == 1
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_ended_advances_without_recovery(live_prime, fallback):
+    controller, workflow, token, before = live_prime
+    if fallback:
+        other = payload()["content_snapshot"]
+        other.update(id="other-game", title="Other game")
+        with controller.db.transaction() as db:
+            controller.replace_catalog(db, [payload()["content_snapshot"], other], "teamarr")
+    workflow.player.state = "ended"
+    await workflow.monitor(row(workflow, token))
+    controller.refresh_playback_observation()
+    observed = controller.overview()["device"]["observed"]
+    assert not observed["verified"]
+    assert observed["request_id"] == before["observed"]["request_id"]
+    controller.stage_playback()
+    device = controller.overview()["device"]
+    assert device["desired"] == ("other-game" if fallback else None)
+    assert device["playback_state"] == ("navigating" if fallback else "waiting")
+    assert device["recovery"] is None
+    assert job_count(controller) == (2 if fallback else 1)
+    assert workflow.store.report(token)["content_status"]["effective_state"] == "ended"
+    with controller.db.transaction() as db:
+        assert not db.execute(
+            "SELECT 1 FROM activity WHERE message='Playback requires revalidation'"
+        ).fetchone()
 
 
 async def test_resume_keeps_original_attempt_and_viewing_timers(live_prime):
