@@ -1,6 +1,6 @@
-"""Optional cross-repository contract tests against the real API 4 host service.
+"""Optional cross-repository contract tests against the real API 11 host service.
 
-Run with Prime Player 0.1.0a5 installed (no device extras required). The runtime
+Run with Prime Player 0.1.0a23 installed (no device extras required). The runtime
 boundary is controlled; the service, ownership engine and HTTP transport are real.
 """
 
@@ -85,7 +85,7 @@ async def test_real_handoff_interrupts_search_and_fences_stale_envelopes(service
     with pytest.raises(ExecutorError) as error:
         await client.search("late search", 60, previous)
     assert error.value.code == "prime_stale_result"
-    assert [c[0] for c in runtime.calls].count("search") == 1
+    assert [c[0] for c in runtime.calls].count("search-data") == 1
 
 
 async def test_real_cancel_preserves_playback_and_old_stop_cannot_touch_new_attempt(service):

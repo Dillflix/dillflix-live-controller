@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from playback_fixtures import payload
+from test_prime_catalogue import finish_check
 from test_prime_workflow import cleanup, rig, row
 
 from controller.planner import parse_time
@@ -17,6 +18,8 @@ async def live_prime(tmp_path):
     workflow.loop = asyncio.get_running_loop()
     with controller.db.transaction() as db:
         controller.replace_catalog(db, [payload()["content_snapshot"]], "teamarr")
+    controller.tick()
+    await finish_check(controller)
     controller.tick()
     with controller.db.transaction() as db:
         job = db.execute("SELECT * FROM jobs").fetchone()
@@ -149,6 +152,7 @@ async def test_ended_advances_without_recovery(live_prime, fallback):
     assert not observed["verified"]
     assert observed["request_id"] == before["observed"]["request_id"]
     controller.stage_playback()
+    await finish_check(controller)
     device = controller.overview()["device"]
     assert device["desired"] == ("other-game" if fallback else None)
     assert device["playback_state"] == ("navigating" if fallback else "waiting")
@@ -260,6 +264,7 @@ async def test_due_recovery_queues_final_check_then_reopens_if_still_paused(live
     assert row(workflow, token)["next_check"] == 0
     await workflow.monitor(row(workflow, token))
     controller.stage_playback()
+    await finish_check(controller)
     with controller.db.transaction() as db:
         jobs = db.execute("SELECT * FROM jobs ORDER BY intent").fetchall()
     assert len(jobs) == 2
@@ -291,12 +296,13 @@ async def test_route_change_bypasses_pause_recheck(live_prime):
     await workflow.monitor(row(workflow, token))
     controller.tick()
     with controller.db.transaction() as db:
-        snapshot = json.loads(db.execute(
-            "SELECT snapshot FROM contents WHERE id=?", (before["desired"],)
-        ).fetchone()[0])
+        snapshot = json.loads(
+            db.execute("SELECT snapshot FROM contents WHERE id=?", (before["desired"],)).fetchone()[0]
+        )
         snapshot["viewing_options"][0]["channel"] = "New live locator"
         controller.replace_catalog(db, [snapshot], "teamarr")
     controller.stage_playback()
+    await finish_check(controller)
     with controller.db.transaction() as db:
         job = db.execute("SELECT payload FROM jobs ORDER BY intent DESC LIMIT 1").fetchone()
     assert json.loads(job["payload"])["purpose"] == "route_handoff"
@@ -316,6 +322,7 @@ async def test_new_manual_choice_preempts_pause_recovery(live_prime):
         device["plan"] = [controller.entry(other["id"])]
         controller.db.save_device(db, device)
     controller.stage_playback()
+    await finish_check(controller)
     with controller.db.transaction() as db:
         job = db.execute("SELECT content_id FROM jobs ORDER BY intent DESC LIMIT 1").fetchone()
     assert job["content_id"] == other["id"]
@@ -334,6 +341,7 @@ async def test_paused_automation_does_not_queue_recovery_checks(live_prime):
         controller.db.save_device(db, device)
     scheduled = row(workflow, token)["next_check"]
     controller.stage_playback()
+    await finish_check(controller)
     assert row(workflow, token)["next_check"] == scheduled
     assert job_count(controller) == 1
 
@@ -348,4 +356,5 @@ async def test_explicit_play_now_bypasses_final_recheck(live_prime):
         device["retry_playback"] = before["desired"]
         controller.db.save_device(db, device)
     controller.stage_playback()
+    await finish_check(controller)
     assert job_count(controller) == 2

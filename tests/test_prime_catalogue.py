@@ -35,6 +35,20 @@ def saved(controller):
         return controller.db.device(db), controller.db.meta(db, key("living-room"))
 
 
+async def finish_check(controller):
+    """Drive the real asynchronous catalogue boundary in coordinator tests."""
+    await asyncio.sleep(0)
+    workflow = controller.executor
+    task = getattr(workflow, "catalogue_task", None)
+    if task:
+        await asyncio.wait_for(asyncio.shield(task), 2)
+    else:
+        _, probe = saved(controller)
+        if probe and probe["state"] == "pending":
+            await workflow.observe_catalogue(probe)
+    controller.stage_playback()
+
+
 async def test_upcoming_refresh_then_live_changes_intent_only_after_ready(tmp_path, monkeypatch):
     controller, workflow = rig(tmp_path)
     request, item, intent = setup_selection(controller, monkeypatch)

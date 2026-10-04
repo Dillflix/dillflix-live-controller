@@ -12,6 +12,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -e '.[test]'
+      - run: python -m pip install "git+https://github.com/Dillflix/dillflix-prime-player.git@ae023547cbf3f9cc6dccac20e188b9b0d97dbab7"
       - run: python -m pytest -q -o faulthandler_timeout=30
       - uses: actions/setup-node@v4
         with:

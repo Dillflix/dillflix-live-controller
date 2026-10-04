@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from playback_fixtures import payload
+from test_prime_catalogue import finish_check
 from test_prime_workflow import cleanup, launch, rig, row
 
 from controller.database import encode
@@ -51,6 +52,7 @@ async def test_bound_ended_persists_immediately_and_planner_moves_on(tmp_path):
         assert report["content_status"]["effective_state"] == "ended"
         assert report["content_status"]["observation"]["source"] == "prime_player"
         controller.stage_playback()
+        await finish_check(controller)
         with controller.db.transaction() as db:
             device = controller.db.device(db)
             assert device["desired"] == "fallback-game"
