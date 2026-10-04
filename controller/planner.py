@@ -48,9 +48,20 @@ def content_view(snapshot, active, lifecycle, *, prime_search_at=None):
     league = event.get("league") or snapshot.get("competition") or "unknown"
     teams = [{**t, "key": team_key(t, league), "league": league} for t in teams]
     options = allowed_options(snapshot)
-    scheduled_search = bool(
+    # Teamarr's rule-based broadcasts deliberately report unknown live status.
+    # A fresh listing may reach Prime's catalogue check, which still has to
+    # confirm an entitled LIVE match before staging any playback request.
+    unknown_broadcast = bool(
+        active
+        and snapshot["kind"] == "broadcast"
+        and snapshot.get("status") == "unknown"
+        and lifecycle["state"] == "unknown"
+        and lifecycle.get("stale") is False
+        and lifecycle.get("source") == "teamarr_feed"
+    )
+    prime_search = bool(
         prime_search_at is not None
-        and lifecycle["state"] == "scheduled"
+        and (lifecycle["state"] == "scheduled" or unknown_broadcast)
         and parse_time(snapshot["start_time"]) <= prime_search_at
         and any(o.get("app") == "prime_video" for o in options)
     )
@@ -70,14 +81,18 @@ def content_view(snapshot, active, lifecycle, *, prime_search_at=None):
         "active": bool(active),
         "lifecycle": lifecycle,
         "viewing_options": options,
-        "playable": bool(options) and (lifecycle["state"] == "live" or scheduled_search),
-        "launch_eligibility": "scheduled_start_reached"
-        if scheduled_search
+        "playable": bool(options) and (lifecycle["state"] == "live" or prime_search),
+        "launch_eligibility": "broadcast_start_reached"
+        if prime_search and unknown_broadcast
+        else "scheduled_start_reached"
+        if prime_search
         else "confirmed_live"
         if lifecycle["state"] == "live" and options
         else "ineligible",
         "availability_reason": "No valid viewing options"
         if not options
+        else "Prime live availability check required"
+        if prime_search and unknown_broadcast
         else ("Awaiting fresh live status" if lifecycle["state"] == "unknown" else None),
         "scores": [event.get("away_score"), event.get("home_score")],
         "status_detail": event.get("status_detail"),

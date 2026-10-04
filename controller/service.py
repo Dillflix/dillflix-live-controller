@@ -393,7 +393,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             if op == "play_now" and not items[content_id]["playable"]:
                 raise HTTPException(
                     422,
-                    "Play now requires a live event or a scheduled Prime event whose start time has arrived, and a valid viewing option",
+                    "Play now requires a live event, a due scheduled Prime event, or a fresh active "
+                    "Prime broadcast whose start time has arrived, and a valid viewing option",
                 )
             entry = next((p for p in device["plan"] if p["content_id"] == content_id), self.entry(content_id))
             device["plan"] = [p for p in device["plan"] if p["content_id"] != content_id]

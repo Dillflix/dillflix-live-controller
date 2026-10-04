@@ -49,6 +49,7 @@ The watch plan contains `{id, content_id, created_at}` entries in priority order
 - `artwork`, scheduled `start_time`, `expected_end_time`, and `end_time_estimated`.
 - `lifecycle`: effective `state`, `last_known_state` (the stored observation's state), `stale`, `tracked`, `observed_at`, `received_at`, declared `valid_until`, bounded `effective_valid_until`, `timestamp_basis`, `source`, `simulated`, and `refresh`. Current states are scheduled, live, ended, cancelled, postponed, delayed, suspended, and unknown. Observation/source fields can be null when evidence is unavailable.
 - All allowed `viewing_options`, `playable`, `availability_reason`, `active`, `watch_entry_id`, rule `priority`, scores/status detail when present, and temporary playback-failure information.
+- `launch_eligibility`: `confirmed_live`, `scheduled_start_reached`, `broadcast_start_reached`, or `ineligible`. In Prime Player mode, `playable` also permits catalogue checking for due scheduled events and fresh active Teamarr broadcasts explicitly reporting unknown status. `broadcast_start_reached` does not change lifecycle to live; a matching entitled LIVE Prime result is required before staging playback.
 
 The card is a projection. The original Teamarr object is retained privately in the catalog and passed intact in playback jobs. Scores, logos, team names, and dates are not derived from title parsing.
 

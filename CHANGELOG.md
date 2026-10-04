@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Allow fresh active Teamarr broadcasts with explicit unknown status, including NFL RedZone, to reach the existing Prime catalogue check after their start time. Priorities, watch-plan entries and Play now use the same eligibility rule.
+- Preserve unknown lifecycle and current playback while checking. Only an entitled LIVE Prime match authorizes a launch; stale/withdrawn listings, future starts, ordinary unknown events and terminal statuses do not gain eligibility.
+
 ## 0.14.15
 
 - Complete the selected event when Prime reports fresh native Ended evidence for the owning, previously verified live playback attempt. Advance scheduling without treating completion as a playback failure; retain watch-plan entries.

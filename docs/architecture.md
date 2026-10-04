@@ -33,7 +33,7 @@ Prime completion is written atomically to the executor report and durable conten
 
 An accepted or navigating launch remains pending when its event status temporarily becomes unknown and the planner has no other eligible selection. It retains the same request, intent and deadline. Fresh, valid playback verification can complete that existing request during the uncertainty. Explicit lifecycle changes, withdrawn routes, changed intent, manual control and the original deadline still invalidate it. Unknown status never authorizes a queued or new launch.
 
-1. Candidates need live status and at least one permitted viewing option. Prime events with fresh scheduled status can also initiate search once their scheduled start is reached. Locked-feed evidence temporarily excludes unchanged viewing options. A recent failed attempt temporarily defers that content. Inactive catalog entries remain candidates only when already observed or manually committed.
+1. Candidates need live status and at least one permitted viewing option. Prime events with fresh scheduled status can also initiate search once their scheduled start is reached. Active Teamarr broadcasts explicitly reporting unknown status can do the same while their feed evidence is fresh; Prime must confirm an entitled live match before playback is requested. Locked-feed evidence temporarily excludes unchanged viewing options. A recent failed attempt temporarily defers that content. Inactive catalog entries remain candidates only when already observed or manually committed, and do not qualify for the unknown-broadcast search exception.
 2. The first eligible watch-plan entry wins. Its rank only matters during overlap; all other entries remain reserved for their remaining live windows.
 3. Otherwise, the first enabled matching rule wins. Conditions within a rule are ANDed. Within that tier, the best team rank wins, followed by the current event, scheduled start, and opaque content ID for stable ties.
 4. Existing verified playback on a still-permitted route is retained if its content status becomes unknown, unless a higher manual choice is confirmed live. Missing playback evidence grants a bounded recovery grace instead. Editing a future reservation does not accidentally clear this protection.
@@ -197,9 +197,13 @@ native stopping may remain unknown.
 In Prime Player mode, a fresh `scheduled` event with a permitted Prime route becomes
 a search candidate once its start time arrives. Its Teamarr lifecycle stays scheduled.
 Catalogue matching requires an entitled LIVE event with a content ID before a
-launch; Prime Player must resolve the live action and verify startup. Future, unknown, delayed, postponed,
-suspended and terminal statuses do not qualify via this rule. Expected end times
-never prove completion. Failed matches use the existing retry backoff.
+launch; Prime Player must resolve the live action and verify startup. Active Teamarr
+broadcasts explicitly reporting `unknown` (such as rule-based RedZone coverage)
+also qualify for this check after their start time, provided their Teamarr lifecycle
+evidence is fresh. Their lifecycle stays unknown. Expired status, unknown ordinary
+events/sessions, future starts, delayed, postponed, suspended and terminal statuses
+do not qualify via this exception. Expected end times never prove completion or
+withdraw a broadcast. Failed matches use the existing retry policy.
 
 A playable watch-plan commitment keeps its priority during launch retry backoff.
 The controller retains that desired event and waits for the retry deadline rather
