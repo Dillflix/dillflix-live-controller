@@ -90,12 +90,12 @@ class ExecutorStore:
             )
             for old in db.execute(
                 "SELECT * FROM executor_jobs WHERE device_id=? AND cancel_requested=0 AND retired_at IS NULL "
-                "AND state IN ('accepted','navigating','playing_verified','waiting_for_feed','access_unknown','feeds_locked','no_matching_feed')",
+                "AND state IN ('accepted','navigating','playing_verified','waiting_for_feed','access_unknown','feeds_locked','no_matching_feed','completed')",
                 (body["device_id"],),
             ).fetchall():
                 report = json.loads(old["report"])
                 report["cancellation"] = {"state": "requested", "input_quiescent": False}
-                if old["state"] != "playing_verified":
+                if old["state"] not in {"playing_verified", "completed"}:
                     report["operation"].update(state="superseded", phase="superseded", finished_at=utc())
                 self.write(db, old["token"], report, cancel_requested=1, next_check=0)
             token, now = "pb_" + secrets.token_urlsafe(24), utc()

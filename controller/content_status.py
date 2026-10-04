@@ -364,10 +364,19 @@ class ContentStatusCoordinator:
             requests = []
             # Cap work per pass. Due checks sort before future checks, preventing starvation.
             rows = db.execute(
-                "SELECT c.*,s.next_check FROM contents c LEFT JOIN content_status s ON s.content_id=c.id "
+                "SELECT c.*,s.next_check,s.observation AS status_observation FROM contents c LEFT JOIN content_status s ON s.content_id=c.id "
                 "ORDER BY COALESCE(s.next_check,0),c.id"
             ).fetchall()
             for row in rows:
+                observation = json.loads(row["status_observation"]) if row["status_observation"] else {}
+                # A native completion is a retained fact, not a feed cache entry.
+                # Do not repeatedly revalidate it or revive it from Teamarr live.
+                if (
+                    observation.get("source") == "prime_player"
+                    and observation.get("state") == "ended"
+                    and (observation.get("evidence") or {}).get("decision") == "confirmed"
+                ):
+                    continue
                 if row["id"] not in pins or (not force and (row["next_check"] or 0) > time.time()):
                     continue
                 request = {

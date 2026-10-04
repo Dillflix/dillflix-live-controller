@@ -2,7 +2,9 @@
 
 The controller owns scheduling, persistent intent, result matching and durable Play/status/Cancel tokens. Prime Player owns application execution and runtime evidence. `controller/prime_player/` implements bounded asynchronous service RPCs and label matching; `controller/executor/` contains the shared token API, store and worker. There is one real execution path. See [workflow and setup](prime-player.md).
 
-Teamarr remains the catalog and event-lifecycle dependency. Player stopping, switching or ending never proves sports-event completion. The controller does not collect screenshots, accessibility labels or MediaSession state for execution. Screen streaming is a separate view-only feature.
+Teamarr supplies the catalog and event lifecycle. A fresh native Prime `Ended` signal also completes the selected event when it matches the owning, previously verified live playback attempt. Stopping, switching, pausing, errors and missing evidence do not complete events. The controller does not collect screenshots, accessibility labels or MediaSession state for execution. Screen streaming is a separate view-only feature.
+
+Prime completion is written atomically to the executor report and durable content status. Its source is `prime_player`, the operation becomes `completed`, and the next planning cycle selects the next eligible event while retaining the completed reservation. Session, attempt, requested/resolved content, native current content, freshness, live resolution and current intent/ownership must all match. Completion invalidates outstanding lifecycle lookups and stops further feed revalidation for that event, preserving it across restarts and later Teamarr live responses. Evidence age does not reopen a completed event.
 
 ## Responsibilities
 

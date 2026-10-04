@@ -111,6 +111,7 @@ class Operation(Strict):
         "accepted",
         "navigating",
         "playing_verified",
+        "completed",
         "failed",
         "cancelled",
         "superseded",
@@ -158,7 +159,7 @@ LifecycleState = Literal[
 class LifecycleObservation(Strict):
     content_id: str
     state: LifecycleState
-    source: Literal["teamarr_feed", "prime_video_visual"]
+    source: Literal["teamarr_feed", "prime_video_visual", "prime_player"]
     simulated: Literal[False]
     timestamp_basis: Literal["feed_received", "device_observed"]
     observed_at: datetime | None

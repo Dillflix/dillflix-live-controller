@@ -11,6 +11,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from ..database import encode
 from ..executor.models import ExecutorError
 from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
@@ -353,6 +354,11 @@ class PrimePlaybackWorkflow(PlaybackWorker):
         with self.db.transaction() as db:
             row = self.store.allowed(db, token)
             report = json.loads(row["report"])
+            if (
+                report["content_status"].get("effective_state") == "ended"
+                and (report["content_status"].get("observation") or {}).get("source") == "prime_player"
+            ):
+                return False
             previously_verified = bool((report.get("observation") or {}).get("verified"))
             workflow = report["prime_player"]
             launch = workflow.get("launch_outcome") or {}
@@ -374,6 +380,28 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                     fresh = 0 <= (now - observed).total_seconds() < self.settings.observation_ttl
             except (ValueError, TypeError, KeyError, OverflowError):
                 pass
+            device = self.db.device(db, row["device_id"])
+            owner = db.execute(
+                "SELECT current_token FROM executor_devices WHERE device_id=?", (row["device_id"],)
+            ).fetchone()
+            ended = bool(
+                fresh
+                and status.get("state") == "ended"
+                and status.get("is_playing") is False
+                and status.get("matches_attempt") is True
+                and not status.get("error")
+                and status.get("current_content_id") == launch.get("resolved_id")
+                and launch.get("state") == "playing"
+                and launch.get("evidence", {}).get("resolution", {}).get("playbackClass") == "live_watch_now"
+                and row["state"] == "playing_verified"
+                and device["intent_version"] == row["intent"]
+                and device["automation"] == "active"
+                and owner
+                and owner[0] == token
+            )
+            if ended:
+                self.record_completion(db, row, report, observed, now)
+                return False
             verified = bool(
                 fresh
                 and launch.get("state") == "playing"
@@ -444,8 +472,7 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                     "verified",
                     row["device_id"],
                 )
-            # Even explicit player Ended is not a sports-event completion fact.
-            # Leave content_status to Teamarr/manual lifecycle evidence.
+            # Pause/stop/error/unknown and unconfirmed Ended remain recovery conditions.
             self.store.write(
                 db,
                 token,
@@ -454,6 +481,60 @@ class PrimePlaybackWorkflow(PlaybackWorker):
                 next_check=time.time() + self.config.monitor_interval,
             )
             return verified
+
+    def record_completion(self, db, row, report, observed, now):
+        """Publish one bound native Ended observation atomically to both read models."""
+        stamp = now.isoformat()
+        workflow = report["prime_player"]
+        evidence = {
+            "content_id": row["content_id"],
+            "state": "ended",
+            "source": "prime_player",
+            "simulated": False,
+            "timestamp_basis": "device_observed",
+            "observed_at": observed.isoformat(),
+            "received_at": stamp,
+            "valid_until": (observed + timedelta(seconds=self.settings.status_ttl)).isoformat(),
+            "evidence": {
+                "method": "device_observation",
+                "decision": "confirmed",
+                "evidence_id": f"prime-ended:{workflow['session_id']}:{workflow['attempt_id']}",
+                "summary": "Prime reported Ended for the currently bound live playback attempt",
+                "confidence": None,
+                "captured_at": observed.isoformat(),
+            },
+        }
+        report["content_status"].update(
+            lookup_state="ok",
+            effective_state="ended",
+            stale=False,
+            observation=evidence,
+            checked_at=stamp,
+            error=None,
+        )
+        if report["observation"]:
+            report["observation"]["verified"] = False
+        report["observation_status"] = {"state": "fresh", "checked_at": stamp, "error": None}
+        report["operation"].update(
+            state="completed", phase="event_ended", updated_at=stamp, finished_at=stamp, error=None
+        )
+        self.store.write(db, row["token"], report, state="completed", next_check=0)
+        # Replace the lookup request ID too: a feed lookup issued before this
+        # observation must not overwrite it when its response arrives later.
+        db.execute(
+            "INSERT INTO content_status(content_id,request_id,observation,last_success,next_check) VALUES (?,?,?,?,0) "
+            "ON CONFLICT(content_id) DO UPDATE SET request_id=excluded.request_id,observation=excluded.observation,"
+            "last_success=excluded.last_success,error=NULL,failures=0,next_check=0",
+            (row["content_id"], uuid4().hex, encode(evidence), stamp),
+        )
+        self.db.log(
+            db,
+            stamp,
+            "Event completed by Prime",
+            "The selected live feed reported Ended. Watch plan retained.",
+            "completion",
+            row["device_id"],
+        )
 
     @correlated
     async def monitor(self, row):

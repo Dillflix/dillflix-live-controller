@@ -303,6 +303,7 @@ components:
           enum:
           - teamarr_feed
           - prime_video_visual
+          - prime_player
           title: Source
           type: string
         simulated:
@@ -377,6 +378,7 @@ components:
           - accepted
           - navigating
           - playing_verified
+          - completed
           - failed
           - cancelled
           - superseded

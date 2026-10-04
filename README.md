@@ -103,7 +103,7 @@ Settings shows content-status health independently of schedule and team-director
 
 `STATUS_INTERVAL_SECONDS` defaults to 15 (minimum 5). Lookups have a five-second timeout and bounded retry backoff. They continue while automation is paused. The internal lookup contract carries `content_id` and the complete original Teamarr entry, preserving identifiers for a future real service. Real mode uses acquired Prime Video completion evidence plus unchanged Teamarr feed facts through the same internal boundary.
 
-**Teamarr evidence retains its original freshness.** The default simulator rereads cached feed status; real mode additionally monitors the requested Prime Video content for scoped completion. Neither mode independently fetches sports-results facts for every unplayed/out-of-window reservation. Without fresh evidence those events stay unknown. Teamarr supplies no provider observation timestamp: `observed_at` is null, `received_at` is the feed read, and `timestamp_basis` is `feed_received`. Visual completion uses `device_observed` acquisition times. See [evidence policy](docs/executor-api-handoff.md#verification-and-completion).
+**Teamarr evidence retains its original freshness.** The default simulator rereads cached feed status; real mode additionally monitors the requested Prime Video content for scoped completion. Neither mode independently fetches sports-results facts for every unplayed/out-of-window reservation. Without fresh evidence those events stay unknown. Teamarr supplies no provider observation timestamp: `observed_at` is null, `received_at` is the feed read, and `timestamp_basis` is `feed_received`. Native Prime completion uses `device_observed` acquisition times. See [evidence policy](docs/executor-api-handoff.md#reading-status).
 
 ## Connect the Teamarr catalog
 
@@ -229,7 +229,7 @@ Coverage includes database upgrades, persistent undo, configuration round trips,
 
 ## Real playback and remaining validation
 
-The [API guide](docs/executor-api-handoff.md), [OpenAPI contract](docs/executor-api.openapi.yaml), and [setup guide](docs/prime-player.md) cover Play, token status and Cancel. Cancellation acknowledges input quiescence independently of native stop confirmation. Player stopping, switching or ending never proves that the sports event has finished. Teamarr and explicit manual completion supply lifecycle evidence.
+The [API guide](docs/executor-api-handoff.md), [OpenAPI contract](docs/executor-api.openapi.yaml), and [setup guide](docs/prime-player.md) cover Play, token status and Cancel. Cancellation acknowledges input quiescence independently of native stop confirmation. Fresh Prime `Ended` for the owning, previously verified live attempt completes the selected event and lets scheduling advance. Pause, stop, errors and missing evidence remain recovery conditions. Teamarr and explicit manual completion also supply lifecycle evidence.
 
 See [the roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) for boundaries and remaining host validation. Run the target-TV procedure before relying on unattended navigation. Real model accuracy, Prime account availability, protected video visibility, physical mobile browsers, Docker/nginx and live endurance have not been validated in this development environment. Other streaming app adapters and independent sports-results providers remain future integrations.
 

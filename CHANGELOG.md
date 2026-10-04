@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.15
+
+- Complete the selected event when Prime reports fresh native Ended evidence for the owning, previously verified live playback attempt. Advance scheduling without treating completion as a playback failure; retain watch-plan entries.
+- Persist completion across restarts, evidence expiry and late Teamarr live responses. Pause, stop, buffering, errors, missing evidence and stale or superseded attempts cannot complete an event.
+- Expose executor operation `completed` and lifecycle source `prime_player` with the matching session/attempt evidence.
+
 ## 0.14.14
 
 - Stop automatically retrying events after search finds no matching feed. Preserve watch-plan entries; Play now or changed viewing options permit a new attempt.

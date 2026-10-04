@@ -56,7 +56,7 @@ Take control suspends automation for a chosen duration, including four-hour even
 
 Version 0.14 replaces the old screenshot/ADB executor and native probe with the external Prime Player service. The controller searches only after selecting a playback intent, matches eligible live result labels deterministically or with a text LLM, records an attempt before launch, and monitors that attempt without repeating playback on uncertain responses. Public operations remain Play, status by token and Cancel.
 
-API 4 ownership envelopes, out-of-band cancellation and attempt-scoped stop connect automation and manual input to one runtime authority. Native stop confirmation remains distinct from input quiescence; playback end remains distinct from event completion. See [workflow and acceptance](prime-player.md).
+Ownership envelopes, out-of-band cancellation and attempt-scoped stop connect automation and manual input to one runtime authority. Native stop confirmation remains distinct from input quiescence. Controller 0.14.15 recognizes fresh, bound native Ended evidence from the owning live attempt as event completion; other nonplaying states remain recovery conditions. See [workflow and acceptance](prime-player.md).
 
 Remaining work: target-host rollout, live matching accuracy, physical search/play/cancel/handoff, socket permissions, restart/outage checks, and endurance. Other streaming applications and independent unplayed-event results providers remain future integrations.
 

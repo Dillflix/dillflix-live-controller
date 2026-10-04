@@ -24,7 +24,7 @@ The workflow searches after the planner has decided to initiate/switch playback.
 
 `prime_player` retains the query, eligible/excluded candidate audit, decision and quoted labels, selected handle/GTI/route, service session, attempt, launch outcome, latest playback status, ownership and cancellation/stop evidence. Search handles are temporary and never replayed after uncertain delivery. Polling the controller getter reads stored evidence; it does not refresh timestamps or issue a device query.
 
-`content_status` is independent sports-event lifecycle evidence from Teamarr or explicit manual completion in the controller. Prime stopped, paused, switched, player-ended, lost connection and elapsed schedule estimates never prove event completion. Broadcast/session coverage cannot be completed by an unrelated individual match ending.
+`content_status` carries event lifecycle evidence from Teamarr or confirmed native Prime completion; explicit manual completion also applies in the controller. Fresh Prime `ended` completes only the owning, previously verified live attempt with matching service session, attempt, requested/resolved/current content and current intent. It requires `matches_attempt=true`, `is_playing=false` and no error. The operation becomes `completed` with phase `event_ended`; lifecycle source is `prime_player`, with confirmed device evidence naming the session and attempt. Completion persists across expiry, restart and late feed responses. Prime stopped, paused, switched, errors, lost connection and elapsed schedule estimates never prove event completion. Broadcast/session coverage cannot be completed by an unrelated individual match ending.
 
 ## Cancellation and manual input
 

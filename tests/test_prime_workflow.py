@@ -243,7 +243,7 @@ async def test_resolver_refusal_reason_reaches_controller_failure_and_export(tmp
 
 
 @pytest.mark.parametrize(
-    "state", ["paused", "buffering", "stopped", "not_current", "ended", "unknown", "error"]
+    "state", ["paused", "buffering", "stopped", "not_current", "unknown", "error"]
 )
 async def test_nonplaying_status_never_completes_event(tmp_path, state):
     controller, workflow = rig(tmp_path)

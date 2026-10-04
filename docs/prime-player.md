@@ -2,7 +2,7 @@
 
 ## Status
 
-Controller 0.14.14 requires Prime Player **API 9 / 0.1.0a20** for tile access and feed-readiness handling. Search, matching, Play, current status, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
+Controller 0.14.15 requires Prime Player **API 9 / 0.1.0a20** for tile access and feed-readiness handling. Search, matching, Play, current status, native completion, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
 
 Host tests cover durable workflow behavior, RPC delivery and the actual service ownership engine with a controlled runtime. Physical TV, live inference and deployment acceptance remain pending.
 
@@ -103,9 +103,19 @@ reopen; a continued nonplaying/unverified result allows ordinary recovery if the
 event is still live and its route remains permitted. Explicit Play now and route
 changes bypass this same-event guard; manual ownership still gates all automation.
 
-Paused, buffering, stopped, switched, ended and unknown player states are recorded
-without asserting sporting-event completion. Teamarr and the user's explicit
-manual completion remain the lifecycle sources. Live mode means the service
+Fresh native `ended` completes the selected event only for the owning, previously
+verified live attempt: service session, attempt, requested/resolved IDs and native
+current content must match, with `matches_attempt=true`, `is_playing=false` and no
+error. Superseded/cancelled work, paused automation and manual ownership cannot
+publish completion. The operation becomes `completed`, lifecycle source becomes
+`prime_player`, and scheduling advances on its next cycle without a playback
+failure. The watch-plan entry remains. Completion survives restart, expiry and
+late Teamarr live responses. This uses the existing read-only monitoring call;
+it requires no extra navigation or player upgrade.
+
+Paused, buffering, stopped, switched, unknown and unconfirmed ended states remain
+recovery conditions. Teamarr and explicit manual completion also remain lifecycle
+sources. Live mode means the service
 resolved Watch Now; current status is not a fresh measurement of delay behind live
 or HDMI/rendered video quality.
 
