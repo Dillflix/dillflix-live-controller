@@ -182,6 +182,8 @@ class EventMatcher:
                 if state == "feeds_locked" and any(a["method"] in {"abstain", "llm"} for a in history[:-1]):
                     return None, {
                         **audit,
+                        "method": "abstain",
+                        "candidates": eligible,
                         "reason": "Access alternatives remain ambiguous",
                         "passes": history,
                     }

@@ -356,3 +356,38 @@ def test_no_match_remains_suppressed_beyond_former_backoff(rig):
     assert device["desired"] != job["content_id"]
     assert device["prime_access"][job["content_id"]]["retry_after"] is None
     assert job["content_id"] not in device["failures"]
+
+
+async def test_ambiguous_entitled_alternative_cannot_become_a_durable_exclusion():
+    from test_prime_matching import Model
+
+    from controller.prime_player.matching import selection_state
+
+    class AmbiguousFirst(Model):
+        async def completion(self, *args, **kwargs):
+            self.value = (
+                {
+                    "content_id": None,
+                    "viewing_option_id": None,
+                    "reason": "Cannot distinguish this entitled candidate",
+                    "evidence_labels": [],
+                }
+                if not self.calls
+                else {
+                    "content_id": GTI,
+                    "viewing_option_id": "prime-option",
+                    "reason": "Matching subscription-only event",
+                    "evidence_labels": ["Jets vs. Lions"],
+                }
+            )
+            return await super().completion(*args, **kwargs)
+
+    request = payload()
+    request["allowed_viewing_options"][0]["language"] = "English"
+    selected, audit = await EventMatcher(ExecutorConfig(), model=AmbiguousFirst({})).choose(
+        request,
+        results(tile(entitlement_status="UNENTITLED"), tile(cid=GTI + "-ambiguous")),
+        "America/Vancouver",
+    )
+    assert selected is None
+    assert selection_state(selected, audit) == "access_unknown"
