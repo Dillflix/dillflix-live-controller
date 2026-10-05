@@ -23,6 +23,7 @@ from .models import (
     SimulationCommand,
     UndoCommand,
 )
+from .now_playing import NowPlaying, now_playing
 from .planner import choose, priority, team_priority
 from .screen import ScreenStream, serve_screen
 from .service import Controller
@@ -201,6 +202,11 @@ def create_app(settings=None, *, start_workers=True):
     @app.get("/api/v1/devices/{device_id}/state")
     def state(device_id: str):
         return service.overview(device_id)["device"]
+
+    @app.get("/api/v1/devices/{device_id}/now-playing", response_model=NowPlaying)
+    def current_playback(device_id: str):
+        """Return observed live-event metadata without contacting the player."""
+        return JSONResponse(now_playing(service, device_id).model_dump(), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/devices/{device_id}/watch-plan")
     def plan(device_id: str):

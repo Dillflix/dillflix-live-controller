@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.19
+
+- Add `GET /api/v1/devices/{device_id}/now-playing` with observed live-event title, opaque content ID, league, timing metadata, and horizontal game-thumbs matchup thumbnail URL. Reads make no player or catalogue RPCs.
+- Return explicit idle/unverified states and null event metadata when live playback cannot be established. Check evidence freshness at read time; preserve verified playback through feed gaps and unknown lifecycle. Publish the response schema and integration documentation.
+
 ## 0.14.18
 
 - Inspect an identified Prime event's broadcast choices before authorizing playback. Prefer entitled live English or unlabeled broadcasts and skip explicitly French/other-language feeds; send the selected child GTI to Play instead of Prime's default parent.

@@ -27,6 +27,7 @@ Prime completion is written atomically to the executor report and durable conten
 | `controller/screen.py`, `controller/screen_capture.py` | Shared, on-demand view-only ADB/scrcpy capture; independent of planner and playback evidence |
 | `controller/fixtures.py` | Explicit sample lifecycle transitions, independent of estimated end times |
 | `controller/api.py` | Same-origin HTTP API, update notifications, and built frontend |
+| `controller/now_playing.py` | Read-only observed live-event API projection and landscape matchup artwork URLs |
 | `frontend/src` | React interface using server state rather than an independent browser watch plan |
 
 ## Selection rules
