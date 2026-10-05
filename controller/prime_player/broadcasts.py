@@ -115,7 +115,9 @@ def select(parent, parent_title, response, option):
         return None, {**audit, "match_status": "uncertain", "reason": "Broadcast row has no choices"}
     preferred = [i for i in items if i["language"] in (None, "en") and not EXCLUDED.search(i["title"])]
     route_unknown = False
-    for field in ("channel", "stream_title"):
+    # The parent matcher already evaluated a direct route. Recheck constraints
+    # only when substituting a child broadcast with potentially different coverage.
+    for field in ("channel", "stream_title") if has_row else ():
         required_text = option.get(field)
         if required_text:
 

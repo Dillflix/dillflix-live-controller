@@ -120,6 +120,7 @@ def test_direct_event_without_alternatives_keeps_original_id_but_checks_language
     value = copy.deepcopy(CAPTURE)
     value["resource"]["containerList"] = []
     assert choose(value)[0]["content_id"] == PARENT
+    assert choose(value, option={"id": "prime", "channel": "New live locator"})[0]["content_id"] == PARENT
     assert choose(value, title="Lions (In French)")[0] is None
 
 
