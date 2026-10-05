@@ -69,7 +69,12 @@ def create_app(settings=None, *, start_workers=True):
                 await asyncio.to_thread(recorder.close)
 
     app = FastAPI(title="Dillflix Controller", version="0.13.0", lifespan=lifespan)
-    app.add_middleware(ProxyAccess, secret=settings.proxy_secret, public_auth_mode=settings.public_auth_mode)
+    app.add_middleware(
+        ProxyAccess,
+        secret=settings.proxy_secret,
+        public_auth_mode=settings.public_auth_mode,
+        admin_auth_mode=settings.admin_auth_mode,
+    )
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control

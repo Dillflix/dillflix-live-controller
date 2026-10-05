@@ -34,9 +34,12 @@ Prime completion is written atomically to the executor report and durable conten
 
 Public access defaults to proxy authentication. Explicit guest mode permits only
 the public HTTP page, assets and API without identity, attributing requests to
-Guest in the user priority tier. Admin HTTP and WebSocket routes still require
-the admin proxy in guest mode; a missing proxy secret never grants legacy admin
-access in that mode. See [public/guest configuration](public-app.md).
+Guest in the user priority tier. By default, admin HTTP and WebSocket routes
+require the admin proxy in guest mode; a missing proxy secret never grants
+legacy admin access in that mode. Explicit `CONTROLLER_ADMIN_AUTH_MODE=trusted-lan`
+permits direct admin HTTP and WebSocket access without identity. Guest API
+actions retain their user actor and priority even in this mode. See
+[public/guest configuration](public-app.md).
 
 An accepted or navigating launch remains pending when its event status temporarily becomes unknown and the planner has no other eligible selection. It retains the same request, intent and deadline. Fresh, valid playback verification can complete that existing request during the uncertainty. Explicit lifecycle changes, withdrawn routes, changed intent, manual control and the original deadline still invalidate it. Unknown status never authorizes a queued or new launch.
 

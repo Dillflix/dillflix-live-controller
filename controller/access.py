@@ -3,6 +3,7 @@
 The secret authenticates nginx, not the browser. nginx must overwrite every
 X-Dillflix-* header, authorize the admin service, and isolate the port.
 Explicit guest mode bypasses authentication only on the public HTTP surface.
+Explicit trusted-lan admin mode permits direct administration without login.
 """
 
 import hmac
@@ -16,10 +17,11 @@ GUEST = {"type": "user", "id": "guest:anonymous", "name": "Guest"}
 
 
 class ProxyAccess:
-    def __init__(self, app, secret, public_auth_mode="proxy"):
+    def __init__(self, app, secret, public_auth_mode="proxy", admin_auth_mode="proxy"):
         self.app = app
         self.secret = secret
         self.public_auth_mode = public_auth_mode
+        self.admin_auth_mode = admin_auth_mode
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in {"http", "websocket"}:
@@ -39,6 +41,10 @@ class ProxyAccess:
         if guest:
             # Never accept a visitor-supplied username or role in anonymous mode.
             actor = GUEST.copy()
+        elif self.admin_auth_mode == "trusted-lan" and not public:
+            # An explicit deployment choice, never inferred from guest mode or
+            # caller-supplied identity headers. Public APIs retain their policy.
+            actor = LEGACY_ADMIN.copy()
         elif not self.secret:
             if self.public_auth_mode == "guest":
                 status, detail = 403, "Administrator access requires a configured authentication proxy."
@@ -57,7 +63,7 @@ class ProxyAccess:
                     status, detail = 403, "Administrator access required."
         if (
             not status
-            and (guest or self.secret)
+            and (guest or self.secret or self.admin_auth_mode == "trusted-lan")
             and scope["type"] == "http"
             and scope["method"] not in {"GET", "HEAD", "OPTIONS"}
         ):

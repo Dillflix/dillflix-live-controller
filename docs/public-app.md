@@ -41,6 +41,33 @@ The admin Watch plan, Now playing, and activity records identify admin/user sour
 and the authenticated username, or Guest for anonymous requests. Actions made through the public app always have
 user priority, even if the visitor also has admin-site access.
 
+## Direct LAN access without nginx or PlexSSO
+
+For a trusted LAN test where both apps should work without login, set:
+
+```dotenv
+CONTROLLER_PUBLIC_AUTH_MODE=guest
+CONTROLLER_ADMIN_AUTH_MODE=trusted-lan
+CONTROLLER_PROXY_SECRET=
+```
+
+Recreate the controller after changing these values. Open `http://HOST:8790/`
+for the admin app and `http://HOST:8790/public/` for the guest app. Enable the
+desired actions in admin **Settings → Public app**. No proxy, PlexSSO, password,
+or browser identity headers are required. Public actions remain attributed to
+Guest at user priority; admin actions use the legacy Admin actor. Same-origin
+checks apply to writes, including direct programmatic admin requests.
+
+`trusted-lan` explicitly allows anyone who can reach this controller to use its
+admin app, APIs, and sockets. It does not isolate guests from admin access by
+identity or network. Use it only where all connected visitors are trusted to
+administer the controller. It does not disable proxy authentication for public
+APIs when public mode is `proxy`. To restore protected admin access, set admin
+mode back to `proxy` and configure the authentication proxy.
+
+See [temporary branch testing and rollback](public-lan-test.md) for a test using
+a separate checkout and database copy.
+
 ## Guest mode (no public authentication)
 
 Set this in `.env`, then recreate the controller with `docker compose up -d --build`:
@@ -61,7 +88,8 @@ accounts. Browser-supplied identity headers are ignored on public routes, even
 when that browser also has admin credentials. Admin priority, pause/manual
 control, revision checks, idempotency, and same-origin writes still apply.
 
-Public access and admin authentication are configured independently:
+Public access and admin authentication are configured independently. With
+`CONTROLLER_ADMIN_AUTH_MODE=proxy` (the default), the behavior is:
 
 | Public mode | Proxy secret | Public app | Admin app |
 | --- | --- | --- | --- |
@@ -70,7 +98,8 @@ Public access and admin authentication are configured independently:
 | `guest` | Set | No login required | Requires admin proxy identity |
 | `guest` | Blank | No login required | Blocked (403), including APIs and sockets |
 
-Keep `CONTROLLER_PROXY_SECRET` configured to administer the device in guest mode.
+Keep `CONTROLLER_PROXY_SECRET` configured to administer the device in guest mode
+when using the default admin proxy mode.
 That secret authenticates the admin reverse proxy; it does **not** require
 PlexSSO or a public login. The admin proxy can continue using PlexSSO, or use your
 other private/admin authentication. A complete
@@ -85,11 +114,12 @@ server only** and remove its login redirects. Leaving nginx authentication on
 would still prompt public visitors to sign in even though the application is in
 guest mode. Keep the admin server's authentication and header overrides intact.
 
-With no proxy secret, guest browsing works directly at `/public/`, but admin
+With admin mode `proxy` and no proxy secret, guest browsing works directly at `/public/`, but admin
 endpoints are deliberately unavailable. Previously enabled public actions still
 work; a fresh install remains browse-only until an admin configures its private
 proxy and enables actions. Guest mode never turns a public connection into a
-legacy administrator. Set `CONTROLLER_PUBLIC_AUTH_MODE=proxy` and restart to
+legacy administrator; direct admin access requires the separate `trusted-lan`
+opt-in above. Set `CONTROLLER_PUBLIC_AUTH_MODE=proxy` and restart to
 require public login again; existing Guest entries retain their attribution.
 The container uses anonymous `GET /healthz`, which returns only `{"ok": true}`;
 the detailed `/api/health` report remains restricted to admins in guest mode.

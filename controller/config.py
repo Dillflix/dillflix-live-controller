@@ -9,6 +9,7 @@ from .executor.config import ExecutorConfig
 class Settings:
     proxy_secret: str = ""
     public_auth_mode: str = "proxy"
+    admin_auth_mode: str = "proxy"
     database: str = "data/controller.sqlite3"
     mode: str = "demo"
     teamarr_url: str = ""
@@ -41,6 +42,8 @@ class Settings:
     def __post_init__(self):
         if self.public_auth_mode not in {"proxy", "guest"}:
             raise ValueError("CONTROLLER_PUBLIC_AUTH_MODE must be proxy or guest")
+        if self.admin_auth_mode not in {"proxy", "trusted-lan"}:
+            raise ValueError("CONTROLLER_ADMIN_AUTH_MODE must be proxy or trusted-lan")
 
     @property
     def playback_evidence_ttl(self):
@@ -64,6 +67,7 @@ class Settings:
         return cls(
             proxy_secret=os.getenv("CONTROLLER_PROXY_SECRET", ""),
             public_auth_mode=os.getenv("CONTROLLER_PUBLIC_AUTH_MODE", "proxy"),
+            admin_auth_mode=os.getenv("CONTROLLER_ADMIN_AUTH_MODE", "proxy"),
             prime_player_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
             database=os.getenv("CONTROLLER_DATABASE", "data/controller.sqlite3"),
             mode=mode,

@@ -15,6 +15,9 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
   admin-first playback priority, and actor attribution. Choose proxy authentication
   or explicit guest mode (`CONTROLLER_PUBLIC_AUTH_MODE=guest`) for public access
   without login. Public actions default off; admin access stays separate.
+  For direct LAN testing without nginx or PlexSSO, also set
+  `CONTROLLER_ADMIN_AUTH_MODE=trusted-lan`; both apps then work without login.
+  See [test launch and rollback](docs/public-lan-test.md).
 
 - A read-only [now-playing API](docs/now-playing.md) for programmatic consumers,
   with observed live-event metadata and horizontal game-thumbs matchup thumbnails.
