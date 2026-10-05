@@ -6,6 +6,7 @@ import pytest
 
 from controller.executor.models import ExecutorError
 from controller.prime_player.broadcasts import parse, refine, select, title_language
+from controller.prime_player.client import PrimePlayerClient
 
 CAPTURE = json.loads(Path(__file__).with_name("fixtures").joinpath("prime_broadcasts.json").read_text())
 PARENT = CAPTURE["content_id"]
@@ -160,3 +161,19 @@ async def test_unmatched_and_upcoming_parents_never_issue_broadcast_request():
 
     for selected in (None, {**parent(), "readiness": "waiting_for_feed"}):
         assert await refine({}, {}, selected, {}, fetch) == (selected, {})
+
+
+def test_broadcast_capability_requires_implementation_and_runtime_availability():
+    health = {
+        "api_version": 11,
+        "capabilities": ["broadcasts"],
+        "compatibility": {"capabilities": {"broadcasts": {"available": True}}},
+    }
+    PrimePlayerClient.require(health, "broadcasts")
+    health["compatibility"]["capabilities"]["broadcasts"]["available"] = False
+    with pytest.raises(ExecutorError, match="broadcasts"):
+        PrimePlayerClient.require(health, "broadcasts")
+    health["compatibility"]["capabilities"]["broadcasts"]["available"] = True
+    health["capabilities"] = []
+    with pytest.raises(ExecutorError, match="broadcasts"):
+        PrimePlayerClient.require(health, "broadcasts")

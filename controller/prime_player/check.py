@@ -15,7 +15,7 @@ async def check(settings):
     client = PrimePlayerClient(config.prime_socket)
     try:
         health = await client.health()
-        client.require(health, "search", "play", "playback_status", "cancel", "stop", "manual_input")
+        client.require(health, "search", "broadcasts", "play", "playback_status", "cancel", "stop", "manual_input")
         if health.get("api_version", 0) < 11:
             raise ValueError("Prime Player API 11 or newer is required")
         client.ownership(health)
