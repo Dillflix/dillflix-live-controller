@@ -6,7 +6,7 @@ A self-hosted live-sports planner with a responsive web interface. It reads the 
 
 **0.14.0 integrates [Dillflix Prime Player](https://github.com/Dillflix/dillflix-prime-player)** for search, live playback and current status. The controller retains scheduling, durable intent and Play/status/Cancel APIs, with label matching and an optional text LLM for ambiguous results. Automated playback and manual input use the same acknowledged service ownership boundary.
 
-Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 0.1.0a23 or newer, and a shared Unix socket. The screenshot navigator, accessibility/MediaSession collectors and bundled probe have been removed. See [setup and acceptance](docs/prime-player.md) and [API semantics](docs/executor-api-handoff.md). Target-TV and deployment acceptance remain pending.
+Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 0.1.0a26 or newer (including the `broadcasts` capability), and a shared Unix socket. The screenshot navigator, accessibility/MediaSession collectors and bundled probe have been removed. See [setup and acceptance](docs/prime-player.md) and [API semantics](docs/executor-api-handoff.md). Target-TV and deployment acceptance remain pending.
 
 ## What works
 

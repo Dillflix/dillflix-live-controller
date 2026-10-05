@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.18
+
+- Inspect an identified Prime event's broadcast choices before authorizing playback. Prefer entitled live English or unlabeled broadcasts and skip explicitly French/other-language feeds; send the selected child GTI to Play instead of Prime's default parent.
+- Preserve unknown language on unlabeled feeds. Language qualifiers, per-broadcast entitlement icons and live state remain separate evidence; localized artwork and synopsis text do not establish audio language.
+- Retain parent matching and broadcast-selection diagnostics. Stale session/generation, plan changes, manual ownership, malformed responses and missing broadcast capability cannot authorize a switch. Requires Prime Player 0.1.0a26; no player update is needed if that version is already running.
+
 ## Unreleased
 
 - Distinguish unknown event lifecycle from stale status when retaining verified playback. Show the latest playback evidence and executor contact in Activity, and display launch deadlines only for pending requests. Routine successful monitoring remains separate from the decision history.

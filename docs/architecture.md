@@ -44,6 +44,13 @@ The phase matcher uses explicit provider season metadata. It does not guess play
 
 Expected viewing windows are estimates only. They cannot guarantee uninterrupted viewing of two overlapping live events. The interface makes the chosen overlap order explicit. Ended and cancelled entries stop competing but remain in the plan until removed; delays, postponements, unknown status, and failures preserve commitments.
 
+Prime selection also inspects the matched parent event's broadcast choices before
+advancing playback intent. The chosen child GTI retains its parent association and
+original Teamarr viewing-option ID. The deployment policy prefers English or
+unlabeled feeds, skips explicit other languages, and keeps unlabeled audio language
+unknown. Each child needs its own entitlement and LIVE evidence. Prepared results
+remain fenced by plan revision, intent, service session, runtime generation and age.
+
 ## State and recovery
 
 The device record separates configuration revision, manual plan, desired content, monotonically increasing intent version, and observed playback. A configuration edit increments the revision; ordinary status observations do not. A stale client gets HTTP 409 rather than overwriting another browser's changes.

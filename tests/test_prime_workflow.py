@@ -63,12 +63,12 @@ class Player:
             },
             "closed": False,
             "failure": None,
-            "capabilities": ["search", "play", "playback_status", "cancel", "stop", "resolve"],
+            "capabilities": ["search", "play", "playback_status", "cancel", "stop", "resolve", "broadcasts"],
             "suspended": self.suspended,
             "compatibility": {
                 "capabilities": {
                     x: {"available": True}
-                    for x in ("search", "play", "playback_status", "javascript_navigation")
+                    for x in ("search", "broadcasts", "play", "playback_status", "javascript_navigation")
                 }
             },
         }
@@ -106,6 +106,10 @@ class Player:
             "reason": None,
             "evidence": {"resolution": {"playbackClass": "live_watch_now"}},
         }
+
+    async def broadcasts(self, content_id, ownership):
+        return {"session_id": self.session, "content_id": content_id, "generation": 1,
+                "complete": True, "coverage": "live_details_btf_response", "resource": {"containerList": []}}
 
     async def resolve(self, content_id, ownership):
         self.calls.append(("resolve", content_id))

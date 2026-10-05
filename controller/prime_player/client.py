@@ -150,7 +150,7 @@ class PrimePlayerClient:
         available = health.get("compatibility", {}).get("capabilities", {})
         for name in capabilities:
             if name not in implemented or (
-                name in {"search", "play", "playback_status", "stop"}
+                name in {"search", "broadcasts", "play", "playback_status", "stop"}
                 and available.get("javascript_navigation" if name == "stop" else name, {}).get("available")
                 is not True
             ):
@@ -181,6 +181,9 @@ class PrimePlayerClient:
 
     async def search(self, query, timeout, ownership):
         return await self.rpc("search", query=query, timeout=timeout, ownership=ownership, budget=timeout + 5)
+
+    async def broadcasts(self, content_id, ownership):
+        return await self.rpc("broadcasts", content_id=content_id, timeout=30, ownership=ownership, budget=35)
 
     async def resolve(self, content_id, ownership):
         return await self.rpc("resolve", content_id=content_id, timeout=30, ownership=ownership, budget=35)

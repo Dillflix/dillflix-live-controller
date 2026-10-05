@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls
+from .broadcasts import refine
 from .client import rpc_context
 from .labels import search_queries
 from .matching import selection_state
@@ -60,7 +61,7 @@ class CatalogueChecks:
             "revision": device["revision"],
             "intent": device["intent_version"],
             "requested_at": datetime.now(UTC).isoformat(),
-            "expires": now + self.config.prime_search_timeout + self.config.model_timeout + 30,
+            "expires": now + self.config.prime_search_timeout + self.config.model_timeout + 65,
             "request": {
                 "content_snapshot": item["snapshot"],
                 "allowed_viewing_options": item["viewing_options"],
@@ -83,7 +84,7 @@ class CatalogueChecks:
         correlation = rpc_context.set({"catalogue_probe_id": probe["id"], "content_id": probe["content_id"]})
         evidence = {**probe, "model_calls": []}
         try:
-            async with asyncio.timeout(self.config.prime_search_timeout + self.config.model_timeout + 15):
+            async with asyncio.timeout(self.config.prime_search_timeout + self.config.model_timeout + 50):
                 async with self.input_lock:
                     # A queued check can become obsolete before it obtains the RPC lane.
                     if not self.catalogue_current(probe):
@@ -103,6 +104,19 @@ class CatalogueChecks:
                 )
                 with capture_model_calls(lambda value: evidence["model_calls"].append(value)):
                     selected, audit = await self.matcher.choose(probe["request"], results, probe["timezone"])
+
+                async def fetch_broadcasts(content_id):
+                    async with self.input_lock:
+                        if not self.catalogue_current(probe):
+                            raise ExecutorError(
+                                "prime_stale_result", "Plan changed during broadcast selection"
+                            )
+                        current = await self.check_session(health["session_id"], capabilities=("broadcasts",))
+                        return await self.player.broadcasts(
+                            content_id, self.player.ownership(current, automatic=True)
+                        )
+
+                selected, audit = await refine(probe["request"], results, selected, audit, fetch_broadcasts)
                 state = selection_state(selected, audit)
                 evidence.update(state=state, selected=selected, audit=audit)
         except asyncio.CancelledError:
@@ -166,6 +180,9 @@ class CatalogueChecks:
                 "no_matching_feed": "No matching live or upcoming Prime feed found; watch plan retained",
             }
             reason = reasons[state]
+            broadcast_decision = (evidence.get("audit") or {}).get("broadcast_selection") or {}
+            if state == "no_matching_feed" and broadcast_decision.get("match_status") == "no_match":
+                reason = "No English or unlabeled Prime broadcast on the permitted route; watch plan retained"
             device.setdefault("prime_access", {})[probe["content_id"]] = {
                 "state": state,
                 "reason": reason,
@@ -186,6 +203,7 @@ class CatalogueChecks:
                         "probe_id": probe["id"],
                         "content_id": probe["content_id"],
                         "selected": evidence.get("selected"),
+                        "broadcast_selection": (evidence.get("audit") or {}).get("broadcast_selection"),
                         "error": evidence.get("error"),
                     }
                 ),

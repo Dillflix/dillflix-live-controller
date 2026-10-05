@@ -17,6 +17,7 @@ from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
 from ..model_diagnostics import capture_model_calls
 from ..planner import parse_time
+from .broadcasts import refine
 from .catalogue import CatalogueChecks
 from .client import PrimePlayerClient, correlated
 from .labels import search_queries
@@ -41,12 +42,12 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
     def recover(self):
         with self.db.transaction() as db:
             db.execute("DELETE FROM metadata WHERE key LIKE 'prime_catalogue_probe:%'")
-            if self.db.meta(db, "prime_catalogue_contract") != 11:
+            if self.db.meta(db, "prime_catalogue_contract") != 12:
                 for row in db.execute("SELECT id FROM devices").fetchall():
                     device = self.db.device(db, row[0])
                     device["prime_access"] = {}
                     self.db.save_device(db, device)
-                self.db.set_meta(db, "prime_catalogue_contract", 11)
+                self.db.set_meta(db, "prime_catalogue_contract", 12)
             for row in db.execute(
                 "SELECT * FROM executor_jobs WHERE request IS NOT NULL AND cancel_requested=0"
             ).fetchall():
@@ -208,6 +209,15 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             self.save_workflow(token, catalogue=results)
             with capture_model_calls(lambda evidence: self.save_model_call(token, evidence)):
                 selected, audit = await self.matcher.choose(request, results, timezone)
+
+            async def fetch_broadcasts(content_id):
+                current = await self.check_session(session, capabilities=("broadcasts",))
+                receipt = self.player.ownership(current, automatic=True)
+                return await self.mutation(
+                    token, "PRIME_BROADCASTS", lambda: self.player.broadcasts(content_id, receipt)
+                )
+
+            selected, audit = await refine(request, results, selected, audit, fetch_broadcasts)
         self.save_workflow(
             token,
             selection=audit,
@@ -266,6 +276,14 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             )
         if outcome.get("evidence", {}).get("launch", {}).get("disposition") == "not_invoked":
             return
+        if (
+            workflow["selected"].get("parent_content_id")
+            and outcome.get("resolved_id")
+            and outcome["resolved_id"] != workflow["selected"]["content_id"]
+        ):
+            raise ExecutorError(
+                "prime_broadcast_mismatch", "Prime resolved a different broadcast than selected"
+            )
         resolution = outcome.get("evidence", {}).get("resolution", {})
         if resolution and resolution.get("playbackClass") != "live_watch_now":
             raise ExecutorError(

@@ -1,0 +1,358 @@
+{
+  "content_id": "amzn1.dv.gti.16f1e970-79a4-4750-8d45-8fc5ef044a6f",
+  "request_id": "captured-request",
+  "session_id": "captured-session",
+  "generation": 1,
+  "observed_at": "2026-10-05T00:50:10.162886+00:00",
+  "resource": {
+    "containerList": [
+      {
+        "title": "Broadcasts",
+        "paginationLink": null,
+        "items": [
+          {
+            "title": "Lions @ Panthers (In French)",
+            "gti": "amzn1.dv.gti.87219723-d95a-4ff8-b30f-c9d9782badcd",
+            "contentType": "LIVE_EVENT_ITEM",
+            "coverImage": "https://images-na.ssl-images-amazon.com/images/S/le-target-images-prod/amzn1.dv.gti.87219723-d95a-4ff8-b30f-c9d9782badcd/2/BOXART-16X9/en-US.png",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Included with your DAZN subscription",
+                "icon": "ENTITLED_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            },
+            "liveliness": "LIVE",
+            "cardType": "BONUS_SCHEDULE_CARD"
+          },
+          {
+            "title": "Lions @ Panthers",
+            "gti": "amzn1.dv.gti.a0f3772b-99fe-4b62-a454-a37d04a0b359",
+            "contentType": "LIVE_EVENT_ITEM",
+            "coverImage": "https://images-na.ssl-images-amazon.com/images/S/le-target-images-prod/amzn1.dv.gti.a0f3772b-99fe-4b62-a454-a37d04a0b359/2/BOXART-16X9/en-US.png",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Included with your DAZN subscription",
+                "icon": "ENTITLED_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            },
+            "liveliness": "LIVE",
+            "cardType": "BONUS_SCHEDULE_CARD"
+          },
+          {
+            "title": "CTV   Vancouver broadcast",
+            "gti": "amzn1.dv.gti.6ea61ee5-9407-4c80-b876-44b87a5a0ca3",
+            "contentType": "LIVE_EVENT_ITEM",
+            "coverImage": "https://images-na.ssl-images-amazon.com/images/S/le-target-images-prod/amzn1.dv.gti.6ea61ee5-9407-4c80-b876-44b87a5a0ca3/4/BOXART-16X9/en-US.jpg",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "Subscribe",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Subscribe for $11.99/month",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            },
+            "liveliness": "LIVE",
+            "cardType": "BONUS_SCHEDULE_CARD"
+          },
+          {
+            "title": "TSN 3 broadcast",
+            "gti": "amzn1.dv.gti.6f21df45-8dc9-40fe-91e0-143d0cde3514",
+            "contentType": "LIVE_EVENT_ITEM",
+            "coverImage": "https://images-na.ssl-images-amazon.com/images/S/le-target-images-prod/amzn1.dv.gti.6f21df45-8dc9-40fe-91e0-143d0cde3514/6/BOXART-16X9/en-US.jpg",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "Subscribe",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Subscribe for $24.99/month",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            },
+            "liveliness": "LIVE",
+            "cardType": "BONUS_SCHEDULE_CARD"
+          },
+          {
+            "title": "TSN 4 broadcast",
+            "gti": "amzn1.dv.gti.92793db3-0eb4-4977-9677-e34cc3b03d3d",
+            "contentType": "LIVE_EVENT_ITEM",
+            "coverImage": "https://images-na.ssl-images-amazon.com/images/S/le-target-images-prod/amzn1.dv.gti.92793db3-0eb4-4977-9677-e34cc3b03d3d/6/BOXART-16X9/en-US.jpg",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "Subscribe",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Subscribe for $24.99/month",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            },
+            "liveliness": "LIVE",
+            "cardType": "BONUS_SCHEDULE_CARD"
+          },
+          {
+            "title": "TSN 1 broadcast",
+            "gti": "amzn1.dv.gti.1ed3ee39-7dd3-49cb-bccc-ae86e4b248f4",
+            "contentType": "LIVE_EVENT_ITEM",
+            "coverImage": "https://images-na.ssl-images-amazon.com/images/S/le-target-images-prod/amzn1.dv.gti.1ed3ee39-7dd3-49cb-bccc-ae86e4b248f4/6/BOXART-16X9/en-US.jpg",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "Subscribe",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Subscribe for $24.99/month",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            },
+            "liveliness": "LIVE",
+            "cardType": "BONUS_SCHEDULE_CARD"
+          },
+          {
+            "title": "TSN 5 broadcast",
+            "gti": "amzn1.dv.gti.d8e171a2-df81-4dd6-b438-7150c1e97648",
+            "contentType": "LIVE_EVENT_ITEM",
+            "coverImage": "https://images-na.ssl-images-amazon.com/images/S/le-target-images-prod/amzn1.dv.gti.d8e171a2-df81-4dd6-b438-7150c1e97648/5/BOXART-16X9/en-US.jpg",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "Subscribe",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Subscribe for $24.99/month",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "UPCOMING",
+                "icon": null,
+                "level": "INFO_INACTIVE",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            },
+            "liveliness": "UPCOMING",
+            "cardType": "BONUS_SCHEDULE_CARD"
+          },
+          {
+            "title": "RDS broadcast",
+            "gti": "amzn1.dv.gti.c21ab1e2-27b7-4479-9bcb-76d05f736a4c",
+            "contentType": "LIVE_EVENT_ITEM",
+            "coverImage": "https://images-na.ssl-images-amazon.com/images/S/le-target-images-prod/amzn1.dv.gti.c21ab1e2-27b7-4479-9bcb-76d05f736a4c/4/BOXART-16X9/en-US.jpg",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "Subscribe",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Subscribe for $24.99/month",
+                "icon": "OFFER_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            },
+            "liveliness": "LIVE",
+            "cardType": "BONUS_SCHEDULE_CARD"
+          }
+        ],
+        "seeMore": null,
+        "type": "STANDARD_CAROUSEL"
+      }
+    ]
+  },
+  "warnings": [],
+  "complete": true,
+  "coverage": "live_details_btf_response"
+}

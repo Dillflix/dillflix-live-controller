@@ -2,7 +2,7 @@
 
 ## Status
 
-Controller 0.14.16 requires Prime Player **API 11 / 0.1.0a23** for non-navigational catalogue search and explicit launch-refusal evidence. Search, matching, Play, current status, native completion, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
+Controller 0.14.18 requires Prime Player **API 11 / 0.1.0a26**, including the `broadcasts` capability, for non-navigational catalogue search and explicit launch-refusal evidence. Search, matching, Play, current status, native completion, cancellation, scoped stop and manual ownership are connected. The old screenshot executor and native probe are removed.
 
 Host tests cover durable workflow behavior, RPC delivery and the actual service ownership engine with a controlled runtime. Physical TV, live inference and deployment acceptance remain pending.
 
@@ -43,24 +43,36 @@ authority-renewal, or lifecycle-by-content API is added.
 4. Entitled LIVE matches are launch candidates. Entitled UPCOMING matches wait;
    UNENTITLED alternatives are skipped. Missing/conflicting state or entitlement
    remains unknown. ENDED feeds cannot authorize a new live launch.
-5. After a ready result, the coordinator reevaluates the latest plan and ownership.
+5. Before declaring an entitled LIVE match ready, retrieve its `broadcasts` metadata
+   through the non-navigational live-details endpoint. Parse the captured Broadcasts
+   carousel and LIVE_EVENT_ITEM child IDs. Read ENTITLED_ICON/OFFER_ICON per child;
+   missing or conflicting entitlement stays unknown. Prefer explicitly English
+   or unlabeled feeds and skip other explicit language qualifiers, including French.
+   Among usable live feeds, explicit English precedes unlabeled, then GTI breaks ties.
+   An unlabeled title remains language unknown: an English synopsis or artwork
+   locale does not establish audio language. Explicit route language requirements
+   still need positive evidence. Channel/title constraints are rechecked against
+   child title and entitlement messaging. No alternate row leaves the direct event
+   ID in use; an invalid/unknown broadcast row never falls back to Prime's default.
+6. After a ready result, the coordinator reevaluates the latest plan and ownership.
    Only then does it advance intent and create a playback request. The recent
    result is tied to device revision, prior intent, event snapshot, viewing options,
    service session and expiry. A changed plan or stale response cannot launch.
-6. Play receives the **content ID**, live mode and a persisted attempt UUID. The
+7. Play receives the selected **broadcast content ID** (or a direct event ID without alternatives), live mode and a persisted attempt UUID. The
    player performs fresh metadata resolution and invokes its live Watch Now result.
    Catalogue eligibility is not proof that launch succeeded; tile actions and
    renderer handles are not used by this controller.
 
 The complete latest catalogue response, timings, matching audit and model calls
-are retained in `catalogue_probe` in the diagnostic export. The launch record
+and broadcast selection audit are retained in `catalogue_probe` in the diagnostic export. The launch record
 retains the consumed catalogue and probe ID alongside attempt/status evidence.
 Persistent RPC diagnostics retain subsequent responses. Native state strings and
 backend cache behavior will be observed in production; no transition capture is
 required to enable this path. Research hooks remain outside production payloads.
 
-Coverage is `find_initial_response`. Pagination and normalized provider/language
-identifiers are deferred. A no-match decision does not establish catalogue-wide
+Coverage is `find_initial_response`. Pagination is not followed. A complete response with only explicitly disallowed
+languages is skipped; absent eligible choices in a paginated response stay unknown.
+Prime did not provide a separate audio-language field in the October 5 capture. A no-match decision does not establish catalogue-wide
 absence. Full artwork, provider logos, overlays, messaging and native metadata
 remain available from the player; the controller uses the fields needed to match.
 
@@ -273,3 +285,16 @@ fallback attempt that was started during its backoff merely because the retry
 time arrives. This protection lasts only for that bounded navigation attempt
 with unchanged intent, configuration and routes. Manual selections and newly
 eligible events are still reevaluated.
+
+
+## Language selection acceptance
+
+The October 5 capture returned eight Lions–Panthers broadcasts in 1.15 seconds.
+The first DAZN feed was explicitly French; the second was unlabeled and identified
+by the user as English. Both were entitled and LIVE. Six other choices carried
+OFFER_ICON. The controller selects `amzn1.dv.gti.a0f3772b-99fe-4b62-a454-a37d04a0b359`
+in the captured regression fixture. Earlier resolution captures confirm that
+explicit child GTIs resolve to themselves; the parent default resolved to French.
+The endpoint was exercised on-device without requesting navigation or playback.
+Automatic controller selection and launch still need deployment acceptance.
+Existing verified playback is not forcibly switched when this update starts.
