@@ -76,11 +76,13 @@ export interface Preferences {
   same_tier_switching: boolean;
 }
 export interface Entry {
+  actor?: { type: "admin" | "user"; id: string; name: string };
   id: string;
   content_id: string;
   created_at: string;
 }
 export interface Device {
+  public_access: { play_now: boolean; add_to_plan: boolean };
   id: string;
   name: string;
   revision: number;
@@ -190,6 +192,7 @@ export interface Overview {
     count?: number;
   };
   meta: {
+    public_auth_mode: "proxy" | "guest";
     league_choices: Record<string, string>;
     mode: "demo" | "teamarr";
     playback_adapter: string;

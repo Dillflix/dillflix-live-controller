@@ -51,7 +51,13 @@ if (process.platform === "linux" && process.arch === "x64") {
 
 const run = (cmd, args, env = process.env) =>
   new Promise((done, reject) => {
-    const child = spawn(cmd, args, { cwd: frontend, env, stdio: "inherit" });
+    const child = spawn(cmd, args, {
+      cwd: frontend,
+      env,
+      stdio: "inherit",
+      // Windows command scripts require a shell (Node otherwise reports EINVAL).
+      shell: process.platform === "win32" && cmd === "npm.cmd",
+    });
     child.on("error", reject);
     child.on("exit", (code) =>
       code === 0 ? done() : reject(new Error(`${cmd} exited with ${code}`)),

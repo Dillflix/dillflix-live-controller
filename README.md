@@ -10,6 +10,12 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 
 ## What works
 
+- A separate [public app with PlexSSO integration](docs/public-app.md) at `/public/`:
+  Now playing and Live/Upcoming events, optional public Play now/Add to plan,
+  admin-first playback priority, and actor attribution. Choose proxy authentication
+  or explicit guest mode (`CONTROLLER_PUBLIC_AUTH_MODE=guest`) for public access
+  without login. Public actions default off; admin access stays separate.
+
 - A read-only [now-playing API](docs/now-playing.md) for programmatic consumers,
   with observed live-event metadata and horizontal game-thumbs matchup thumbnails.
 

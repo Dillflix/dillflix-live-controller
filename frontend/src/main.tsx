@@ -489,6 +489,9 @@ function App() {
     desired = find(d.desired),
     protectedEvent = d.plan.some((p) => p.content_id === observed?.content_id);
   const currentEvent = d.playback_state === "navigating" ? desired : observed;
+  const currentEntry = d.plan.find(
+    (p) => p.content_id === currentEvent?.content_id,
+  );
   const completeEvent = (event: Content) =>
     void mutate(
       () =>
@@ -888,6 +891,13 @@ function App() {
                       ? "You choose what’s on TV"
                       : "Waiting for live sports")}
                   {protectedEvent && <Pill protected>Protected</Pill>}
+                  {currentEntry && (
+                    <Pill>
+                      {currentEntry.actor?.type === "user"
+                        ? `User: ${currentEntry.actor.name}`
+                        : `Admin: ${currentEntry.actor?.name || "Admin"}`}
+                    </Pill>
+                  )}
                 </div>
                 <div className="df-playing-detail">
                   {d.manual_control
@@ -1125,7 +1135,7 @@ function App() {
                   <>
                     <div className="df-section-head">
                       <h2>When events overlap</h2>
-                      <span>Top event takes priority</span>
+                      <span>Admin entries first, then user requests</span>
                     </div>
                     {d.plan.map((entry, i) => {
                       const event = find(entry.content_id);
@@ -1134,6 +1144,10 @@ function App() {
                           <span className="df-order">{i + 1}</span>
                           <div className="df-row-copy">
                             <strong>{event?.title || entry.content_id}</strong>
+                            <p>
+                              {entry.actor?.type === "user" ? "User" : "Admin"}:{" "}
+                              {entry.actor?.name || "Admin"}
+                            </p>
                             <p>
                               {event
                                 ? `${time(event.start_time)} – ${time(event.expected_end_time)} est.`
@@ -1150,7 +1164,12 @@ function App() {
                             <button
                               type="button"
                               aria-label={`Move ${event?.title} up`}
-                              disabled={busy || i === 0}
+                              disabled={
+                                busy ||
+                                i === 0 ||
+                                (entry.actor?.type || "admin") !==
+                                  (d.plan[i - 1]?.actor?.type || "admin")
+                              }
                               onClick={() => movePlan(i, -1)}
                             >
                               <ChevronUp size={18} />
@@ -1158,7 +1177,12 @@ function App() {
                             <button
                               type="button"
                               aria-label={`Move ${event?.title} down`}
-                              disabled={busy || i === d.plan.length - 1}
+                              disabled={
+                                busy ||
+                                i === d.plan.length - 1 ||
+                                (entry.actor?.type || "admin") !==
+                                  (d.plan[i + 1]?.actor?.type || "admin")
+                              }
                               onClick={() => movePlan(i, 1)}
                             >
                               <ChevronDown size={18} />
@@ -1387,6 +1411,55 @@ function App() {
                   "Settings",
                   "Behavior for your living room.",
                 )}
+                <section className="df-panel df-spacer">
+                  <h2>Public app</h2>
+                  <p className="df-subtitle">
+                    {data.meta.public_auth_mode === "guest"
+                      ? "Guest mode: no sign-in required. "
+                      : "Proxy authentication is required. "}
+                    Allow viewers to request coverage. Admin watch-plan entries
+                    always take priority. Disabling an action keeps existing
+                    requests.
+                  </p>
+                  <p>
+                    <a href="/public/" target="_blank" rel="noreferrer">
+                      Open public app
+                    </a>
+                  </p>
+                  {(
+                    [
+                      ["play_now", "Allow public Play now"],
+                      ["add_to_plan", "Allow public Add to plan"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <div className="df-setting" key={key}>
+                      <strong>{label}</strong>
+                      <input
+                        type="checkbox"
+                        className="df-switch"
+                        aria-label={label}
+                        checked={d.public_access?.[key] || false}
+                        disabled={busy}
+                        onChange={(e) =>
+                          void mutate(
+                            () =>
+                              api(
+                                devicePath + "/public-access",
+                                {
+                                  command_id: commandId(),
+                                  expected_revision: d.revision,
+                                  ...d.public_access,
+                                  [key]: e.target.checked,
+                                },
+                                "PUT",
+                              ),
+                            "Public permissions saved.",
+                          )
+                        }
+                      />
+                    </div>
+                  ))}
+                </section>
                 <section className="df-panel">
                   <h2>Leagues in your schedule</h2>
                   <p className="df-subtitle">

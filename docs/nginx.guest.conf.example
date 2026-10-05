@@ -1,0 +1,58 @@
+# Alternative to nginx.public.conf.example; put inside nginx's http {} context.
+# No PlexSSO is needed. Set CONTROLLER_PUBLIC_AUTH_MODE=guest and match
+# CONTROLLER_PROXY_SECRET to CHANGE_ME below. Replace all host/certificate paths.
+# Keep the controller port private. Create the admin password file separately.
+upstream dillflix_controller { server 127.0.0.1:8790; }
+map $http_upgrade $dillflix_connection { default upgrade; '' close; }
+
+server {
+    listen 443 ssl;
+    server_name live.example.com;
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    auth_request off;
+    auth_basic off;
+
+    # No viewer identity or login. The key authenticates proxy transport only.
+    proxy_set_header X-Dillflix-Proxy-Key "CHANGE_ME";
+    proxy_set_header X-Dillflix-User "";
+    proxy_set_header X-Dillflix-Role "";
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_http_version 1.1;
+    proxy_cache off;
+
+    location = / { return 302 /public/; }
+    location = /public { return 302 /public/; }
+    location = /public/ { proxy_pass http://dillflix_controller; }
+    location ^~ /api/public/v1/ { proxy_pass http://dillflix_controller; }
+    location ^~ /assets/ { proxy_pass http://dillflix_controller; }
+    location / { return 404; }
+}
+
+server {
+    listen 443 ssl;
+    server_name controller.example.com;
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    auth_request off;
+    auth_basic "Dillflix admin";
+    auth_basic_user_file /etc/nginx/dillflix-admin.htpasswd;
+
+    # $remote_user comes from nginx's successful Basic authentication.
+    proxy_set_header X-Dillflix-Proxy-Key "CHANGE_ME";
+    proxy_set_header X-Dillflix-User $remote_user;
+    proxy_set_header X-Dillflix-Role admin;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $dillflix_connection;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_read_timeout 1h;
+    proxy_cache off;
+
+    location / { proxy_pass http://dillflix_controller; }
+}

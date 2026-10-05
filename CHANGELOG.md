@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — public app
+
+- Add explicit `CONTROLLER_PUBLIC_AUTH_MODE=guest` for anonymous public browsing and requests without PlexSSO. Attribute requests to Guest, retain admin priority and action switches, and keep admin endpoints protected even when no proxy secret is configured. Include an nginx example using separate Basic-authenticated admin access.
+
+- Add a separate public frontend at `/public/` with Now playing, Live/Upcoming events, Play now and Add to plan, without administrative controls.
+- Keep eligible admin commitments ahead of user requests in playback and previews. Retain source actor attribution in the shared watch plan and admin activity. Public requests respect admin pause and manual control.
+- Add independently revisioned public action switches (off by default) and a restricted public API with actor-bound command receipts, proxy-authenticated PlexSSO identity, role checks for HTTP/WebSockets, and same-origin writes.
+- Upgrade to schema 9 so older releases cannot ignore source priority. Include PlexSSO/nginx deployment examples. Live SSO, Linux deployment, and target hardware acceptance remain pending.
+
 ## 0.14.20
 
 - Replace hardcoded simulator labels in event cards, the now-playing badge, and Playback settings with labels based on observed playback and the configured adapter. Real Prime playback displays Live playback / Verified live; actual simulator evidence remains explicitly labelled.

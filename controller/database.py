@@ -12,8 +12,8 @@ def encode(value):
 
 
 class Database:
-    # Older releases must not silently ignore completion or discovery decisions.
-    SCHEMA_VERSION = 8
+    # Older releases must not ignore completion, discovery, or source priority.
+    SCHEMA_VERSION = 9
 
     def __init__(self, path):
         self.path = path
@@ -182,6 +182,10 @@ class Database:
             **json.loads(row["payload"]),
         }
         device["preferences"].setdefault("discovery_leagues", list(DEFAULT_LEAGUES))
+        device.setdefault("public_access", {"play_now": False, "add_to_plan": False})
+        from .planner import ordered_plan
+
+        device["plan"] = ordered_plan(device)
         return device
 
     @staticmethod

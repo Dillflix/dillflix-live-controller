@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 
+from .access import LEGACY_ADMIN
 from .content_status import ContentStatusAdapter, ContentStatusCoordinator, SimulatedContentStatusAdapter
 from .coordinator import PlaybackCoordinator
 from .database import Database, encode
@@ -16,7 +17,7 @@ from .fixtures import default_device, fixtures, make_team
 from .leagues import LEAGUE_NAMES
 from .maintenance import policy, prune
 from .manual_control import ManualControl
-from .planner import content_view, parse_time, preview_plan, priority, team_key
+from .planner import choose, content_view, ordered_plan, parse_time, preview_plan, priority, team_key
 from .playback import PlaybackAdapter, SimulatedPlaybackAdapter
 from .storage_lock import database_guard
 from .teamarr import TeamarrClient
@@ -129,11 +130,12 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         return parse_time(self.db.meta(db, "demo_now")) if self.settings.mode == "demo" else datetime.now(UTC)
 
     @staticmethod
-    def entry(content_id):
+    def entry(content_id, actor=None):
         return {
             "id": str(uuid.uuid4()),
             "content_id": content_id,
             "created_at": datetime.now(UTC).isoformat(),
+            "actor": actor or LEGACY_ADMIN.copy(),
         }
 
     def replace_catalog(self, db, entries, source):
@@ -229,6 +231,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 "activity": activity,
                 "health": self.db.meta(db, "feed_health", {"state": "starting"}),
                 "meta": {
+                    "public_auth_mode": self.settings.public_auth_mode,
                     "league_choices": LEAGUE_NAMES,
                     "mode": self.settings.mode,
                     "playback_adapter": self.settings.executor.mode,
@@ -377,10 +380,20 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             history=(self.CONFIG_FIELDS, "Import configuration"),
         )
 
-    def apply_plan(self, db, device, action, *, preview=False):
+    def apply_plan(self, db, device, action, *, preview=False, actor=None):
+        actor = actor or LEGACY_ADMIN.copy()
+        public = actor["type"] == "user"
         items = {i["content_id"]: i for i in self.items(db, device["id"])}
         op = action["type"]
         content_id = action.get("content_id")
+        if public:
+            permission = {"add": "add_to_plan", "play_now": "play_now"}.get(op)
+            if not permission or not device["public_access"][permission]:
+                raise HTTPException(403, "The admin has disabled this public action.")
+            if op == "play_now" and (device["automation"] == "paused" or device.get("input_handoff")):
+                raise HTTPException(
+                    409, "The admin has paused public playback. You can still add to the plan."
+                )
         if op == "play_now" and device.get("manual_control"):
             raise HTTPException(
                 409, "End manual control before using Play now. You can still add events to the plan."
@@ -396,13 +409,31 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                     "Play now requires a live event, a due scheduled Prime event, or a fresh active "
                     "Prime broadcast whose start time has arrived, and a valid viewing option",
                 )
-            entry = next((p for p in device["plan"] if p["content_id"] == content_id), self.entry(content_id))
+            existing = next((p for p in device["plan"] if p["content_id"] == content_id), None)
+            if public and not items[content_id]["active"] and not existing:
+                raise HTTPException(422, "This event is no longer in the public schedule.")
+            if (
+                public
+                and existing
+                and (op == "add" or existing.get("actor", LEGACY_ADMIN)["type"] == "admin")
+            ):
+                return  # Never demote or move an admin commitment, including the same event.
+            if (
+                public
+                and not existing
+                and sum(p.get("actor", LEGACY_ADMIN)["type"] == "user" for p in device["plan"]) >= 100
+            ):
+                raise HTTPException(409, "The public watch plan is full. Ask an admin to review it.")
+            entry = existing or self.entry(content_id, actor)
+            entry["actor"] = actor.copy()
             device["plan"] = [p for p in device["plan"] if p["content_id"] != content_id]
             if op == "play_now" or action.get("priority") == "first":
                 device["plan"].insert(0, entry)
             else:
                 device["plan"].append(entry)
-            if op == "play_now":
+            device["plan"] = ordered_plan(device)
+            selected = choose(device, list(items.values()), self.now(db), datetime.now(UTC))
+            if op == "play_now" and (not public or selected["content_id"] == content_id):
                 device["automation"] = "active"
                 device["failures"].pop(content_id, None)
                 device.setdefault("prime_access", {}).pop(content_id, None)
@@ -418,12 +449,23 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             if len(order) != len(mapped) or set(order) != set(mapped):
                 raise HTTPException(422, "Supply each current watch-plan entry exactly once")
             device["plan"] = [mapped[key] for key in order]
-        device["force_switch"] = True
+        device["plan"] = ordered_plan(device)
+        if not public:
+            device["force_switch"] = True
         if not preview:
-            self.db.log(db, self.now(db).isoformat(), "Watch plan updated", op, "manual", device["id"])
+            self.db.log(
+                db,
+                self.now(db).isoformat(),
+                "Watch plan updated",
+                f"{op} · {actor['type'].title()}: {actor['name']} · {content_id or ''}",
+                "manual",
+                device["id"],
+            )
 
-    def plan_command(self, device_id, command):
+    def plan_command(self, device_id, command, actor=None):
         payload = command.model_dump()
+        if actor is not None:
+            payload["actor"] = actor
         description = {
             "add": "Add event to watch plan",
             "play_now": "Play now selection",
@@ -435,8 +477,29 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             command.command_id,
             command.expected_revision,
             payload,
-            lambda db, d: self.apply_plan(db, d, payload["action"]),
+            lambda db, d: self.apply_plan(db, d, payload["action"], actor=actor),
             history=(("plan",), description),
+        )
+
+    def public_access_command(self, device_id, command):
+        def apply(db, device):
+            device["public_access"] = command.model_dump(include={"play_now", "add_to_plan"})
+            self.db.log(
+                db,
+                self.now(db).isoformat(),
+                "Public actions updated",
+                encode(device["public_access"]),
+                "manual",
+                device_id,
+            )
+
+        return self.mutate(
+            device_id,
+            command.command_id,
+            command.expected_revision,
+            {"public_access": command.model_dump()},
+            apply,
+            history=(("public_access",), "Change public actions"),
         )
 
     def preview(self, device_id, command):

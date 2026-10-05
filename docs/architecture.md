@@ -32,10 +32,16 @@ Prime completion is written atomically to the executor report and durable conten
 
 ## Selection rules
 
+Public access defaults to proxy authentication. Explicit guest mode permits only
+the public HTTP page, assets and API without identity, attributing requests to
+Guest in the user priority tier. Admin HTTP and WebSocket routes still require
+the admin proxy in guest mode; a missing proxy secret never grants legacy admin
+access in that mode. See [public/guest configuration](public-app.md).
+
 An accepted or navigating launch remains pending when its event status temporarily becomes unknown and the planner has no other eligible selection. It retains the same request, intent and deadline. Fresh, valid playback verification can complete that existing request during the uncertainty. Explicit lifecycle changes, withdrawn routes, changed intent, manual control and the original deadline still invalidate it. Unknown status never authorizes a queued or new launch.
 
 1. Candidates need live status and at least one permitted viewing option. Prime events with fresh scheduled status can also initiate search once their scheduled start is reached. Active Teamarr broadcasts explicitly reporting unknown status can do the same while their feed evidence is fresh; Prime must confirm an entitled live match before playback is requested. Locked-feed evidence temporarily excludes unchanged viewing options. A recent failed attempt temporarily defers that content. Inactive catalog entries remain candidates only when already observed or manually committed, and do not qualify for the unknown-broadcast search exception.
-2. The first eligible watch-plan entry wins. Its rank only matters during overlap; all other entries remain reserved for their remaining live windows.
+2. The first eligible admin watch-plan entry wins, then the first eligible user request. Order within each source tier only matters during overlap; all other entries remain reserved for their remaining live windows. Legacy entries are admin-owned. Both the planner and preview enforce this order; the public API cannot change admin ownership. See [public access](public-app.md).
 3. Otherwise, the first enabled matching rule wins. Conditions within a rule are ANDed. Within that tier, the best team rank wins, followed by the current event, scheduled start, and opaque content ID for stable ties.
 4. Existing verified playback on a still-permitted route is retained if its content status becomes unknown, unless a higher manual choice is confirmed live. Missing playback evidence grants a bounded recovery grace instead. Editing a future reservation does not accidentally clear this protection.
 5. Automatic changes respect minimum viewing time, cooldown, and same-tier switching while current playback remains verified. Manual choices bypass automatic dwell restrictions.
