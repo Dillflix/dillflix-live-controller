@@ -501,6 +501,8 @@ function App() {
       true,
     );
   const playbackOffline = d.executor_health?.state === "offline";
+  const playbackSimulator = data.meta.playback_adapter === "simulator";
+  const observedSimulated = d.observed?.simulated ?? playbackSimulator;
   const recoveryWaiting =
     d.playback_state === "unverified" &&
     d.recovery?.content_id === d.observed?.content_id &&
@@ -720,7 +722,9 @@ function App() {
           <span className="df-footnote">
             {e.watch_entry_id ? <ShieldCheck size={15} /> : <Tv size={15} />}{" "}
             {current
-              ? "Simulated playback"
+              ? observedSimulated
+                ? "Simulated playback"
+                : "Live playback"
               : e.watch_entry_id
                 ? "In watch plan"
                 : e.viewing_options.length
@@ -871,7 +875,9 @@ function App() {
                   </span>
                   <Pill>
                     {d.playback_state === "verified"
-                      ? "Simulated live"
+                      ? observedSimulated
+                        ? "Simulated live"
+                        : "Verified live"
                       : d.playback_state}
                   </Pill>
                 </div>
@@ -1616,9 +1622,19 @@ function App() {
                   <div className="df-setting">
                     <div className="df-row-copy">
                       <strong>Playback</strong>
-                      <p>Simulated. No Fire TV commands are sent.</p>
+                      <p>
+                        {playbackSimulator
+                          ? "Simulated. No Fire TV commands are sent."
+                          : "Prime Video playback on your device."}
+                      </p>
                     </div>
-                    <Pill>{playbackOffline ? "Unavailable" : "Simulator"}</Pill>
+                    <Pill>
+                      {playbackOffline
+                        ? "Unavailable"
+                        : playbackSimulator
+                          ? "Simulator"
+                          : "Prime Video"}
+                    </Pill>
                   </div>
                   <div className="df-setting">
                     <div className="df-row-copy">

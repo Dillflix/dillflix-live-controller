@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.20
+
+- Replace hardcoded simulator labels in event cards, the now-playing badge, and Playback settings with labels based on observed playback and the configured adapter. Real Prime playback displays Live playback / Verified live; actual simulator evidence remains explicitly labelled.
+
 ## 0.14.19
 
 - Add `GET /api/v1/devices/{device_id}/now-playing` with observed live-event title, opaque content ID, league, timing metadata, and horizontal game-thumbs matchup thumbnail URL. Reads make no player or catalogue RPCs.
