@@ -67,8 +67,18 @@ route was removed; it is restored in 0.15.1.
 ## Media protection and verification
 
 The only outbound writes are raw image POSTs to the configured single item's
-`/library/metadata/{id}/thumb` and `/library/metadata/{id}/art`. The client has no
+`/library/metadata/{id}/posters` and `/library/metadata/{id}/arts`, matching
+[Python PlexAPI's upload methods](https://python-plexapi.readthedocs.io/en/latest/_modules/plexapi/mixins/resources.html).
+Current-image reads still use the `/thumb/{timestamp}` and `/art/{timestamp}`
+URLs from metadata. The client has no
 scan, refresh, analyze, generic metadata editor, or Plex-database write method.
+
+Versions 0.15.0–0.15.1 used singular upload paths that can return HTTP 404.
+Upgrade to 0.15.2, then choose **Retry artwork update** in Settings → Plex artwork.
+Restarting alone preserves the suspension. Retry first verifies the saved attempt
+and protected metadata before deciding whether an upload is needed. HTTP errors
+now include the method and relative request path, distinguishing failed uploads
+from missing metadata or image reads without exposing the token or server body.
 
 Every change compares protected metadata before/after the request: item duration,
 identity, title/summary and other descriptive fields, Media/Part/Stream attributes,

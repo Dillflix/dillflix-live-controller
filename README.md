@@ -64,8 +64,10 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
-Version 0.15.1 includes provider artwork and playback diagnostics for the
-schema-9 [Plex artwork integration](docs/plex-artwork.md).
+Version 0.15.2 corrects Plex artwork upload routes and adds request details to
+errors for the schema-9 [Plex artwork integration](docs/plex-artwork.md).
+After upgrading a suspended artwork update, choose **Retry artwork update** in
+the Plex settings. Existing suspensions remain in place until explicitly retried.
 Back up the database before upgrading; Plex updates remain disabled until configured.
 
 From your existing checkout:

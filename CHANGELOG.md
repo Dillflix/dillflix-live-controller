@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.2 — Plex artwork upload compatibility
+
+- Upload image bytes through Plex's `/posters` and `/arts` routes, matching
+  Python PlexAPI; keep `/thumb` and `/art` for current-image reads.
+- Include the request method and validated relative path in Plex HTTP/connection
+  errors without exposing the server origin, credentials or response body.
+- Keep suspended attempts across upgrades. After deploying, use **Retry artwork
+  update** to verify the previous attempt and resume through the corrected route.
+- Cover both upload routes and recovery from the old 404, including suspension
+  when protected media metadata has changed.
+
 ## 0.15.1 — Provider artwork and playback diagnostics
 
 - Use Teamarr's supplied provider cover unchanged when no game-thumbs matchup

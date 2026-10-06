@@ -1,6 +1,6 @@
 # Controller-owned Plex artwork integration
 
-Status: implemented in controller 0.15.1. Live event-artwork acceptance remains pending.
+Status: implemented in controller 0.15.2. Live event-artwork acceptance remains pending.
 
 Implementation follow-up (0.15.1): retain a read-only now-playing diagnostic
 endpoint over the shared projection, and use supplied provider artwork when a
@@ -215,22 +215,23 @@ signal or an explicit resynchronization; that limitation should be documented.
 
 ## 6. Plex API boundary and media preservation
 
-Plex's official specification documents direct artwork setters:
+The client uses the established image upload routes used by Python PlexAPI:
 
 | Operation | HTTP request |
 | --- | --- |
 | Read server identity | `GET /identity` |
 | Read target metadata and technical properties | `GET /library/metadata/{rating_key}` |
-| Set the current poster | `POST /library/metadata/{rating_key}/thumb` with image bytes |
-| Set the current background | `POST /library/metadata/{rating_key}/art` with image bytes |
+| Set the current poster | `POST /library/metadata/{rating_key}/posters` with image bytes |
+| Set the current background | `POST /library/metadata/{rating_key}/arts` with image bytes |
 | Verify/capture current images | GET the artwork URLs returned by fresh item metadata |
 
-The official API's operation is `libraryMetadataPostElement`; the `url`
-parameter is optional when image bytes are in the body. Python PlexAPI's
-`uploadPoster()` and `uploadArt()` instead use the established plural
-`/posters` and `/arts` upload routes. Prefer the official direct setters for
-this implementation and validate them against the installed PMS version.
-Do not quietly switch to metadata refresh if a setter fails.
+The original implementation followed the official `libraryMetadataPostElement`
+specification's singular `thumb`/`art` setters. A live upload returned HTTP 404;
+0.15.2 switches to the plural routes used by Python PlexAPI's `uploadPoster()` and
+`uploadArt()`. Current-image read URLs remain singular. The new errors include
+the method and validated relative path so subsequent failures identify the
+operation. Validate the corrected upload against the installed PMS version;
+do not quietly switch to metadata refresh if it fails.
 
 Use two HTTP clients: an authenticated Plex client and a separate image-source
 client. Send the token in `X-Plex-Token`, not an image URL/query. Validate image
