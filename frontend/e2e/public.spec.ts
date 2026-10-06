@@ -139,6 +139,71 @@ for (const width of [1280, 390, 320]) {
   });
 }
 
+for (const planned of [false, true]) {
+  for (const width of [1280, 320]) {
+    test(`public current event shows read-only details (${planned ? "planned" : "automatic"}, ${width}px)`, async ({
+      page,
+    }) => {
+      const data = fixture();
+      data.events[0].planned = planned;
+      data.now_playing.event = data.events[0];
+      data.permissions = { play_now: false, add_to_plan: false };
+      let writes = 0;
+      await page.setViewportSize({ width, height: 900 });
+      await page.route("**/api/public/v1/overview", (route) =>
+        route.fulfill({ json: data }),
+      );
+      await page.route("**/api/public/v1/watch-plan", (route) => {
+        writes++;
+        return route.fulfill({ status: 500 });
+      });
+      await page.goto("/public/");
+      const card = page.getByTestId("event-public:live");
+      await expect(card).toContainText("Now playing");
+      await expect(
+        card.getByRole("button", { name: "Add to plan" }),
+      ).toHaveCount(0);
+      await expect(card.getByRole("button", { name: "Play now" })).toHaveCount(
+        0,
+      );
+      const details = card.getByRole("button", {
+        name: "Details",
+        exact: true,
+      });
+      await details.click();
+      const dialog = page.getByRole("dialog", { name: data.events[0].title });
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText("1 viewing option");
+      await expect(dialog.getByRole("button")).toHaveCount(1);
+      expect(
+        await dialog.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.left >= 0 && rect.right <= innerWidth;
+        }),
+      ).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(details).toBeFocused();
+      await details.click();
+      await dialog.getByRole("button", { name: "Close" }).click();
+      await expect(dialog).toHaveCount(0);
+      expect(writes).toBe(0);
+      // Last-observed playback is not a verified current event.
+      data.now_playing.verified = false;
+      await page.reload();
+      await expect(
+        card.getByRole("button", { name: "Details", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        card.getByRole("button", { name: "Play now" }),
+      ).toBeVisible();
+      await expect(
+        card.getByRole("button", { name: "Add to plan" }),
+      ).toHaveCount(planned ? 0 : 1);
+    });
+  }
+}
+
 test("public controls follow permissions and stale command errors refresh the page", async ({
   page,
 }) => {

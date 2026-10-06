@@ -25,6 +25,14 @@ html {
 #df-app .df-public-footer {
   margin-top: 28px;
 }
+#df-app dialog.df-public-details {
+  margin: auto;
+  width: calc(100% - 32px);
+  color: inherit;
+}
+#df-app .df-public-details::backdrop {
+  background: #0008;
+}
 @media (max-width: 600px) {
   #df-app .df-public-main {
     padding: 20px 12px 32px;

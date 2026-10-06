@@ -50,6 +50,46 @@ const names: Record<string, string> = {
 };
 const leagueName = (code: string) => names[code] || code.toUpperCase();
 
+function EventDetails({
+  event,
+  when,
+  onClose,
+}: {
+  event: PublicEvent;
+  when: string;
+  onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  return (
+    <dialog
+      ref={dialog}
+      className="df-dialog df-public-details"
+      aria-labelledby="public-event-title"
+      onClose={onClose}
+    >
+      <div className="df-dialog-head">
+        <h2 id="public-event-title">{event.title}</h2>
+        <button className="df-button" onClick={() => dialog.current?.close()}>
+          Close
+        </button>
+      </div>
+      <p>
+        {leagueName(event.league)} ·{" "}
+        {event.phase === "unknown" ? event.kind : event.phase}
+      </p>
+      <p>{when}</p>
+      <p>
+        {event.viewing_option_count} viewing{" "}
+        {event.viewing_option_count === 1 ? "option" : "options"}
+      </p>
+      {event.planned && <p>In watch plan</p>}
+    </dialog>
+  );
+}
+
 async function publicApi<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch("/api/public/v1" + path, {
     method: body ? "POST" : "GET",
@@ -78,6 +118,7 @@ function PublicApp() {
   const [notice, setNotice] = useState("");
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [detailsId, setDetailsId] = useState<string | null>(null);
   const loading = useRef(0);
   const submitting = useRef(false);
   const load = useCallback(async () => {
@@ -172,6 +213,7 @@ function PublicApp() {
         .includes(query.toLowerCase()),
   );
   const now = data.now_playing;
+  const details = data.events.find((event) => event.content_id === detailsId);
   const disabled = busy || !connected;
   return (
     <div id="df-app">
@@ -376,7 +418,15 @@ function PublicApp() {
                           : `${e.viewing_option_count} viewing ${e.viewing_option_count === 1 ? "option" : "options"}`}
                     </span>
                     <div className="df-row df-public-actions">
-                      {!e.planned && (
+                      {current && (
+                        <button
+                          className="df-button"
+                          onClick={() => setDetailsId(e.content_id)}
+                        >
+                          Details
+                        </button>
+                      )}
+                      {!e.planned && !current && (
                         <button
                           className="df-button"
                           disabled={disabled || !data.permissions.add_to_plan}
@@ -421,6 +471,13 @@ function PublicApp() {
           Times shown in {data.timezone}. End times are estimates.
         </p>
       </main>
+      {details && (
+        <EventDetails
+          event={details}
+          when={`${date(details.start_time)} · ${time(details.start_time)}${details.expected_end_time ? ` – ${time(details.expected_end_time)} est.` : ""}`}
+          onClose={() => setDetailsId(null)}
+        />
+      )}
     </div>
   );
 }
