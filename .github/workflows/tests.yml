@@ -3,6 +3,15 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  image-permissions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reproduce an owner-only checkout
+        run: chmod -R go-rwx controller frontend third_party pyproject.toml
+      - name: Build and check imports as the runtime user
+        run: docker build --tag dillflix-controller:permissions .
   controller:
     runs-on: ubuntu-latest
     timeout-minutes: 10

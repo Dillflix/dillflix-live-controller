@@ -2,6 +2,10 @@
 
 ## 0.15.0 — Plex artwork integration
 
+- Fix container startup after an owner-only Git checkout: normalize packaged
+  runtime code/assets, check non-root imports during the build, and exercise
+  restrictive checkout permissions in Docker CI.
+
 - Add controller-owned Plex artwork settings, default image upload/capture, and status previews.
 - Deliver verified-event artwork with durable five-minute fallback, per-slot retries and guarded read-back.
 - Limit Plex writes to thumb/art setters and suspend on protected metadata drift.

@@ -16,6 +16,12 @@ docker compose cp "controller:/tmp/$DILLFLIX_BACKUP" "backups/$DILLFLIX_BACKUP"
 
 Copy the resulting file to your normal backup storage. These commands are manual; this release does not schedule backups or rotate backup files. Use a new filename each time. Existing destinations are never overwritten.
 
+If using `umask 077` to protect additional backup files such as `.env`, scope it
+to the backup commands in a subshell. Return to the normal checkout/build umask
+before switching branches. The Docker image normalizes packaged code/asset
+permissions and checks imports as its non-root runtime user during the build;
+private database and credential permissions are not changed.
+
 For a local Python installation:
 
 ```bash

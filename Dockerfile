@@ -14,7 +14,12 @@ RUN pip install --no-cache-dir . && python -m controller.screen_install /opt/scr
 COPY third_party/ ./third_party/
 COPY --chmod=755 docker-entrypoint.sh ./docker-entrypoint.sh
 COPY --from=web /app/frontend/dist ./frontend/dist
+# COPY preserves checkout permissions, including files created under umask 077.
+# Only packaged code/assets are made readable; persistent data is separate.
+RUN chmod -R a+rX /app/controller /app/third_party /app/frontend/dist
 USER controller
+# Fail the build if the runtime user cannot import the app or read the web UI.
+RUN python -c "import controller.api; from pathlib import Path; Path('frontend/dist/index.html').read_bytes()"
 ENV CONTROLLER_DATABASE=/data/controller.sqlite3
 ENV SCREEN_SERVER_PATH=/opt/scrcpy-server-v3.3.4
 EXPOSE 8790
