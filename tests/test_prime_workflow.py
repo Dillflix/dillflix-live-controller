@@ -724,3 +724,45 @@ async def test_model_failure_prompt_and_response_survive_into_export(tmp_path):
         assert job["operation"]["error"]["code"] == "model_http_error"
     finally:
         await cleanup(controller)
+
+
+async def test_inspection_cooldown_preserves_attempt_and_event_policy(tmp_path):
+    controller, workflow = rig(tmp_path)
+    healthy = await workflow.player.health()
+    original = workflow.player.health
+    async def cooling():
+        return {**healthy, "playback_inspection": {"state": "degraded", "recovery": "retry_after_cooldown"}}
+    try:
+        workflow.player.health = cooling
+        token = await launch(workflow)
+        report = workflow.store.report(token)
+        assert report["prime_player"]["device_recovery"]
+        assert not row(workflow, token)["cancel_requested"]
+        assert not workflow.player.calls
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            assert device["player_recovery"]
+            assert "cooling down" in device["reason"]
+            assert not workflow.player_recovery_ready(db, device)
+            assert not device["failures"]
+        workflow.player.health = original
+        await workflow.probe_player_recovery()
+        with controller.db.transaction() as db:
+            assert controller.db.device(db).get("player_recovery") is None
+        await workflow.navigate(row(workflow, token))
+        assert workflow.store.report(token)["operation"]["state"] == "playing_verified"
+        assert len([c for c in workflow.player.calls if c[0] == "play"]) == 1
+    finally:
+        await cleanup(controller)
+
+
+async def test_control_handoff_remains_available_during_inspection_cooldown(tmp_path):
+    controller, workflow = rig(tmp_path)
+    try:
+        health = await workflow.player.health()
+        workflow.record_player_health({**health, "playback_inspection": {"state": "degraded"}})
+        await workflow.check_session(control=True)
+        with controller.db.transaction() as db:
+            assert controller.db.device(db)["player_recovery"]
+    finally:
+        await cleanup(controller)

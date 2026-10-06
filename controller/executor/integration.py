@@ -23,6 +23,7 @@ class IntegratedPlaybackAdapter:
             "observation": report["observation"],
             "finished_at": report["operation"].get("finished_at"),
             "reason": (report["operation"]["error"] or {}).get("message"),
+            "device_recovery": bool((report.get("prime_player") or {}).get("device_recovery")),
         }
 
     def submit(self, request):

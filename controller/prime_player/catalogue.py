@@ -170,7 +170,7 @@ class CatalogueChecks:
                 retry_at=time.time() + 60 if valid else 0,
             )
             self.db.set_meta(db, key(device["id"]), evidence)
-            if not valid:
+            if not valid or (evidence.get("error") or {}).get("code") == "prime_device_recovery":
                 return
             reasons = {
                 "ready": "Prime catalogue reports an entitled live feed",

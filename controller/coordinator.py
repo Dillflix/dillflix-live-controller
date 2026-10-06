@@ -50,6 +50,9 @@ class PlaybackCoordinator(PlaybackRecovery):
                 d["reason"] = "Playback service unavailable; waiting for recovery. Watch plan retained."
                 self.db.save_device(db, d)
                 return True
+            if self.executor and hasattr(self.executor, "player_recovery_ready"):
+                if not self.executor.player_recovery_ready(db, d):
+                    return True
             items = self.items(db, d["id"])
             indexed = {i["content_id"]: i for i in items}
             now = self.now(db)
@@ -234,7 +237,13 @@ class PlaybackCoordinator(PlaybackRecovery):
             self.db.save_device(db, d)
             return True
 
-    def fail_attempt(self, db, d, job, reason, state="failed"):
+    def fail_attempt(self, db, d, job, reason, state="failed", device_recovery=False):
+        if d.get("player_recovery") or device_recovery:
+            db.execute("UPDATE jobs SET state='device_recovery',progress='device_recovery',error=? WHERE id=?",
+                       (reason, job["id"]))
+            d["playback_state"] = "waiting"
+            d["reason"] = (d.get("player_recovery") or {}).get("reason", "Reevaluating playback after player recovery; watch plan retained")
+            return
         prior = d["failures"].get(job["content_id"], {})
         attempts = prior.get("attempts", 0) + 1
         wait = 5 if attempts == 1 else 15 if attempts == 2 else 300
@@ -332,7 +341,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 and finished.timestamp() <= min(job["deadline_at"], time.time())
             )
             if job["deadline_at"] is not None and job["deadline_at"] <= time.time() and not completed_search:
-                self.fail_attempt(db, d, job, "Navigation exceeded its deadline", "timed_out")
+                self.fail_attempt(db, d, job, "Navigation exceeded its deadline", "timed_out", device_recovery=bool(report and report.get("device_recovery")))
             elif not isinstance(report, dict) or any(
                 report.get(k) != v
                 for k, v in {
@@ -420,7 +429,8 @@ class PlaybackCoordinator(PlaybackRecovery):
                     )
             else:
                 self.fail_attempt(
-                    db, d, job, str(report.get("reason") or "Executor did not verify live playback")[:1000]
+                    db, d, job, str(report.get("reason") or "Executor did not verify live playback")[:1000],
+                    device_recovery=bool(report.get("device_recovery"))
                 )
             self.db.save_device(db, d)
             return db.execute("SELECT state FROM jobs WHERE id=?", (request_id,)).fetchone()[0] in {
@@ -459,7 +469,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 if report is None and time.time() >= job["deadline_at"]:
                     with self.db.transaction() as db:
                         d = self.db.device(db, job["device_id"])
-                        self.fail_attempt(db, d, job, "Navigation exceeded its deadline", "timed_out")
+                        self.fail_attempt(db, d, job, "Navigation exceeded its deadline", "timed_out", device_recovery=bool(report and report.get("device_recovery")))
                         self.db.save_device(db, d)
                     continue
                 if report is None:

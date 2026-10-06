@@ -32,6 +32,10 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
 
     async def close_resources(self):
         # Closing the client never restarts, detaches, or terminates Prime Player.
+        recovery_task = getattr(self, "player_recovery_task", None)
+        if recovery_task and not recovery_task.done():
+            recovery_task.cancel()
+            await asyncio.gather(recovery_task, return_exceptions=True)
         task = getattr(self, "catalogue_task", None)
         if task and not task.done():
             task.cancel()
@@ -135,6 +139,63 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                     self.store.allowed(db, token, navigation=True)
                 return result
 
+    def record_player_health(self, health):
+        inspection = health.get("playback_inspection") or {}
+        degraded = inspection.get("state") == "degraded"
+        with self.db.transaction() as db:
+            device = self.db.device(db)
+            previous = device.get("player_recovery")
+            if not degraded and not previous:
+                return False
+            if degraded:
+                reason = (
+                    "Player inspection cooling down; checking recovery every 60 seconds. Watch plan retained."
+                    if inspection.get("recovery") == "retry_after_cooldown" else
+                    "Player inspection unavailable; checking recovery every 60 seconds. Watch plan retained."
+                )
+                device["player_recovery"] = {
+                    "session_id": health["session_id"], "inspection": inspection,
+                    "reason": reason, "checked_at": utc(),
+                    "next_probe_at": time.time() + 60,
+                }
+                device["reason"] = reason
+                if device.get("observed"):
+                    device["observed"]["verified"] = False
+                if not previous:
+                    self.db.log(db, utc(), "Player recovery pending", reason, "recovery", device["id"])
+            elif previous:
+                device["player_recovery"] = None
+                self.db.log(db, utc(), "Player inspection available",
+                            "Reevaluating current intent and live status before any new launch",
+                            "recovery", device["id"])
+            self.db.save_device(db, device)
+        return degraded
+
+    def player_recovery_ready(self, db, device):
+        recovery = device.get("player_recovery")
+        if not recovery:
+            return True
+        task = getattr(self, "player_recovery_task", None)
+        if recovery.get("next_probe_at", 0) <= time.time() and (not task or task.done()):
+            recovery["next_probe_at"] = time.time() + 60
+            if self.loop and self.loop.is_running() and not self.stopping:
+                def schedule():
+                    task = getattr(self, "player_recovery_task", None)
+                    if not task or task.done():
+                        self.player_recovery_task = asyncio.create_task(self.probe_player_recovery())
+                self.loop.call_soon_threadsafe(schedule)
+        device["reason"] = recovery["reason"]
+        self.db.save_device(db, device)
+        return False
+
+    async def probe_player_recovery(self):
+        try:
+            async with asyncio.timeout(15):
+                async with self.input_lock:
+                    await self.check_session()
+        except (ExecutorError, TimeoutError):
+            pass  # Retain recovery and its next probe; never turn this into event failure.
+
     async def check_session(self, expected=None, *, capabilities=(), control=False):
         health = await (self.player.control_health() if control else self.player.health())
         if expected and health["session_id"] != expected:
@@ -146,6 +207,8 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         self.player.require(health, *capabilities)
         if health.get("serial") != self.settings.screen_adb_serial:
             raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from SCREEN_ADB_SERIAL")
+        if not control and self.record_player_health(health):
+            raise ExecutorError("prime_device_recovery", "Player inspection unavailable; waiting for device recovery")
         return health
 
     @correlated
@@ -168,7 +231,15 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         except TimeoutError:
             self.store.fail(token, ExecutorError("navigation_timeout", "Prime playback workflow timed out"))
         except ExecutorError as exc:
-            self.store.fail(token, exc)
+            if exc.code == "prime_device_recovery":
+                with self.db.transaction() as db:
+                    current = self.store.get_row(db, token)
+                    report = json.loads(current["report"])
+                    report.setdefault("prime_player", {})["device_recovery"] = True
+                    report["observation_status"] = {"state": "unavailable", "checked_at": utc(), "error": exc.detail()}
+                    self.store.write(db, token, report, next_check=time.time() + 60)
+            else:
+                self.store.fail(token, exc)
         except Exception:
             self.store.fail(token, ExecutorError("prime_workflow_failed", "Prime playback workflow failed"))
 
@@ -313,7 +384,7 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                 message = "Prime could not verify the requested playback"
                 if isinstance(reason, str) and reason.strip():
                     message += ": " + reason.strip()[:800]
-                raise ExecutorError("prime_launch_unverified", message)
+                raise ExecutorError("prime_device_recovery_expired" if workflow.get("device_recovery") else "prime_launch_unverified", message)
             if outcome["state"] == "playing":
                 resolution = outcome.get("evidence", {}).get("resolution", {})
                 if resolution.get("playbackClass") != "live_watch_now" or not outcome.get("resolved_id"):

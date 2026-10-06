@@ -253,3 +253,16 @@ Waiting and unknown catalogue checks preserve current playback and its observati
 The latest complete response is included in diagnostic exports; bounded persistent
 RPC records allow comparing native state and timings across retries. Research
 instrumentation is not included in this production path.
+
+
+### Player inspection recovery
+
+Native inspection degradation is device recovery, not an event-access failure.
+The controller retains the watch plan and event failure counts, displays the
+player recovery reason, and blocks new planning launches while it checks player
+health every 60 seconds. Recovery probes are read-only and serialized with player
+RPCs. Existing attempts retain their identity and retry verification without
+resending Play; their original navigation deadlines still apply. An attempt that
+expires during device recovery does not add an event failure penalty. Once player
+health allows inspection again, planning reevaluates current intent and live
+status. Manual control and cancellation remain available throughout recovery.
