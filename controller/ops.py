@@ -30,6 +30,9 @@ JSON_COLUMNS = {
     "simulated_jobs": ("payload", "observation"),
     "simulated_devices": ("observation",),
     "executor_jobs": ("request", "report", "completion_candidate"),
+    "plex_settings": ("payload",),
+    "plex_runtime": ("payload",),
+    "plex_commands": ("result",),
 }
 
 
@@ -49,7 +52,7 @@ def verify(path):
         if version != Database.SCHEMA_VERSION:
             raise ValueError(f"Expected database schema {Database.SCHEMA_VERSION}, found {version}")
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if not set(TABLES) | {"metadata", "leases", "simulated_devices"} <= tables:
+        if not set(TABLES) | {"metadata", "leases", "simulated_devices", "plex_settings", "plex_runtime", "plex_assets", "plex_commands"} <= tables:
             raise ValueError("This is not a complete controller database")
         for table, columns in JSON_COLUMNS.items():
             for column in columns:
@@ -216,6 +219,18 @@ def prepare_restore(path, prior):
         db.execute(
             "UPDATE executor_jobs SET cancel_requested=1,next_check=0 WHERE request IS NOT NULL AND cancel_requested!=2"
         )
+        # A restored database must never replay historical artwork writes.
+        from .plex.state import configuration, runtime, save_configuration, save_runtime
+        for row in db.execute("SELECT device_id FROM plex_settings").fetchall():
+            config = configuration(db, row[0])
+            config.update(enabled=False, one_shot=False, revision=config["revision"] + 1)
+            save_configuration(db, row[0], config)
+            state = runtime(db, row[0])
+            state.update(desired=None, pending=False, in_flight=None, applied={},
+                         fallback_at=None, last_confirmed_at=None, retry_at=None,
+                         generation=state["generation"] + 1,
+                         blocked="Database restored; review Plex settings before enabling")
+            save_runtime(db, row[0], state)
         db.execute("DELETE FROM leases")
         db.execute("UPDATE content_status SET request_id=?,next_check=0", (str(uuid.uuid4()),))
         Database.set_meta(db, "simulated_executor_outage", False)

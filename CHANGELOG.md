@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.15.1 — Provider artwork and playback diagnostics
+
+- Use Teamarr's supplied provider cover unchanged when no game-thumbs matchup
+  thumbnail exists, including DAZN tennis day/court coverage.
+- Reconcile already-verified playback on startup so an applied default is
+  replaced without requiring another playback request.
+- Restore the read-only now-playing endpoint for diagnostics using the shared
+  internal projection; Plex delivery still has no HTTP polling dependency.
+
+## 0.15.0 — Plex artwork integration
+
+- Fix container startup after an owner-only Git checkout: normalize packaged
+  runtime code/assets, check non-root imports during the build, and exercise
+  restrictive checkout permissions in Docker CI.
+
+- Add controller-owned Plex artwork settings, default image upload/capture, and status previews.
+- Deliver verified-event artwork with durable five-minute fallback, per-slot retries and guarded read-back.
+- Limit Plex writes to thumb/art setters and suspend on protected metadata drift.
+- Add schema 9 storage, write-only credentials, restart recovery and restore suspension.
+- Remove the external now-playing route after extracting its internal playback projection.
+
 ## 0.14.22
 
 - Inspect other independently matched Prime parent tiles when the first has no entitled LIVE English or unlabeled broadcast. Apply the same selection loop to catalogue preflight and direct requests; stop when a suitable feed is found.

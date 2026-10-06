@@ -27,7 +27,7 @@ Prime completion is written atomically to the executor report and durable conten
 | `controller/screen.py`, `controller/screen_capture.py` | Shared, on-demand view-only ADB/scrcpy capture; independent of planner and playback evidence |
 | `controller/fixtures.py` | Explicit sample lifecycle transitions, independent of estimated end times |
 | `controller/api.py` | Same-origin HTTP API, update notifications, and built frontend |
-| `controller/now_playing.py` | Read-only observed live-event API projection and landscape matchup artwork URLs |
+| `controller/current_playback.py`, `controller/artwork.py` | Accepted live-event projection and matchup/provider artwork selection |
 | `frontend/src` | React interface using server state rather than an independent browser watch plan |
 
 ## Selection rules
@@ -272,3 +272,21 @@ resending Play; their original navigation deadlines still apply. An attempt that
 expires during device recovery does not add an event failure penalty. Once player
 health allows inspection again, planning reevaluates current intent and live
 status. Manual control and cancellation remain available throughout recovery.
+
+
+## Plex artwork integration (0.15.0)
+
+`current_playback.py` projects accepted live observations in a caller-owned
+transaction. `plex/` owns independently revisioned connection/binding settings,
+validated default assets, desired generations, per-slot delivery and retries.
+The database before-commit hook reconciles write transactions, including content
+lifecycle changes that do not write a device. It uses a savepoint and performs
+no external I/O. Only a changed desired state/deadline emits a post-commit wake-up.
+A separate async worker handles images and Plex without the playback lock.
+See [Plex setup and runtime semantics](plex-artwork.md). Schema 9 migrations
+default the integration off; backup restore disables it and clears runtime intent.
+
+The now-playing diagnostic endpoint exposes that same projection without player
+or Plex I/O. Matchup thumbnail derivation takes precedence, then a valid provider
+cover URL is used verbatim (including tennis coverage with no matchup). The
+integration calls the projection directly and never polls its HTTP endpoint.

@@ -14,7 +14,7 @@ def redact(value):
             k: "[redacted]"
             if any(
                 s in k.lower()
-                for s in ("password", "secret", "authorization", "api_key", "access_token", "cookie")
+                for s in ("password", "secret", "authorization", "api_key", "access_token", "cookie", "plex_token", "plex-token")
             )
             else redact(v)
             for k, v in value.items()
@@ -105,9 +105,23 @@ def collect(path, device_id="living-room"):
                 (device_id,),
             )
         ]
+        from ..plex.state import configuration, runtime
+        plex_config = configuration(db, device_id)
+        plex_runtime = runtime(db, device_id)
+        plex_summary = {
+            "enabled": plex_config["enabled"], "rating_key": plex_config["rating_key"],
+            "credential_configured": bool(plex_config.get("credential_ref")),
+            **{key: plex_runtime.get(key) for key in (
+                "generation", "pending", "blocked", "error", "retry_at", "last_success",
+                "fallback_at", "last_confirmed_at", "hold", "applied"
+            )},
+            "in_flight": bool(plex_runtime.get("in_flight")),
+            "desired": {key: value for key, value in (plex_runtime.get("desired") or {}).items() if key != "sources"},
+        }
         return redact(
             {
                 "schema_version": 1,
+                "plex_artwork": plex_summary,
                 "captured_at": datetime.now(UTC).isoformat(),
                 "device": {
                     **json.loads(device["payload"]),

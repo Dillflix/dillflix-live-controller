@@ -19,3 +19,5 @@ backups/
 *.executor.lock
 *.egg-info/
 /build/
+
+*.plex-secrets/

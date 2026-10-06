@@ -27,7 +27,7 @@ def scrub(value):
             str(k): "[redacted]"
             if any(
                 s in str(k).lower()
-                for s in ("password", "secret", "authorization", "api_key", "access_token", "cookie")
+                for s in ("password", "secret", "authorization", "api_key", "access_token", "cookie", "plex_token", "plex-token")
             )
             else scrub(v)
             for k, v in value.items()
@@ -43,7 +43,7 @@ def scrub(value):
         value = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]", value)
         value = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}", "[redacted]", value)
         value = re.sub(
-            r"(?i)([?&](?:token|key|signature|credential|auth)=[^\s&\"']+)", "&credential=[redacted]", value
+            r"(?i)([?&](?:x-plex-token|plex_token|token|key|signature|credential|auth)=[^\s&\"']+)", "&credential=[redacted]", value
         )
     return value
 

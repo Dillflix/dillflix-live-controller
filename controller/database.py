@@ -11,12 +11,18 @@ def encode(value):
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
 
 
+class TransactionConnection(sqlite3.Connection):
+    """Allow domain code to mark a post-commit wake-up without an early signal."""
+
+
 class Database:
     # Older releases must not silently ignore completion or discovery decisions.
-    SCHEMA_VERSION = 8
+    SCHEMA_VERSION = 9
 
     def __init__(self, path):
         self.path = path
+        self.before_commit = None
+        self.after_commit = None
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with database_guard(path):
             self.initialize(path)
@@ -129,6 +135,11 @@ class Database:
                     at TEXT NOT NULL, action TEXT NOT NULL, state TEXT NOT NULL,
                     evidence_id TEXT, error TEXT)""")
                 db.execute("CREATE INDEX IF NOT EXISTS executor_actions_token ON executor_actions(token,id)")
+            if version < 9:
+                db.execute("CREATE TABLE IF NOT EXISTS plex_settings (device_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS plex_runtime (device_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS plex_assets (digest TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS plex_commands (device_id TEXT NOT NULL, id TEXT NOT NULL, body_hash TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(device_id,id))")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
@@ -145,13 +156,16 @@ class Database:
 
     @contextmanager
     def connection_transaction(self):
-        db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        db = sqlite3.connect(self.path, timeout=10, isolation_level=None, factory=TransactionConnection)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
         db.execute("BEGIN IMMEDIATE")
         try:
             yield db
+            notify = bool(self.before_commit(db)) if db.total_changes and self.before_commit else False
             db.commit()
+            if notify and self.after_commit:
+                self.after_commit()
         except BaseException:
             db.rollback()
             raise

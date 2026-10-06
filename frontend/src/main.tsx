@@ -37,6 +37,7 @@ import {
 import { api, ApiError, commandId } from "./api";
 import { TeamRanking } from "./TeamRanking";
 import { ConfigurationTools } from "./ConfigurationTools";
+import { PlexSettings } from "./PlexSettings";
 import { DiagnosticsTools } from "./DiagnosticsTools";
 import { ScreenPanel } from "./ScreenPanel";
 import type {
@@ -1543,6 +1544,7 @@ function App() {
                     </select>
                   </div>
                 </section>
+                <PlexSettings deviceId={d.id} refreshKey={data.meta.server_time} />
                 <ConfigurationTools
                   devicePath={devicePath}
                   busy={busy}

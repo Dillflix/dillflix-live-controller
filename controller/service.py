@@ -54,6 +54,11 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             # Serialize playback calls with manual handoff, never on the event loop.
             self.playback_lock = threading.RLock()
             self.initialize()
+            from .plex.integration import PlexIntegration
+
+            self.plex = PlexIntegration(self)
+            self.db.before_commit = self.plex.before_commit
+            self.db.after_commit = self.plex.wake
         except BaseException:
             self._database_guard.__exit__(None, None, None)
             raise
@@ -804,6 +809,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
     def start(self):
         self.tasks = [
             asyncio.create_task(self.run_worker()),
+            asyncio.create_task(self.plex.worker.run()),
             asyncio.create_task(self.run_status()),
             asyncio.create_task(self.run_maintenance()),
         ]
