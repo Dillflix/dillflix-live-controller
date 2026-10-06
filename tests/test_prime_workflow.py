@@ -766,3 +766,20 @@ async def test_control_handoff_remains_available_during_inspection_cooldown(tmp_
             assert controller.db.device(db)["player_recovery"]
     finally:
         await cleanup(controller)
+
+
+async def test_device_recovery_does_not_increment_event_failures(tmp_path):
+    controller, workflow = rig(tmp_path)
+    try:
+        health = await workflow.player.health()
+        workflow.record_player_health({**health, "playback_inspection": {"state": "degraded", "recovery": "retry_after_cooldown"}})
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            original_plan = list(device["plan"])
+            original_failures = dict(device["failures"])
+            controller.fail_attempt(db, device, {"id": "missing-fixture-job", "content_id": "fixture-game"}, "inspection unavailable")
+            assert device["failures"] == original_failures
+            assert device["plan"] == original_plan
+            assert device["playback_state"] == "waiting"
+    finally:
+        await cleanup(controller)
