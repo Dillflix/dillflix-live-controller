@@ -14,7 +14,8 @@ from PIL import Image, ImageChops, ImageStat
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_PIXELS = 32_000_000
-SLOTS = {"poster": "thumb", "background": "art"}
+IMAGE_ELEMENTS = {"poster": "thumb", "background": "art"}
+UPLOAD_ROUTES = {"poster": "posters", "background": "arts"}
 
 
 class PlexError(Exception):
@@ -162,7 +163,7 @@ class PlexClient:
                 ) as response:
                     if response.status_code != 200:
                         raise PlexError(
-                            f"Plex returned HTTP {response.status_code}",
+                            f"Plex returned HTTP {response.status_code} for {method} {path}",
                             permanent=response.status_code
                             in {301, 302, 303, 307, 308, 400, 401, 403, 404, 405},
                         )
@@ -174,8 +175,10 @@ class PlexClient:
                         chunks.append(chunk)
                     return b"".join(chunks)
         except (httpx.HTTPError, TimeoutError):
-            # Never leak request headers, token, URLs or server bodies into logs.
-            raise PlexError("Plex request timed out or the server is unreachable") from None
+            # Paths are constructed/validated here; omit origin, headers and response bodies.
+            raise PlexError(
+                f"Plex request timed out or the server is unreachable for {method} {path}"
+            ) from None
 
     async def _xml(self, path):
         body = await self._request("GET", path, limit=1024 * 1024)
@@ -206,7 +209,7 @@ class PlexClient:
 
     async def image(self, key, slot, item=None):
         key = rating_key(key)
-        element = SLOTS[slot]
+        element = IMAGE_ELEMENTS[slot]
         item = item if item is not None else await self.metadata(key)
         path = item.get(element)
         if not path:
@@ -217,10 +220,11 @@ class PlexClient:
         return image_asset(await self._request("GET", path))
 
     async def set_image(self, key, slot, asset):
-        # The only mutation in this client: a single item's thumb or art, raw bytes.
+        # Python PlexAPI's uploadPoster/uploadArt use these plural upload routes.
+        # Current-image GET paths remain thumb/art and are not upload endpoints.
         await self._request(
             "POST",
-            f"/library/metadata/{rating_key(key)}/{SLOTS[slot]}",
+            f"/library/metadata/{rating_key(key)}/{UPLOAD_ROUTES[slot]}",
             data=asset.data,
             mime=asset.mime,
             limit=1024 * 1024,

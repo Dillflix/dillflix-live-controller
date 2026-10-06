@@ -12,7 +12,7 @@ from PIL import Image
 
 from controller.database import encode
 from controller.diagnostic_log import scrub
-from controller.plex.client import PlexClient, image_asset, protected_metadata
+from controller.plex.client import PlexClient, PlexError, image_asset, protected_metadata
 from controller.plex.state import configuration, runtime, save_configuration, save_runtime
 from controller.prime_player.diagnostics import redact
 
@@ -66,7 +66,11 @@ class Plex:
             return httpx.Response(200, text=self.metadata())
         slot = path.split("/")[4] if path.startswith("/library/metadata/8/") else None
         if request.method == "POST":
-            assert path in {"/library/metadata/8/thumb", "/library/metadata/8/art"}
+            # Independently model PlexAPI's upload contract; singular image paths return 404.
+            uploads = {"/library/metadata/8/posters": "thumb", "/library/metadata/8/arts": "art"}
+            if path not in uploads:
+                return httpx.Response(404)
+            slot = uploads[path]
             assert request.url.query == b""
             assert request.headers["content-type"] == "image/png"
             if self.during_write:
@@ -168,6 +172,113 @@ async def red_image(_url):
     return image_asset(picture("red"))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("slot", "upload", "element"),
+    [("poster", "posters", "thumb"), ("background", "arts", "art")],
+)
+async def test_upload_uses_plural_route_and_reads_current_image(slot, upload, element):
+    plex = Plex()
+    client = PlexClient("http://plex:32400", TOKEN, httpx.MockTransport(plex.handle))
+    asset = image_asset(picture("red"))
+    before = protected_metadata(ET.fromstring(plex.metadata())[0])
+    try:
+        await client.set_image("8", slot, asset)
+        assert (await client.image("8", slot)).digest == asset.digest
+    finally:
+        await client.close()
+    assert plex.writes() == [("POST", f"/library/metadata/8/{upload}", asset.data)]
+    assert ("GET", f"/library/metadata/8/{element}/2", b"") in plex.calls
+    assert protected_metadata(ET.fromstring(plex.metadata())[0]) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["identity", "metadata", "poster", "background"])
+async def test_http_error_identifies_operation_without_credentials_or_response_body(operation):
+    def missing(_request):
+        return httpx.Response(404, text=f"Private server body: {TOKEN}")
+
+    client = PlexClient("http://private-plex:32400", TOKEN, httpx.MockTransport(missing))
+    try:
+        with pytest.raises(PlexError) as failure:
+            if operation == "identity":
+                await client.identity()
+            elif operation == "metadata":
+                await client.metadata("8")
+            else:
+                await client.set_image("8", operation, image_asset(picture("red")))
+    finally:
+        await client.close()
+    request = {
+        "identity": "GET /identity",
+        "metadata": "GET /library/metadata/8",
+        "poster": "POST /library/metadata/8/posters",
+        "background": "POST /library/metadata/8/arts",
+    }[operation]
+    assert str(failure.value) == f"Plex returned HTTP 404 for {request}"
+    assert failure.value.permanent
+    assert TOKEN not in str(failure.value) and "private-plex" not in str(failure.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata_drift", [False, True])
+async def test_retry_after_legacy_upload_404_checks_saved_attempt_before_writing(
+    setup, monkeypatch, metadata_drift
+):
+    from controller.plex.integration import PlexIntegration
+
+    browser, service, plex = setup
+    now, _ = real_playback(service)
+    enable(browser)
+    service.plex.worker.download = red_image
+    before = protected_metadata(ET.fromstring(plex.metadata())[0])
+
+    async def legacy_upload(client, key, slot, asset):
+        element = {"poster": "thumb", "background": "art"}[slot]
+        await client._request("POST", f"/library/metadata/{key}/{element}", data=asset.data, mime=asset.mime)
+
+    with monkeypatch.context() as old:
+        old.setattr(PlexClient, "set_image", legacy_upload)
+        await service.plex.worker.run_once("living-room")
+    assert state(service)["blocked"] == "Plex returned HTTP 404 for POST /library/metadata/8/thumb"
+    assert state(service)["in_flight"] and state(service)["pending"]
+    assert plex.images["thumb"] == picture("black")
+    # Upgrade/restart preserves the old suspension and durable uncertain request.
+    with service.db.transaction() as db:
+        saved = runtime(db, "living-room")
+        saved.update(blocked="Plex returned HTTP 404", error="Plex returned HTTP 404")
+        save_runtime(db, "living-room", saved)
+    replacement = PlexIntegration(service)
+    replacement.now = lambda: now
+    replacement.worker.client_factory = service.plex.worker.client_factory
+    replacement.worker.download = red_image
+    service.plex = replacement
+    service.db.before_commit = replacement.before_commit
+    service.db.after_commit = replacement.wake
+    plex.calls.clear()
+    await replacement.worker.run_once("living-room")
+    assert not plex.calls
+    if metadata_drift:
+        plex.duration = "1"
+    response = browser.post(PATH + "/retry", json={"command_id": "retry-404", "expected_revision": 3})
+    assert response.status_code == 200, response.text
+    await replacement.worker.run_once("living-room")
+    if metadata_drift:
+        assert "metadata changed" in state(service)["blocked"]
+        assert not plex.writes()
+        return
+    assert not state(service)["blocked"] and not state(service)["pending"]
+    assert not state(service)["in_flight"]
+    assert plex.writes() == [("POST", "/library/metadata/8/posters", picture("red"))]
+    assert plex.calls[:3] == [
+        ("GET", "/identity", b""),
+        ("GET", "/library/metadata/8", b""),
+        ("GET", "/library/metadata/8/thumb/1", b""),
+    ]
+    assert plex.images["thumb"] == picture("red")
+    assert protected_metadata(ET.fromstring(plex.metadata())[0]) == before
+
+
 def test_settings_capture_and_token_do_not_leak(setup):
     browser, service, plex = setup
     response = browser.get(PATH)
@@ -229,7 +340,7 @@ async def test_event_upload_artwork_only_and_no_reupload_on_renewal(setup):
     service.plex.worker.download = red_image
     before = protected_metadata(ET.fromstring(plex.metadata())[0])
     await service.plex.worker.run_once("living-room")
-    assert [c[1] for c in plex.writes()] == ["/library/metadata/8/thumb"]
+    assert [c[1] for c in plex.writes()] == ["/library/metadata/8/posters"]
     assert protected_metadata(ET.fromstring(plex.metadata())[0]) == before
     assert not state(service)["pending"]
     gen = state(service)["generation"]
@@ -281,7 +392,7 @@ async def test_existing_verified_tennis_replaces_default_with_provider_image(set
     assert state(service)["generation"] > generation
     assert downloaded == [provider]
     assert plex.images == {"thumb": picture("green"), "art": picture("gray")}
-    assert [c[1] for c in plex.writes()] == ["/library/metadata/8/thumb"]
+    assert [c[1] for c in plex.writes()] == ["/library/metadata/8/posters"]
     assert protected_metadata(ET.fromstring(plex.metadata())[0]) == before
     view = browser.get("/api/v1/devices/living-room/now-playing").json()
     assert view["state"] == "playing" and view["simulated"] is False
@@ -491,7 +602,7 @@ async def test_partial_background_failure_retries_without_reuploading_poster(set
     ready_retry(service)
     await service.plex.worker.run_once("living-room")
     assert not state(service)["pending"]
-    assert [c[1] for c in plex.writes()].count("/library/metadata/8/thumb") == 1
+    assert [c[1] for c in plex.writes()].count("/library/metadata/8/posters") == 1
     assert plex.images["art"] == picture("blue")
 
 
@@ -540,7 +651,7 @@ async def test_disabled_while_poster_in_flight_stops_background(setup):
 
     plex.during_write = disable
     await service.plex.worker.run_once("living-room")
-    assert [c[1] for c in plex.writes()] == ["/library/metadata/8/thumb"]
+    assert [c[1] for c in plex.writes()] == ["/library/metadata/8/posters"]
     assert not state(service)["pending"]
 
 
