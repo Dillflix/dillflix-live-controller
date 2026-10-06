@@ -23,6 +23,6 @@ RUN python -c "import controller.api; from pathlib import Path; Path('frontend/d
 ENV CONTROLLER_DATABASE=/data/controller.sqlite3
 ENV SCREEN_SERVER_PATH=/opt/scrcpy-server-v3.3.4
 EXPOSE 8790
-HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8790/api/health')"
+HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8790/healthz')"
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "controller.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8790", "--workers", "1"]

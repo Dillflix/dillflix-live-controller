@@ -1,6 +1,43 @@
 html {
   color-scheme: dark light;
 }
+
+#df-app .df-public-main {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 28px 24px 48px;
+}
+#df-app .df-public-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+#df-app .df-public-permissions {
+  margin-bottom: 16px;
+}
+#df-app .df-public-event-footer {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+#df-app .df-public-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#df-app .df-public-footer {
+  margin-top: 28px;
+}
+#df-app dialog.df-public-details {
+  margin: auto;
+  width: calc(100% - 32px);
+  color: inherit;
+}
+#df-app .df-public-details::backdrop {
+  background: #0008;
+}
+@media (max-width: 600px) {
+  #df-app .df-public-main {
+    padding: 20px 12px 32px;
+  }
+}
 body {
   margin: 0;
   background: light-dark(#f3f4f6, #0e1014);

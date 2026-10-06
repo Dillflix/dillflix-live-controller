@@ -1172,7 +1172,7 @@ def test_schema_eight_migration_preserves_device_and_defaults_to_disabled(rig):
     with upgraded.transaction() as db:
         assert upgraded.device(db) == before
         assert not configuration(db, "living-room")["enabled"]
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 @pytest.mark.asyncio

@@ -16,8 +16,8 @@ class TransactionConnection(sqlite3.Connection):
 
 
 class Database:
-    # Older releases must not silently ignore completion or discovery decisions.
-    SCHEMA_VERSION = 9
+    # Older releases must not ignore completion, discovery, or source priority.
+    SCHEMA_VERSION = 10
 
     def __init__(self, path):
         self.path = path
@@ -135,7 +135,9 @@ class Database:
                     at TEXT NOT NULL, action TEXT NOT NULL, state TEXT NOT NULL,
                     evidence_id TEXT, error TEXT)""")
                 db.execute("CREATE INDEX IF NOT EXISTS executor_actions_token ON executor_actions(token,id)")
-            if version < 9:
+            # Both the public test branch and Plex release used schema 9.
+            # Ensure Plex tables exist when upgrading either lineage.
+            if version < 10:
                 db.execute("CREATE TABLE IF NOT EXISTS plex_settings (device_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL)")
                 db.execute("CREATE TABLE IF NOT EXISTS plex_runtime (device_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
                 db.execute("CREATE TABLE IF NOT EXISTS plex_assets (digest TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL)")
@@ -196,6 +198,10 @@ class Database:
             **json.loads(row["payload"]),
         }
         device["preferences"].setdefault("discovery_leagues", list(DEFAULT_LEAGUES))
+        device.setdefault("public_access", {"play_now": False, "add_to_plan": False})
+        from .planner import ordered_plan
+
+        device["plan"] = ordered_plan(device)
         return device
 
     @staticmethod

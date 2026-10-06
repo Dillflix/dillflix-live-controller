@@ -7,6 +7,9 @@ from .executor.config import ExecutorConfig
 
 @dataclass(frozen=True)
 class Settings:
+    proxy_secret: str = ""
+    public_auth_mode: str = "proxy"
+    admin_auth_mode: str = "proxy"
     database: str = "data/controller.sqlite3"
     mode: str = "demo"
     teamarr_url: str = ""
@@ -36,6 +39,12 @@ class Settings:
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
+    def __post_init__(self):
+        if self.public_auth_mode not in {"proxy", "guest"}:
+            raise ValueError("CONTROLLER_PUBLIC_AUTH_MODE must be proxy or guest")
+        if self.admin_auth_mode not in {"proxy", "trusted-lan"}:
+            raise ValueError("CONTROLLER_ADMIN_AUTH_MODE must be proxy or trusted-lan")
+
     @property
     def playback_evidence_ttl(self):
         """Expire prior verified Prime evidence five minutes after observation.
@@ -56,6 +65,9 @@ class Settings:
         if mode == "teamarr" and not url:
             raise ValueError("TEAMARR_URL is required in teamarr mode")
         return cls(
+            proxy_secret=os.getenv("CONTROLLER_PROXY_SECRET", ""),
+            public_auth_mode=os.getenv("CONTROLLER_PUBLIC_AUTH_MODE", "proxy"),
+            admin_auth_mode=os.getenv("CONTROLLER_ADMIN_AUTH_MODE", "proxy"),
             prime_player_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
             database=os.getenv("CONTROLLER_DATABASE", "data/controller.sqlite3"),
             mode=mode,

@@ -24,6 +24,20 @@ class Command(StrictModel):
     action: Action
 
 
+class PublicCommand(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+    action: Literal["add", "play_now"]
+    content_id: str = Field(min_length=1, max_length=1000)
+
+
+class PublicAccessUpdate(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+    play_now: bool
+    add_to_plan: bool
+
+
 class Rule(StrictModel):
     id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=100)

@@ -120,6 +120,11 @@ def team_priority(device, item):
     return min((ordered.index(t["key"]) for t in item["teams"] if t["key"] in ordered), default=1_000_000)
 
 
+def ordered_plan(device):
+    """Stable order within each source; legacy commitments belong to admins."""
+    return sorted(device["plan"], key=lambda p: p.get("actor", {}).get("type", "admin") == "user")
+
+
 def choose(device, items, now, real_now):
     indexed = {e["content_id"]: e for e in items}
     current_id = (device.get("observed") or {}).get("content_id")
@@ -147,13 +152,14 @@ def choose(device, items, now, real_now):
                 candidates.append(item)
     ids = {e["content_id"] for e in candidates}
     eligible_ids = {e["content_id"] for e in eligible}
-    manual = next((p for p in device["plan"] if p["content_id"] in eligible_ids), None)
+    manual = next((p for p in ordered_plan(device) if p["content_id"] in eligible_ids), None)
     if manual:
         result = {
             "content_id": manual["content_id"],
             "manual": True,
             "rule_id": None,
             "reason": "Protected by your watch plan",
+            "actor": manual.get("actor", {"type": "admin", "id": "legacy", "name": "Admin"}),
         }
         # Backoff delays another launch; it does not relinquish a live manual
         # commitment to an automatic event or a lower watch-plan entry.
@@ -251,7 +257,7 @@ def choose(device, items, now, real_now):
             or (holding and current["lifecycle"]["state"] in {"live", "unknown"})
         )
     ):
-        order = [p["content_id"] for p in device["plan"]]
+        order = [p["content_id"] for p in ordered_plan(device)]
         wins_manual = result["manual"] and (
             current_id not in order or order.index(result["content_id"]) < order.index(current_id)
         )
@@ -300,7 +306,7 @@ def preview_plan(device, items, now):
     indexed = {i["content_id"]: i for i in items}
     entries = [
         indexed[p["content_id"]]
-        for p in device["plan"]
+        for p in ordered_plan(device)
         if p["content_id"] in indexed
         and indexed[p["content_id"]]["lifecycle"]["state"] not in {"ended", "cancelled"}
     ]

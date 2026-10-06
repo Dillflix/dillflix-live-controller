@@ -10,6 +10,15 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 
 ## What works
 
+- A separate [public app with PlexSSO integration](docs/public-app.md) at `/public/`:
+  Now playing and Live/Upcoming events, optional public Play now/Add to plan,
+  admin-first playback priority, and actor attribution. Choose proxy authentication
+  or explicit guest mode (`CONTROLLER_PUBLIC_AUTH_MODE=guest`) for public access
+  without login. Public actions default off; admin access stays separate.
+  For direct LAN testing without nginx or PlexSSO, also set
+  `CONTROLLER_ADMIN_AUTH_MODE=trusted-lan`; both apps then work without login.
+  See [test launch and rollback](docs/public-lan-test.md).
+
 - Optional [Plex title and artwork updates](docs/plex-artwork.md), configured in Settings,
   driven by accepted playback with durable five-minute fallback and narrow, verified API writes.
 - A read-only [now-playing diagnostic endpoint](docs/now-playing.md), including

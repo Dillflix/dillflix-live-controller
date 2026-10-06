@@ -1,0 +1,89 @@
+# Adapt inside nginx's http {} context. Configure real TLS certificates and replace
+# CHANGE_ME with the same long random value as CONTROLLER_PROXY_SECRET.
+# Controller and PlexSSO ports must be reachable only on a private network.
+upstream dillflix_controller { server 127.0.0.1:8790; }
+upstream dillflix_sso { server 127.0.0.1:4200; }
+map $http_upgrade $dillflix_connection { default upgrade; '' close; }
+
+server {
+    listen 443 ssl;
+    server_name live.example.com;
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    set $sso_service dillflix-public;
+
+    auth_request /_dillflix_auth;
+    auth_request_set $dillflix_username $upstream_http_x_plexsso_username;
+    proxy_set_header X-Dillflix-Proxy-Key "CHANGE_ME";
+    proxy_set_header X-Dillflix-User $dillflix_username;
+    proxy_set_header X-Dillflix-Role user;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_http_version 1.1;
+    proxy_cache off;
+
+    location = /_dillflix_auth {
+        internal;
+        auth_request off;
+        proxy_pass http://dillflix_sso/api/v2/sso;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-PlexSSO-For $sso_service;
+        proxy_set_header X-PlexSSO-Original-URI $request_uri;
+        proxy_set_header X-Upstream-Host $host;
+        proxy_set_header X-Upstream-Protocol $scheme;
+    }
+    location = / { return 302 /public/; }
+    location = /public { return 302 /public/; }
+    location = /public/ {
+        error_page 401 = @login;
+        proxy_pass http://dillflix_controller;
+    }
+    location @login { return 302 https://login.example.com/$sso_service$request_uri; }
+    location ^~ /api/public/v1/ { proxy_pass http://dillflix_controller; }
+    location ^~ /assets/ { proxy_pass http://dillflix_controller; }
+    location / { return 404; }
+}
+
+server {
+    listen 443 ssl;
+    server_name controller.example.com;
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    set $sso_service dillflix-admin;
+
+    # PlexSSO MUST restrict this service to Owner or your explicit admin allowlist.
+    auth_request /_dillflix_auth;
+    auth_request_set $dillflix_username $upstream_http_x_plexsso_username;
+    proxy_set_header X-Dillflix-Proxy-Key "CHANGE_ME";
+    proxy_set_header X-Dillflix-User $dillflix_username;
+    proxy_set_header X-Dillflix-Role admin;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $dillflix_connection;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_read_timeout 1h;
+    proxy_cache off;
+
+    location = /_dillflix_auth {
+        internal;
+        auth_request off;
+        proxy_pass http://dillflix_sso/api/v2/sso;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-PlexSSO-For $sso_service;
+        proxy_set_header X-PlexSSO-Original-URI $request_uri;
+        proxy_set_header X-Upstream-Host $host;
+        proxy_set_header X-Upstream-Protocol $scheme;
+    }
+    location = / {
+        error_page 401 = @login;
+        proxy_pass http://dillflix_controller;
+    }
+    location @login { return 302 https://login.example.com/$sso_service$request_uri; }
+    location / { proxy_pass http://dillflix_controller; }
+}

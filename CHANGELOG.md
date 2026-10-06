@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — public app
+
+- Support direct access without nginx or PlexSSO using guest public mode and explicit `CONTROLLER_ADMIN_AUTH_MODE=trusted-lan`. Show read-only Details for the currently playing public event.
+- Reconcile the public-test and Plex schema-9 variants in schema 10, retaining watch-plan actors, public permissions, and existing Plex state.
+
+- Add explicit `CONTROLLER_PUBLIC_AUTH_MODE=guest` for anonymous public browsing and requests without PlexSSO. Attribute requests to Guest, retain admin priority and action switches, and keep admin endpoints protected even when no proxy secret is configured. Include an nginx example using separate Basic-authenticated admin access.
+
+- Add a separate public frontend at `/public/` with Now playing, Live/Upcoming events, Play now and Add to plan, without administrative controls.
+- Keep eligible admin commitments ahead of user requests in playback and previews. Retain source actor attribution in the shared watch plan and admin activity. Public requests respect admin pause and manual control.
+- Add independently revisioned public action switches (off by default) and a restricted public API with actor-bound command receipts, proxy-authenticated PlexSSO identity, role checks for HTTP/WebSockets, and same-origin writes.
+- Upgrade to schema 10 so older releases cannot ignore source priority. Include PlexSSO/nginx deployment examples. Live SSO, Linux deployment, and target hardware acceptance remain pending.
+
 ## 0.16.1 — Remove Plex media-property comparisons
 
 - Remove before/after media and descriptive-property fingerprints from title

@@ -6,11 +6,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
-from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from .access import ProxyAccess
 from .config import Settings
 from .current_playback import NowPlaying, current_playback
 from .device_input import DeviceInput, same_origin
@@ -22,12 +23,15 @@ from .models import (
     CompletionCommand,
     ConfigurationImport,
     ManualControlCommand,
+    PublicAccessUpdate,
+    PublicCommand,
     RulesUpdate,
     SimulationCommand,
     UndoCommand,
 )
 from .planner import choose, priority, team_priority
 from .plex.api import install_plex_api
+from .public import public_overview
 from .screen import ScreenStream, serve_screen
 from .service import Controller
 
@@ -68,6 +72,12 @@ def create_app(settings=None, *, start_workers=True):
                 await asyncio.to_thread(recorder.close)
 
     app = FastAPI(title="Dillflix Controller", version="0.16.1", lifespan=lifespan)
+    app.add_middleware(
+        ProxyAccess,
+        secret=settings.proxy_secret,
+        public_auth_mode=settings.public_auth_mode,
+        admin_auth_mode=settings.admin_auth_mode,
+    )
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
@@ -129,9 +139,37 @@ def create_app(settings=None, *, start_workers=True):
             ),
         }
 
+    @app.get("/healthz", include_in_schema=False)
+    def liveness():
+        return {"ok": True}
+
     @app.get("/api/v1/overview")
     def overview():
         return service.overview()
+
+    @app.get("/api/public/v1/overview")
+    def viewer_overview(request: Request):
+        return JSONResponse(
+            public_overview(service, request.state.actor), headers={"Cache-Control": "no-store"}
+        )
+
+    @app.post("/api/public/v1/watch-plan")
+    def viewer_command(command: PublicCommand, request: Request):
+        # Source is the public interface even when the signed-in viewer is an admin.
+        actor = {**request.state.actor, "type": "user"}
+        return service.plan_command(
+            "living-room",
+            Command(
+                command_id=command.command_id,
+                expected_revision=command.expected_revision,
+                action={"type": command.action, "content_id": command.content_id},
+            ),
+            actor=actor,
+        )
+
+    @app.put("/api/v1/devices/{device_id}/public-access")
+    def public_access(device_id: str, command: PublicAccessUpdate):
+        return service.public_access_command(device_id, command)
 
     @app.get("/api/v1/devices/{device_id}/diagnostics")
     async def diagnostics(device_id: str):
@@ -237,8 +275,10 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.post("/api/v1/devices/{device_id}/watch-plan")
     @app.patch("/api/v1/devices/{device_id}/watch-plan")
-    def plan_command(device_id: str, command: Command):
-        return service.plan_command(device_id, command)
+    def plan_command(device_id: str, command: Command, request: Request):
+        return service.plan_command(
+            device_id, command, actor=request.state.actor if settings.proxy_secret else None
+        )
 
     @app.delete("/api/v1/devices/{device_id}/watch-plan/{entry_id}")
     def remove(device_id: str, entry_id: str, command_id: str, expected_revision: int):
@@ -352,6 +392,14 @@ def create_app(settings=None, *, start_workers=True):
         entry = settings.frontend / "index.html"
         if not entry.is_file():
             raise HTTPException(503, "Build the web interface with npm ci && npm run build in frontend/")
+        return FileResponse(entry, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/public")
+    @app.get("/public/")
+    def public_index():
+        entry = settings.frontend / "public.html"
+        if not entry.is_file():
+            raise HTTPException(503, "Build the web interface to include the public application")
         return FileResponse(entry, headers={"Cache-Control": "no-cache"})
 
     return app
