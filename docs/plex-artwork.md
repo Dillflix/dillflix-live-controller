@@ -1,25 +1,25 @@
-# Plex artwork
+# Plex title and artwork
 
-The optional **Settings → Plex artwork** integration updates an existing Plex
-video library item's poster and background from accepted controller playback.
+The optional **Settings → Plex title and artwork** integration updates an existing Plex
+video library item's title, poster and background from accepted controller playback.
 It is disabled by default. It adds no separate service, now-playing HTTP polling,
-player status checks, scans, analysis, or media-metadata editing operations.
+player status checks, scans, analysis, or media-property editing operations.
 
 ## Configure
 
 1. Deploy the controller with your normal Compose files. Keep the
    existing `.env`, Prime Player socket configuration and persistent volume.
-2. Open **Settings → Plex artwork**. Enter the Plex server URL reachable from
-   the controller container, a Plex token with artwork-edit permission, and the
+2. Open **Settings → Plex title and artwork**. Enter the Plex server URL reachable from
+   the controller container, a Plex token with metadata-edit permission, and the
    numeric item ID (for example `8`) or the item's Plex link.
 3. Use **Test Plex connection** to verify read access and the target title, then
-   **Save Plex settings**. This test performs no artwork writes and does not
+   **Save Plex settings**. This test performs no writes and does not
    prove edit permission.
 4. Use **Use current Plex artwork as defaults**, or upload both default images.
    PNG, JPEG and static WebP images are limited to 8 MiB and 32 megapixels each.
    Captured defaults are saved image bytes, independent of subsequent Plex edits.
-5. With real Prime Player playback configured, enable **Automatic artwork
-   updates** and save. Observe the first controlled change, the two per-image
+5. With real Prime Player playback configured, enable **Automatic title and artwork
+   updates** and save. Observe the first controlled change, verified title, image
    previews and status before leaving the integration unattended.
 
 Do not use `localhost` for a Plex server outside the controller container.
@@ -28,6 +28,12 @@ container. Existing nginx authentication protects the settings and previews.
 
 ## Behavior
 
+- The title follows the currently verified event, for example **Beijing Open:
+  Day 7**, including events without an image. The default title is **Dillflix Live**.
+  Requested and last verified titles are shown separately in settings and diagnostics.
+- Upgrading an enabled 0.15.x installation schedules the current title on startup;
+  no new playback request or settings change is required. A prior suspension remains
+  suspended until **Retry Plex update**. The database remains schema 9.
 - The poster prefers the current event's game-thumbs matchup thumbnail,
   retaining its URL/style and landscape proportions. Without a matchup, it uses
   Teamarr's supplied `artwork.cover_url` unchanged. DAZN tennis day/court coverage
@@ -35,23 +41,23 @@ container. Existing nginx authentication protects the settings and previews.
   Provider URLs are never rewritten into game-thumbs paths. Images are not cropped.
 - The background uses its saved default until a distinct upstream background
   source is implemented. The two slots are tracked independently.
-- A desired/queued event does not replace the currently verified event's art.
+- A desired/queued event does not replace the currently verified event's title or art.
 - A new accepted positive observation renews the fallback deadline. Re-reading
   an old sample does not. Defaults are due **five minutes after the last fresh
   accepted confirmation**, without an extra grace period after evidence expiry.
 - Brief lost verification, pause, manual handoff, or completion holds the current
-  artwork until that deadline. Automation pause alone does not invalidate
+  title and artwork until that deadline. Automation pause alone does not invalidate
   continuing verified playback.
 - A new event without an image uses the default poster. A failed image download
   for a new event also uses its default and retries; a failed refresh for the
   same event retains that event's last good image.
 - Content changes, changed source URLs, changed defaults and explicit resync
   trigger work. A source silently changing bytes behind an unchanged URL needs
-  **Resync artwork now**; there is no image polling loop.
-- Demo/simulator mode cannot write Plex artwork, including fallback images.
-- Disabling prevents new writes and leaves current images in place. A request
+  **Resync Plex now**; there is no image polling loop.
+- Demo/simulator mode cannot write Plex titles or artwork, including defaults.
+- Disabling prevents new writes and leaves the current title and images in place. A request
   already transmitted can still complete. **Restore defaults and disable**
-  explicitly disables automation and queues one application of both defaults.
+  explicitly disables automation and queues **Dillflix Live** and both default images.
 
 The worker uses committed desired state and deadline/retry wake-ups. Ordinary
 controller restart retains the existing deadline and resolves uncertain writes
@@ -66,28 +72,37 @@ route was removed; it is restored in 0.15.1.
 
 ## Media protection and verification
 
-The only outbound writes are raw image POSTs to the configured single item's
+Artwork writes are raw image POSTs to the configured single item's
 `/library/metadata/{id}/posters` and `/library/metadata/{id}/arts`, matching
 [Python PlexAPI's upload methods](https://python-plexapi.readthedocs.io/en/latest/_modules/plexapi/mixins/resources.html).
 Current-image reads still use the `/thumb/{timestamp}` and `/art/{timestamp}`
-URLs from metadata. The client has no
-scan, refresh, analyze, generic metadata editor, or Plex-database write method.
+URLs from metadata.
+
+The title uses `PUT /library/sections/{section}/all` with exactly `id` (the configured
+single item), `type=1`, `title.value` and `title.locked=1`, following
+[Python PlexAPI's title-edit contract](https://python-plexapi.readthedocs.io/en/latest/_modules/plexapi/mixins/edit.html).
+The lock prevents metadata agents from replacing the managed title. The client
+has no scan, refresh, analyze, arbitrary-field editor or Plex-database write method.
 
 Versions 0.15.0–0.15.1 used singular upload paths that can return HTTP 404.
-Upgrade to 0.15.2, then choose **Retry artwork update** in Settings → Plex artwork.
+Upgrade to 0.15.2 or later, then choose **Retry Plex update** in Plex settings
+(called **Retry artwork update** in 0.15.x).
 Restarting alone preserves the suspension. Retry first verifies the saved attempt
 and protected metadata before deciding whether an upload is needed. HTTP errors
 now include the method and relative request path, distinguishing failed uploads
 from missing metadata or image reads without exposing the token or server body.
 
 Every change compares protected metadata before/after the request: item duration,
-identity, title/summary and other descriptive fields, Media/Part/Stream attributes,
+identity, summary and other descriptive fields, Media/Part/Stream attributes,
 bitrate, codecs, dimensions, media paths and stream properties. Transient stream
 selection/decision flags are excluded. Unexpected changes suspend further writes;
 the integration never attempts to repair those properties by writing them.
+Artwork writes also preserve the title and sort title. Title writes verify the exact
+requested title and its lock; Plex may derive an unlocked sort title, while a locked
+sort title and its lock state remain protected. No sort-title edit is sent.
 
 Images are read back and compared, tolerating small resizing/JPEG differences.
-An acknowledged upload alone does not count as verified. Plex may update artwork
+An acknowledged upload/edit alone does not count as verified. Plex may update artwork
 bookkeeping and cache timestamps. The integration cannot guarantee unchanged
 internal SQL columns or force immediate artwork refresh in every Plex client.
 
@@ -95,7 +110,8 @@ Before production acceptance, retain the XML from `GET /library/metadata/8`
 (or your configured item) before and after a controlled event/default transition.
 Confirm that technical fields are unchanged and that the intended images appear.
 For exact database-column comparison, take read-only snapshots of the relevant
-metadata/media/part/stream rows. No live Plex server was available during development.
+metadata/media/part/stream rows. Artwork uploads were confirmed working by the
+operator on 0.15.2. The title edit still needs live acceptance on the installed Plex server.
 
 ## Failures and recovery
 

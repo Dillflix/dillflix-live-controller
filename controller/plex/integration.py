@@ -91,6 +91,7 @@ class PlexIntegration:
                     "fallback_at",
                     "hold",
                     "applied",
+                    "applied_title",
                 )
             }
             safe["status"]["in_flight"] = bool(state["in_flight"])
@@ -185,7 +186,7 @@ class PlexIntegration:
                         raise HTTPException(409, "Another device is already bound to this Plex item")
                 state = runtime(db, device)
                 if target_changed:
-                    state.update(applied={}, desired=None, last_confirmed_at=None)
+                    state.update(applied={}, applied_title=None, desired=None, last_confirmed_at=None)
                 state.update(blocked=None, error=None, retry_at=None)
                 save_runtime(db, device, state)
                 save_configuration(db, device, config)

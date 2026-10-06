@@ -24,7 +24,8 @@ type PlexInfo = {
     retry_at: number | null;
     fallback_at: number | null;
     last_success: string | null;
-    desired: { title?: string; mode?: string };
+    desired: { title?: string; mode?: string; plex_title?: string };
+    applied_title?: { value: string; at: string } | null;
     applied: Partial<Record<Slot, { digest: string; at: string }>>;
   };
 };
@@ -134,12 +135,13 @@ export function PlexSettings({
   return (
     <section
       className="df-panel df-spacer df-plex"
-      aria-label="Plex artwork settings"
+      aria-label="Plex item settings"
     >
-      <h2>Plex artwork</h2>
+      <h2>Plex title and artwork</h2>
       <p>
-        Show the verified live event on a Plex library item. Default images
-        return five minutes after the last fresh playback confirmation.
+        Show the verified live event's title and artwork on a Plex library item.
+        The title returns to “Dillflix Live” with your default images five
+        minutes after the last fresh playback confirmation.
       </p>
       {error && (
         <div role="alert" className="df-plex-error">
@@ -218,7 +220,7 @@ export function PlexSettings({
           </div>
           <div className="df-setting">
             <div className="df-row-copy">
-              <strong>Automatic artwork updates</strong>
+              <strong>Automatic title and artwork updates</strong>
               <p>
                 {info.real_playback
                   ? "Save the connection and both defaults before enabling."
@@ -228,7 +230,7 @@ export function PlexSettings({
             <input
               type="checkbox"
               className="df-switch"
-              aria-label="Automatic Plex artwork updates"
+              aria-label="Automatic Plex title and artwork updates"
               checked={enabled}
               disabled={busy || !info.real_playback || removeToken}
               onChange={(e) => {
@@ -251,7 +253,7 @@ export function PlexSettings({
                   setChecked(
                     `${result.title} · ${result.library} · Plex ${result.version}`,
                   );
-                }, "Connection and item read access verified. Artwork writes are checked when applied.")
+                }, "Connection and item read access verified. Title and artwork writes are checked when applied.")
               }
             >
               Test Plex connection
@@ -359,14 +361,23 @@ export function PlexSettings({
             {info.status.blocked
               ? "Updates suspended"
               : info.status.in_flight
-                ? "Updating Plex artwork…"
+                ? "Updating Plex…"
                 : info.status.pending
                   ? "Update pending"
                   : info.enabled
-                    ? "Artwork synchronized"
+                    ? "Title and artwork synchronized"
                     : "Automatic updates disabled"}
             {info.status.desired.title ? ` · ${info.status.desired.title}` : ""}
           </p>
+          {info.status.desired.plex_title && (
+            <p>Requested title: {info.status.desired.plex_title}</p>
+          )}
+          {info.status.applied_title && (
+            <p>
+              Verified title: {info.status.applied_title.value} ·{" "}
+              {new Date(info.status.applied_title.at).toLocaleTimeString()}
+            </p>
+          )}
           {(info.status.blocked || info.status.error) && (
             <p role="status" className="df-plex-error">
               {info.status.blocked || info.status.error}
@@ -411,17 +422,20 @@ export function PlexSettings({
               className="df-button"
               disabled={busy || !info.enabled}
               onClick={() =>
-                void act("resync", "Artwork resynchronization queued.")
+                void act(
+                  "resync",
+                  "Title and artwork resynchronization queued.",
+                )
               }
             >
-              Resync artwork now
+              Resync Plex now
             </button>
             <button
               className="df-button"
               disabled={busy || !(info.status.error || info.status.blocked)}
-              onClick={() => void act("retry", "Artwork retry queued.")}
+              onClick={() => void act("retry", "Plex update retry queued.")}
             >
-              Retry artwork update
+              Retry Plex update
             </button>
             <button
               className="df-button"
@@ -435,7 +449,7 @@ export function PlexSettings({
               onClick={() =>
                 void act(
                   "restore-defaults",
-                  "Default artwork queued. Automatic updates are now disabled.",
+                  "Default title and artwork queued. Automatic updates are now disabled.",
                 )
               }
             >

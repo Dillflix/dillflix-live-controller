@@ -10,8 +10,8 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 
 ## What works
 
-- Optional [Plex artwork updates](docs/plex-artwork.md), configured in Settings,
-  driven by accepted playback with durable five-minute fallback and artwork-only API writes.
+- Optional [Plex title and artwork updates](docs/plex-artwork.md), configured in Settings,
+  driven by accepted playback with durable five-minute fallback and narrow, verified API writes.
 - A read-only [now-playing diagnostic endpoint](docs/now-playing.md), including
   matchup thumbnails and provider artwork for tennis coverage.
 
@@ -64,9 +64,10 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
-Version 0.15.2 corrects Plex artwork upload routes and adds request details to
-errors for the schema-9 [Plex artwork integration](docs/plex-artwork.md).
-After upgrading a suspended artwork update, choose **Retry artwork update** in
+Version 0.16.0 adds event titles to the schema-9 [Plex integration](docs/plex-artwork.md).
+Existing enabled installations reconcile the current event title on startup;
+the default title is **Dillflix Live**. No new database migration is required.
+After upgrading a suspended update, choose **Retry Plex update** in
 the Plex settings. Existing suspensions remain in place until explicitly retried.
 Back up the database before upgrading; Plex updates remain disabled until configured.
 

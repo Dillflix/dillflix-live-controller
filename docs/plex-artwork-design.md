@@ -1,6 +1,16 @@
 # Controller-owned Plex artwork integration
 
-Status: implemented in controller 0.15.2. Live event-artwork acceptance remains pending.
+Status: artwork accepted on the operator's Plex server in 0.15.2; extended with
+event titles in 0.16.0. Live title-edit acceptance remains pending. The original
+artwork design below is retained with the updated API boundary; current behavior
+is documented in [Plex setup and semantics](plex-artwork.md).
+
+Title extension (0.16.0): the verified event title and the default `Dillflix Live`
+share the existing durable generation and five-minute deadline. Single-item
+title edits have their own durable attempt and read-back receipt, including
+restart recovery. An unlocked sort title may be derived by Plex; a locked sort
+title and media properties remain protected. No additional playback checks,
+polling, schema migration or external service is introduced.
 
 Implementation follow-up (0.15.1): retain a read-only now-playing diagnostic
 endpoint over the shared projection, and use supplied provider artwork when a
@@ -223,6 +233,7 @@ The client uses the established image upload routes used by Python PlexAPI:
 | Read target metadata and technical properties | `GET /library/metadata/{rating_key}` |
 | Set the current poster | `POST /library/metadata/{rating_key}/posters` with image bytes |
 | Set the current background | `POST /library/metadata/{rating_key}/arts` with image bytes |
+| Set the current title | `PUT /library/sections/{section}/all` with one `id`, `type=1`, `title.value` and `title.locked=1` |
 | Verify/capture current images | GET the artwork URLs returned by fresh item metadata |
 
 The original implementation followed the official `libraryMetadataPostElement`
@@ -240,21 +251,23 @@ timeouts. Keep Plex credentials on the configured Plex origin. Reject redirects
 for authenticated operations; allow expected LAN image hosts without passing
 Plex credentials to them.
 
-The Plex client exposes only specific methods for the reads and two setters.
+The Plex client exposes only specific methods for reads, two image uploads and a title setter.
 It does not expose a generic metadata editor or arbitrary write path. No scan,
-refresh, analyze, playback, media-part, stream-selection, title, duration or
+refresh, analyze, playback, media-part, stream-selection, duration or
 bitrate update operation is used. No direct Plex database or bundle writes.
 
 Protection has three layers:
 
 1. Contract tests assert the complete allowlist of outbound write methods and
-   paths, the single configured item, and image-only bodies.
+   paths, the single configured item, image-only upload bodies, and the exact title edit parameters.
 2. Each actual change reads metadata before and after delivery and compares a
    normalized fingerprint of stable media properties: item duration, Media
    duration/bitrate/codecs/resolution, Part identity/path/size/duration, and
    persisted stream properties. Session decisions, selected-stream flags and
    user playback progress are not stable technical-media fields. Include
-   descriptive fields such as title and summary in the non-artwork guard too.
+   descriptive fields such as title and summary in the artwork guard too. Only
+   the title edit allows title changes and unlocked derived sort-title changes;
+   it separately verifies the requested title and lock.
 3. Before enabling on the real stream item, run a controlled acceptance test
    with retained before/after XML and, if database-column-level evidence is
    required, read-only database snapshots of the item/media/part/stream rows.

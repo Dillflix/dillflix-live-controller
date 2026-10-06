@@ -113,7 +113,7 @@ def collect(path, device_id="living-room"):
             "credential_configured": bool(plex_config.get("credential_ref")),
             **{key: plex_runtime.get(key) for key in (
                 "generation", "pending", "blocked", "error", "retry_at", "last_success",
-                "fallback_at", "last_confirmed_at", "hold", "applied"
+                "fallback_at", "last_confirmed_at", "hold", "applied", "applied_title"
             )},
             "in_flight": bool(plex_runtime.get("in_flight")),
             "desired": {key: value for key, value in (plex_runtime.get("desired") or {}).items() if key != "sources"},

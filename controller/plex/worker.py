@@ -6,7 +6,16 @@ import logging
 import time
 from uuid import uuid4
 
-from .client import PlexClient, PlexError, download_image, protected_metadata, same_image, target_identity
+from .client import (
+    PlexClient,
+    PlexError,
+    download_image,
+    field_locked,
+    protected_metadata,
+    same_image,
+    target_identity,
+    title_protected_metadata,
+)
 from .state import asset_by_id, configuration, prune_assets, runtime, save_asset, save_runtime
 
 log = logging.getLogger(__name__)
@@ -65,7 +74,7 @@ class ArtworkWorker:
             self.service.db.log(
                 db,
                 self.integration.now().isoformat(),
-                "Plex artwork update pending",
+                "Plex update pending",
                 str(error),
                 "plex",
                 device,
@@ -76,6 +85,18 @@ class ArtworkWorker:
         client = self.client(attempt["config"])
         try:
             item = await self.check_target(client, attempt["config"])
+            if attempt.get("kind") == "title":
+                self.verify_title_metadata(item, attempt)
+                matched = item.get("title") == attempt["title"] and field_locked(item, "title")
+                with self.service.db.transaction() as db:
+                    state = runtime(db, device)
+                    if (state.get("in_flight") or {}).get("id") != attempt["id"]:
+                        return
+                    state["in_flight"] = None
+                    if matched and state["generation"] == attempt["generation"]:
+                        state["applied_title"] = self.title_receipt(attempt)
+                    save_runtime(db, device, state)
+                return
             if protected_metadata(item) != attempt["protected"]:
                 raise PlexError("Protected Plex metadata changed; artwork updates suspended", permanent=True)
             served = await client.image(attempt["config"]["rating_key"], attempt["slot"], item)
@@ -97,6 +118,54 @@ class ArtworkWorker:
                 save_runtime(db, device, state)
         finally:
             await client.close()
+
+    @staticmethod
+    def verify_title_metadata(item, attempt):
+        if title_protected_metadata(item, preserve_sort=attempt["preserve_sort"]) != attempt["protected"]:
+            raise PlexError("Protected Plex metadata changed; updates suspended", permanent=True)
+
+    def title_receipt(self, attempt):
+        return {
+            "value": attempt["title"],
+            "content_id": attempt["content_id"],
+            "at": self.integration.now().isoformat(),
+        }
+
+    async def deliver_title(self, device, generation, config, desired, client):
+        if not self.current(device, generation):
+            return
+        item = await self.check_target(client, config)
+        if not self.current(device, generation):
+            return
+        preserve_sort = field_locked(item, "titleSort")
+        attempt = {
+            "id": uuid4().hex,
+            "kind": "title",
+            "title": desired["plex_title"],
+            "generation": generation,
+            "config": config,
+            "content_id": desired["content_id"],
+            "preserve_sort": preserve_sort,
+            "protected": title_protected_metadata(item, preserve_sort=preserve_sort),
+        }
+        if item.get("title") != attempt["title"] or not field_locked(item, "title"):
+            with self.service.db.transaction() as db:
+                state = runtime(db, device)
+                if state["generation"] != generation or state["hold"] or state["blocked"]:
+                    return
+                state["in_flight"] = attempt
+                save_runtime(db, device, state)
+            await client.set_title(config["rating_key"], item.get("librarySectionID"), attempt["title"])
+            after = await client.metadata(config["rating_key"])
+            self.verify_title_metadata(after, attempt)
+            if after.get("title") != attempt["title"] or not field_locked(after, "title"):
+                raise PlexError("Plex has not served the intended title; verification will retry")
+        with self.service.db.transaction() as db:
+            state = runtime(db, device)
+            state["in_flight"] = None
+            if state["generation"] == generation:
+                state["applied_title"] = self.title_receipt(attempt)
+            save_runtime(db, device, state)
 
     async def deliver_slot(self, device, generation, config, desired, slot, client):
         source = desired["sources"][slot]
@@ -186,6 +255,7 @@ class ArtworkWorker:
                 client = self.client(config)
                 errors = []
                 try:
+                    await self.deliver_title(device, generation, config, state["desired"], client)
                     for slot in ("poster", "background"):
                         if not self.current(device, generation):
                             return
@@ -212,7 +282,7 @@ class ArtworkWorker:
                         self.service.db.log(
                             db,
                             self.integration.now().isoformat(),
-                            "Plex artwork updated",
+                            "Plex title and artwork updated",
                             state["desired"]["title"],
                             "plex",
                             device,
