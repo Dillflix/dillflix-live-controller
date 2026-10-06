@@ -10,7 +10,7 @@ from uuid import uuid4
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls
 from .broadcasts import choose_broadcast
-from .client import rpc_context
+from .client import COMPATIBILITY_MESSAGES, rpc_context
 from .labels import search_queries
 from .matching import selection_state
 
@@ -91,7 +91,9 @@ class CatalogueChecks:
                         return
                     health = await self.check_session(capabilities=("search",))
                     if health.get("api_version", 0) < 11:
-                        raise ExecutorError("prime_incompatible", "Prime Player API 11 or newer is required")
+                        raise ExecutorError(
+                            "prime_api_incompatible", "Prime Player API 11 or newer is required", retryable=False
+                        )
                     ownership = self.player.ownership(health, automatic=True)
                     query = search_queries(probe["request"]["content_snapshot"])[0]
                     results = await self.player.search(query, self.config.prime_search_timeout, ownership)
@@ -186,6 +188,9 @@ class CatalogueChecks:
                 "no_matching_feed": "No matching live or upcoming Prime feed found; watch plan retained",
             }
             reason = reasons[state]
+            if state == "access_unknown":
+                error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
+                reason = COMPATIBILITY_MESSAGES.get(error.get("code"), reason)
             broadcast_decision = (evidence.get("audit") or {}).get("broadcast_selection") or {}
             if state == "no_matching_feed" and broadcast_decision.get("match_status") == "no_match":
                 reason = "No English or unlabeled Prime broadcast on the permitted route; watch plan retained"

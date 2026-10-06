@@ -62,4 +62,33 @@ Remaining work: target-host rollout, live matching accuracy, physical search/pla
 
 ## Later iterations
 
+### Prime update resilience — agreed follow-up
+
+Deliver after restoring and validating support for Prime runtime 116633. The
+October 6 incident combined an unsupported resource update with Android sleep;
+these require separate diagnosis and recovery.
+
+- Scope compatibility to the resources and interfaces each capability actually
+  uses. Continue supported catalogue/status operations when unrelated resources
+  change. A version-label change alone must not disable unchanged interfaces.
+- Reduce dependence on fixed module IDs with offline structural discovery and
+  explicit interface contracts. Investigate which checks can run automatically
+  without navigation or playback; do not assume matching export names prove
+  unchanged semantics or native ABI compatibility.
+- Provide one bounded evidence capture and a repeatable adapter validation/release
+  workflow, including search, all matching parents' broadcasts, entitlement,
+  language preference, resolution, live startup, status, cancellation and handoff.
+- Expose device sleep/background state, unsupported runtime, temporary inspection
+  failure and service reachability separately. Permit recovery after an adapter
+  update without editing the watch plan; recheck current ownership and intent.
+- Validate sleep/background recovery while automation is active, respecting the
+  user's keep-awake preference and manual control. Preserve background catalogue
+  search where supported; measure whether waking is needed before adding it.
+
+Acceptance must cover unchanged fingerprints under a new version, unrelated
+resource updates, changed required interfaces, an update during playback, a
+sleeping/backgrounded device, and recovery after installing the matching adapter.
+Demonstrate continued supported operations and clear explanations for blocked
+ones. Never equate compatibility failure with an unentitled or completed event.
+
 Multiple devices, broader sports programming beyond live events, richer tournament/session filters, and natural-language rule/plan authoring through the same previewable commands. Keep the existing team/event/session/broadcast model suitable for golf, combat sports, international tournaments, and multi-sport competitions.

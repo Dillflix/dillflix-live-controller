@@ -249,8 +249,9 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         )
         if health.get("api_version", 0) < 11:
             raise ExecutorError(
-                "prime_incompatible",
+                "prime_api_incompatible",
                 "Prime Player API 11 or newer is required for catalogue search and launch refusal evidence",
+                retryable=False,
             )
         ownership = self.player.ownership(health, automatic=True)
         session = health["session_id"]

@@ -18,6 +18,12 @@ from ..executor.models import ExecutorError
 
 rpc_context = ContextVar("prime_rpc_context", default={})
 
+COMPATIBILITY_MESSAGES = {
+    "prime_runtime_unsupported": "Prime runtime unsupported; player adapter update required",
+    "prime_api_incompatible": "Prime Player API unsupported; player service update required",
+    "prime_incompatible": "Prime Player compatibility unavailable; inspect player diagnostics",
+}
+
 
 def correlated(function):
     @wraps(function)
@@ -145,15 +151,28 @@ class PrimePlayerClient:
     @staticmethod
     def require(health, *capabilities):
         if health.get("api_version", 0) < 4:
-            raise ExecutorError("prime_incompatible", "Prime Player API 4 or newer is required")
+            raise ExecutorError("prime_api_incompatible", "Prime Player API 4 or newer is required", retryable=False)
         implemented = health.get("capabilities", [])
-        available = health.get("compatibility", {}).get("capabilities", {})
+        compatibility = health.get("compatibility", {})
+        available = compatibility.get("capabilities", {})
         for name in capabilities:
-            if name not in implemented or (
+            if name not in implemented:
+                raise ExecutorError(
+                    "prime_api_incompatible", f"Prime Player service does not implement: {name}", retryable=False
+                )
+            if (
                 name in {"search", "broadcasts", "play", "playback_status", "stop"}
                 and available.get("javascript_navigation" if name == "stop" else name, {}).get("available")
                 is not True
             ):
+                quarantine = compatibility.get("quarantine", {})
+                if quarantine.get("javascript") is True or any(
+                    value is True for value in quarantine.get("behavior", {}).values()
+                ):
+                    raise ExecutorError(
+                        "prime_runtime_unsupported", COMPATIBILITY_MESSAGES["prime_runtime_unsupported"],
+                        retryable=False,
+                    )
                 raise ExecutorError("prime_incompatible", f"Prime Player capability unavailable: {name}")
 
     @staticmethod

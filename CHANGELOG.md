@@ -12,6 +12,15 @@
 - Add independently revisioned public action switches (off by default) and a restricted public API with actor-bound command receipts, proxy-authenticated PlexSSO identity, role checks for HTTP/WebSockets, and same-origin writes.
 - Upgrade to schema 10 so older releases cannot ignore source priority. Include PlexSSO/nginx deployment examples. Live SSO, Linux deployment, and target hardware acceptance remain pending.
 
+## 0.16.2 — Prime compatibility reporting
+
+- Explain quarantined Prime updates as "Prime runtime unsupported; player adapter
+  update required" in playback monitoring and activity, instead of an unknown
+  event entitlement. Distinguish missing player API support and unvalidated
+  runtime capabilities. Preserve watch plans and periodic checks for recovery.
+- Record Prime update resilience as a follow-up deliverable after restoring
+  support for runtime 116633.
+
 ## 0.16.1 — Remove Plex media-property comparisons
 
 - Remove before/after media and descriptive-property fingerprints from title

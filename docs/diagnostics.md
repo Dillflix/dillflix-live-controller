@@ -17,6 +17,26 @@ Earlier players supply only current-process RPC summaries without bodies.
 Capture begins after updating and restarting both services; previously missing
 logs cannot be recovered retroactively.
 
+## Prime compatibility failures
+
+Playback monitoring and catalogue activity distinguish these conditions:
+
+- **Prime runtime unsupported; player adapter update required**: the requested
+  capability is unavailable and the player reports a quarantined resource or
+  behavior change. Waking or retrying the same runtime does not validate it.
+- **Prime Player API unsupported; player service update required**: the service
+  lacks the required API version or method.
+- **Prime Player compatibility unavailable; inspect player diagnostics**: the
+  capability is unvalidated, without enough evidence to identify an update.
+
+These failures preserve the watch plan and event status. Periodic health checks
+continue so a supported service can recover without plan edits. "Executor: ok"
+describes executor contact, not Prime runtime compatibility. Capture health and
+compatibility evidence before restarting. A black screen alone does not establish
+sleep; Android power/activity evidence must be checked separately. The agreed
+[update resilience follow-up](roadmap.md#prime-update-resilience--agreed-follow-up)
+follows restoration of support for runtime 116633.
+
 ## One-time supervised installation
 
 Capture incident evidence first. Stop the existing foreground player once with Ctrl+C; the installer deliberately refuses to replace a live service's socket. Update both checkouts and install the player package:
