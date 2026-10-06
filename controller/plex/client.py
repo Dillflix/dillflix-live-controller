@@ -1,4 +1,4 @@
-"""Narrow Plex API boundary. No generic metadata mutations or database access."""
+"""Narrow Plex API boundary for artwork and title. No database access."""
 
 import asyncio
 import hashlib
@@ -141,6 +141,20 @@ def target_identity(item):
     }
 
 
+def field_locked(item, name):
+    return any(n.get("name") == name and n.get("locked") == "1" for n in item.findall("Field"))
+
+
+def title_protected_metadata(item, *, preserve_sort):
+    """Permit the requested title and Plex's derived, unlocked sort title only."""
+    result = protected_metadata(item)
+    result["item"].pop("title")
+    if not preserve_sort:
+        result["item"].pop("titleSort")
+    result["sort_locked"] = field_locked(item, "titleSort")
+    return result
+
+
 class PlexClient:
     def __init__(self, url, token, transport=None):
         self.url = base_url(url)
@@ -155,11 +169,15 @@ class PlexClient:
     async def close(self):
         await self.http.aclose()
 
-    async def _request(self, method, path, *, data=None, mime=None, limit=MAX_IMAGE_BYTES):
+    async def _request(self, method, path, *, data=None, mime=None, params=None, limit=MAX_IMAGE_BYTES):
         try:
             async with asyncio.timeout(25):
                 async with self.http.stream(
-                    method, self.url + path, content=data, headers={"Content-Type": mime} if mime else None
+                    method,
+                    self.url + path,
+                    content=data,
+                    params=params,
+                    headers={"Content-Type": mime} if mime else None,
                 ) as response:
                     if response.status_code != 200:
                         raise PlexError(
@@ -227,6 +245,19 @@ class PlexClient:
             f"/library/metadata/{rating_key(key)}/{UPLOAD_ROUTES[slot]}",
             data=asset.data,
             mime=asset.mime,
+            limit=1024 * 1024,
+        )
+
+    async def set_title(self, key, section, title):
+        # Match Python PlexAPI's editTitle: one movie ID and exactly one edited field.
+        if not isinstance(section, str) or not re.fullmatch(r"[1-9][0-9]*", section):
+            raise PlexError("Plex did not return a supported library section ID", permanent=True)
+        if not isinstance(title, str) or not title.strip() or len(title) > 2048:
+            raise PlexError("Plex title must contain between 1 and 2048 characters", permanent=True)
+        await self._request(
+            "PUT",
+            f"/library/sections/{section}/all",
+            params={"type": "1", "id": rating_key(key), "title.value": title, "title.locked": "1"},
             limit=1024 * 1024,
         )
 

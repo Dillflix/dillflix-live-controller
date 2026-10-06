@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.0 — Plex event titles
+
+- Set the Plex item's title to the accepted, verified event name. Restore
+  **Dillflix Live** with the default artwork five minutes after the last fresh
+  playback confirmation, or through **Restore defaults and disable**.
+- Use a single-item, title-only Plex edit with its field lock. Read back the
+  title and preserve protected metadata, including duration, bitrate and streams.
+  Plex may derive an unlocked sort title; an explicitly locked sort title remains protected.
+- Persist uncertain title edits and verify them before retrying after a restart;
+  reconcile already-enabled installations without requiring a new playback request.
+- Show requested and verified titles separately in Plex settings and diagnostics.
+  Existing artwork delivery, read-only connection tests and capture remain supported.
+
 ## 0.15.2 — Plex artwork upload compatibility
 
 - Upload image bytes through Plex's `/posters` and `/arts` routes, matching

@@ -44,6 +44,7 @@ def runtime(db, device):
             "last_confirmed_at": None,
             "fallback_at": None,
             "applied": {},
+            "applied_title": None,
             "pending": False,
             "blocked": None,
             "retry_at": None,
@@ -92,7 +93,7 @@ def prune_assets(db):
     for row in db.execute("SELECT payload FROM plex_runtime"):
         state = json.loads(row[0])
         if state.get("in_flight"):
-            keep.add(state["in_flight"]["digest"])
+            keep.add(state["in_flight"].get("digest"))
         keep.update(v.get("digest") for v in state.get("applied", {}).values())
         for source in (state.get("desired") or {}).get("sources", {}).values():
             if source:

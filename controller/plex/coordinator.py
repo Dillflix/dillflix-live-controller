@@ -7,6 +7,8 @@ from ..database import encode
 from ..planner import parse_time
 from .state import configuration, runtime, save_runtime
 
+DEFAULT_TITLE = "Dillflix Live"
+
 
 def reconcile(service, db, device_id, *, now=None):
     now = now or datetime.now(UTC)
@@ -33,6 +35,7 @@ def reconcile(service, db, device_id, *, now=None):
                 "mode": "defaults",
                 "content_id": None,
                 "title": "Default artwork",
+                "plex_title": DEFAULT_TITLE,
                 "sources": {
                     slot: {"asset": config["defaults"].get(slot)} for slot in ("poster", "background")
                 },
@@ -43,6 +46,7 @@ def reconcile(service, db, device_id, *, now=None):
                 "mode": "event",
                 "content_id": event.content_id,
                 "title": event.title,
+                "plex_title": event.title.strip() or DEFAULT_TITLE,
                 "sources": {
                     "poster": {"url": event.thumbnail_url}
                     if event.thumbnail_url
