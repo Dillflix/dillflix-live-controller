@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls
-from .broadcasts import refine
+from .broadcasts import choose_broadcast
 from .client import rpc_context
 from .labels import search_queries
 from .matching import selection_state
@@ -102,8 +102,6 @@ class CatalogueChecks:
                 evidence.update(
                     query=query, results=results, session_id=health["session_id"], received_at=time.time()
                 )
-                with capture_model_calls(lambda value: evidence["model_calls"].append(value)):
-                    selected, audit = await self.matcher.choose(probe["request"], results, probe["timezone"])
 
                 async def fetch_broadcasts(content_id):
                     async with self.input_lock:
@@ -116,7 +114,15 @@ class CatalogueChecks:
                             content_id, self.player.ownership(current, automatic=True)
                         )
 
-                selected, audit = await refine(probe["request"], results, selected, audit, fetch_broadcasts)
+                with capture_model_calls(lambda value: evidence["model_calls"].append(value)):
+                    selected, audit = await choose_broadcast(
+                        probe["request"],
+                        results,
+                        probe["timezone"],
+                        self.matcher,
+                        fetch_broadcasts,
+                        lambda audit: evidence.update(audit=audit),
+                    )
                 state = selection_state(selected, audit)
                 evidence.update(state=state, selected=selected, audit=audit)
         except asyncio.CancelledError:
@@ -176,7 +182,7 @@ class CatalogueChecks:
                 "ready": "Prime catalogue reports an entitled live feed",
                 "waiting_for_feed": "Prime feed is upcoming; catalogue check retries in 60 seconds",
                 "access_unknown": "Prime entitlement or event state is unknown; catalogue check retries in 60 seconds",
-                "feeds_locked": "Matching Prime feeds are not entitled; watch plan retained",
+                "feeds_locked": "No entitled English or unlabeled feed on the inspected matching Prime routes; watch plan retained",
                 "no_matching_feed": "No matching live or upcoming Prime feed found; watch plan retained",
             }
             reason = reasons[state]
@@ -204,6 +210,7 @@ class CatalogueChecks:
                         "content_id": probe["content_id"],
                         "selected": evidence.get("selected"),
                         "broadcast_selection": (evidence.get("audit") or {}).get("broadcast_selection"),
+                        "parent_selections": (evidence.get("audit") or {}).get("parent_selections"),
                         "error": evidence.get("error"),
                     }
                 ),

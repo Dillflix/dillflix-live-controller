@@ -52,6 +52,12 @@ unlabeled feeds, skips explicit other languages, and keeps unlabeled audio langu
 unknown. Each child needs its own entitlement and LIVE evidence. Prepared results
 remain fenced by plan revision, intent, service session, runtime generation and age.
 
+When that parent supplies no playable preferred broadcast, selection continues
+through other independently matched parent tiles in the search response. It stops
+on a suitable live feed; failed, incomplete or ambiguous alternatives prevent a
+definitive exclusion. Both preflight and direct launches use this loop and retain
+each parent's evidence. See [multiple-parent selection](prime-parent-selection.md).
+
 ## State and recovery
 
 The device record separates configuration revision, manual plan, desired content, monotonically increasing intent version, and observed playback. A configuration edit increments the revision; ordinary status observations do not. A stale client gets HTTP 409 rather than overwriting another browser's changes.
