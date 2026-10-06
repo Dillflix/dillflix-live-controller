@@ -97,40 +97,6 @@ def same_image(source, served):
         return max(stats.mean) <= 2 and max(stats.rms) <= 6
 
 
-def protected_metadata(item):
-    """Exclude artwork/bookkeeping and session-specific decisions, not media facts."""
-    result = {
-        "item": {
-            k: item.get(k)
-            for k in (
-                "ratingKey",
-                "guid",
-                "type",
-                "title",
-                "summary",
-                "duration",
-                "originalTitle",
-                "titleSort",
-                "year",
-                "studio",
-                "contentRating",
-                "originallyAvailableAt",
-            )
-        }
-    }
-    volatile = {"selected", "decision", "videoDecision", "audioDecision", "subtitleDecision"}
-
-    def tree(node):
-        return {
-            "tag": node.tag,
-            "attrs": {k: v for k, v in sorted(node.attrib.items()) if k not in volatile},
-            "children": [tree(child) for child in node],
-        }
-
-    result["media"] = [tree(node) for node in item.findall("Media")]
-    return result
-
-
 def target_identity(item):
     return {
         "rating_key": item.get("ratingKey"),
@@ -143,16 +109,6 @@ def target_identity(item):
 
 def field_locked(item, name):
     return any(n.get("name") == name and n.get("locked") == "1" for n in item.findall("Field"))
-
-
-def title_protected_metadata(item, *, preserve_sort):
-    """Permit the requested title and Plex's derived, unlocked sort title only."""
-    result = protected_metadata(item)
-    result["item"].pop("title")
-    if not preserve_sort:
-        result["item"].pop("titleSort")
-    result["sort_locked"] = field_locked(item, "titleSort")
-    return result
 
 
 class PlexClient:

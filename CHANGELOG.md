@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.1 — Remove Plex media-property comparisons
+
+- Remove before/after media and descriptive-property fingerprints from title
+  and artwork delivery, including recovery of uncertain writes.
+- Keep single-item API writes, server/item identity checks, title/lock and image
+  read-back verification, generation fences and retry recovery.
+- Discard old fingerprints and automatically resume suspensions caused solely
+  by the retired property checks. Other suspension reasons remain in place.
+
 ## 0.16.0 — Plex event titles
 
 - Set the Plex item's title to the accepted, verified event name. Restore

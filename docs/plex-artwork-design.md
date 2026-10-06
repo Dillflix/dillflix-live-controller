@@ -8,9 +8,13 @@ is documented in [Plex setup and semantics](plex-artwork.md).
 Title extension (0.16.0): the verified event title and the default `Dillflix Live`
 share the existing durable generation and five-minute deadline. Single-item
 title edits have their own durable attempt and read-back receipt, including
-restart recovery. An unlocked sort title may be derived by Plex; a locked sort
-title and media properties remain protected. No additional playback checks,
+restart recovery. No additional playback checks,
 polling, schema migration or external service is introduced.
+
+Property-check removal (0.16.1): remove media/descriptive-property fingerprints
+and before/after comparisons from delivery and recovery. Keep server/item
+identity checks and title/image read-back verification. Retire saved fingerprints
+and suspensions caused solely by those comparisons on upgrade.
 
 Implementation follow-up (0.15.1): retain a read-only now-playing diagnostic
 endpoint over the shared projection, and use supplied provider artwork when a
@@ -45,8 +49,8 @@ Requirements:
   controller's own HTTP API or adding a minute-based image-fetch loop.
 - Isolate Plex failures and image downloads from playback, navigation, manual
   input, and scheduling.
-- Restrict Plex mutations to artwork operations. Preserve media properties,
-  including duration, bitrate, codecs, streams, resolution, and media paths.
+- Restrict Plex mutations to title and artwork operations. Send no duration,
+  bitrate, codec, stream, resolution or media-path edits.
 
 The new `dillflix-live-nowplaying` repository is unnecessary for this design.
 Do not change or delete that repository. No separate daemon or Compose service
@@ -256,32 +260,15 @@ It does not expose a generic metadata editor or arbitrary write path. No scan,
 refresh, analyze, playback, media-part, stream-selection, duration or
 bitrate update operation is used. No direct Plex database or bundle writes.
 
-Protection has three layers:
+The client restricts writes to the configured single item and the exact title
+edit parameters or raw image bytes. Contract tests enforce that boundary.
+Server/item identity and generation checks remain. Before/after comparisons of
+media or descriptive properties were removed in 0.16.1, including comparisons
+against fingerprints saved by older versions. Property changes no longer suspend
+delivery. The integration does not attempt to repair media properties.
 
-1. Contract tests assert the complete allowlist of outbound write methods and
-   paths, the single configured item, image-only upload bodies, and the exact title edit parameters.
-2. Each actual change reads metadata before and after delivery and compares a
-   normalized fingerprint of stable media properties: item duration, Media
-   duration/bitrate/codecs/resolution, Part identity/path/size/duration, and
-   persisted stream properties. Session decisions, selected-stream flags and
-   user playback progress are not stable technical-media fields. Include
-   descriptive fields such as title and summary in the artwork guard too. Only
-   the title edit allows title changes and unlocked derived sort-title changes;
-   it separately verifies the requested title and lock.
-3. Before enabling on the real stream item, run a controlled acceptance test
-   with retained before/after XML and, if database-column-level evidence is
-   required, read-only database snapshots of the item/media/part/stream rows.
-   Exercise both event and default artwork transitions.
-
-An unexpected protected-field change suspends further artwork writes and
-reports the difference. It must not attempt to repair duration or bitrate by
-writing those fields. Independent Plex analysis can also cause a detected
-difference; the check detects drift, not its cause.
-
-Plex's API contract supports artwork-only operations, but its server owns
-internal timestamps and cache bookkeeping. Do not promise that only two SQL
-columns change, nor claim a read-back check prevents server-side changes that
-have already occurred. Installed-server validation remains necessary.
+Plex owns internal timestamps and cache bookkeeping. The controller's verification
+confirms the intended title/artwork, not a particular set of internal SQL changes.
 
 Read-back also confirms that the current image is the one intended. Verify
 content, not just a changed timestamp. If Plex transforms uploads, retain a
@@ -304,7 +291,7 @@ partial update, not success for the pair. No rollback to a previous event.
 Use finite connect/read/write and total operation budgets. Retry transient
 network/server/image-source failures with bounded exponential backoff; a new
 generation takes priority over old retries. Authentication failures, missing
-items, changed server/target identity, or protected-media drift require a
+items or changed server/target identity require a
 settings correction or explicit retry instead of an endless upload loop.
 
 A timeout after transmitting bytes has an uncertain outcome. Read back
@@ -423,8 +410,9 @@ Required integration tests include:
 - Plex downtime, invalid credentials, wrong server/item identity, HTTP timeouts
   after a write, partial two-slot success and persisted retries.
 - No playback/manual-control blocking while Plex or an image host hangs.
-- Write allowlist and preservation of protected metadata with fake and live
-  server evidence clearly distinguished.
+- Write allowlist, title/image read-back, tolerance of unrelated property
+  changes, and upgrade recovery from retired media-check suspensions. Distinguish
+  mock-server results from live acceptance.
 - Token redaction, settings revision conflicts, idempotent commands, upload
   validation, defaults persistence and missing-secret restore behavior.
 - UI at existing desktop/mobile sizes, inaccessible or invalid connection,

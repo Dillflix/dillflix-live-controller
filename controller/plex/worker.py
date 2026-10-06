@@ -11,10 +11,8 @@ from .client import (
     PlexError,
     download_image,
     field_locked,
-    protected_metadata,
     same_image,
     target_identity,
-    title_protected_metadata,
 )
 from .state import asset_by_id, configuration, prune_assets, runtime, save_asset, save_runtime
 
@@ -86,7 +84,6 @@ class ArtworkWorker:
         try:
             item = await self.check_target(client, attempt["config"])
             if attempt.get("kind") == "title":
-                self.verify_title_metadata(item, attempt)
                 matched = item.get("title") == attempt["title"] and field_locked(item, "title")
                 with self.service.db.transaction() as db:
                     state = runtime(db, device)
@@ -97,8 +94,6 @@ class ArtworkWorker:
                         state["applied_title"] = self.title_receipt(attempt)
                     save_runtime(db, device, state)
                 return
-            if protected_metadata(item) != attempt["protected"]:
-                raise PlexError("Protected Plex metadata changed; artwork updates suspended", permanent=True)
             served = await client.image(attempt["config"]["rating_key"], attempt["slot"], item)
             with self.service.db.transaction() as db:
                 source = asset_by_id(db, attempt["digest"])
@@ -119,11 +114,6 @@ class ArtworkWorker:
         finally:
             await client.close()
 
-    @staticmethod
-    def verify_title_metadata(item, attempt):
-        if title_protected_metadata(item, preserve_sort=attempt["preserve_sort"]) != attempt["protected"]:
-            raise PlexError("Protected Plex metadata changed; updates suspended", permanent=True)
-
     def title_receipt(self, attempt):
         return {
             "value": attempt["title"],
@@ -137,7 +127,6 @@ class ArtworkWorker:
         item = await self.check_target(client, config)
         if not self.current(device, generation):
             return
-        preserve_sort = field_locked(item, "titleSort")
         attempt = {
             "id": uuid4().hex,
             "kind": "title",
@@ -145,8 +134,6 @@ class ArtworkWorker:
             "generation": generation,
             "config": config,
             "content_id": desired["content_id"],
-            "preserve_sort": preserve_sort,
-            "protected": title_protected_metadata(item, preserve_sort=preserve_sort),
         }
         if item.get("title") != attempt["title"] or not field_locked(item, "title"):
             with self.service.db.transaction() as db:
@@ -157,7 +144,6 @@ class ArtworkWorker:
                 save_runtime(db, device, state)
             await client.set_title(config["rating_key"], item.get("librarySectionID"), attempt["title"])
             after = await client.metadata(config["rating_key"])
-            self.verify_title_metadata(after, attempt)
             if after.get("title") != attempt["title"] or not field_locked(after, "title"):
                 raise PlexError("Plex has not served the intended title; verification will retry")
         with self.service.db.transaction() as db:
@@ -191,7 +177,6 @@ class ArtworkWorker:
         item = await self.check_target(client, config)
         if not self.current(device, generation):
             return None
-        baseline = protected_metadata(item)
         try:
             served = await client.image(config["rating_key"], slot, item)
         except PlexError as exc:
@@ -207,7 +192,6 @@ class ArtworkWorker:
                 "digest": asset.digest,
                 "generation": generation,
                 "config": config,
-                "protected": baseline,
                 "content_id": desired["content_id"],
             }
             with self.service.db.transaction() as db:
@@ -220,8 +204,6 @@ class ArtworkWorker:
             # Leave the durable attempt intact on cancellation, timeout or read-back failure.
             await client.set_image(config["rating_key"], slot, asset)
             after = await client.metadata(config["rating_key"])
-            if protected_metadata(after) != baseline:
-                raise PlexError("Protected Plex metadata changed; artwork updates suspended", permanent=True)
             served = await client.image(config["rating_key"], slot, after)
             if not same_image(asset, served):
                 raise PlexError("Plex has not served the intended artwork; verification will retry")

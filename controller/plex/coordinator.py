@@ -8,6 +8,10 @@ from ..planner import parse_time
 from .state import configuration, runtime, save_runtime
 
 DEFAULT_TITLE = "Dillflix Live"
+RETIRED_MEDIA_CHECK_ERRORS = {
+    "Protected Plex metadata changed; artwork updates suspended",
+    "Protected Plex metadata changed; updates suspended",
+}
 
 
 def reconcile(service, db, device_id, *, now=None):
@@ -15,6 +19,12 @@ def reconcile(service, db, device_id, *, now=None):
     config = configuration(db, device_id)
     state = runtime(db, device_id)
     before = encode(state)
+    # Old attempts still need read-back recovery, but no longer carry a media fingerprint.
+    if state.get("in_flight"):
+        state["in_flight"].pop("protected", None)
+        state["in_flight"].pop("preserve_sort", None)
+    if state.get("blocked") in RETIRED_MEDIA_CHECK_ERRORS:
+        state.update(blocked=None, error=None, retry_at=None, failures=0, pending=True)
     real = service.settings.mode == "teamarr" and service.settings.executor.mode == "prime-player"
     if not real or not (config["enabled"] or config.get("one_shot")):
         if state["desired"] is not None:

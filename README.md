@@ -64,11 +64,13 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
-Version 0.16.0 adds event titles to the schema-9 [Plex integration](docs/plex-artwork.md).
+Version 0.16.1 removes before/after Plex media-property comparisons while retaining
+title and artwork verification in the schema-9 [Plex integration](docs/plex-artwork.md).
 Existing enabled installations reconcile the current event title on startup;
 the default title is **Dillflix Live**. No new database migration is required.
-After upgrading a suspended update, choose **Retry Plex update** in
-the Plex settings. Existing suspensions remain in place until explicitly retried.
+Suspensions caused by the removed property checks resume automatically on upgrade.
+For other suspended updates, correct the issue and choose **Retry Plex update**
+in the Plex settings.
 Back up the database before upgrading; Plex updates remain disabled until configured.
 
 From your existing checkout:

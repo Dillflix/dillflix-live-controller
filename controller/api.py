@@ -67,7 +67,7 @@ def create_app(settings=None, *, start_workers=True):
                 logger.setLevel(previous_level)
                 await asyncio.to_thread(recorder.close)
 
-    app = FastAPI(title="Dillflix Controller", version="0.16.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.16.1", lifespan=lifespan)
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
