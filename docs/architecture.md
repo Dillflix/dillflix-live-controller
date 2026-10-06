@@ -274,7 +274,7 @@ health allows inspection again, planning reevaluates current intent and live
 status. Manual control and cancellation remain available throughout recovery.
 
 
-## Plex title and artwork integration (0.16.0)
+## Plex title and artwork integration (0.16.1)
 
 `current_playback.py` projects accepted live observations in a caller-owned
 transaction. `plex/` owns independently revisioned connection/binding settings,
@@ -286,8 +286,10 @@ A separate async worker handles images and Plex without the playback lock.
 It first verifies a single-item title edit, then applies artwork. Each write has
 a durable attempt and read-back verification; uncertain attempts are checked
 before further mutations. The default title is `Dillflix Live`, sharing the
-artwork fallback deadline. Title edits permit Plex's derived unlocked sort title;
-locked sort titles, media properties and unrelated metadata remain protected.
+artwork fallback deadline. Server/item binding and title/image read-back checks
+remain; before/after comparisons of media or descriptive properties were removed
+in 0.16.1. Legacy fingerprints are discarded and suspensions caused solely by
+those retired checks are released during reconciliation.
 See [Plex setup and runtime semantics](plex-artwork.md). Schema 9 migrations
 default the integration off; backup restore disables it and clears runtime intent.
 

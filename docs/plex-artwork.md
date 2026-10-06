@@ -32,8 +32,9 @@ container. Existing nginx authentication protects the settings and previews.
   Day 7**, including events without an image. The default title is **Dillflix Live**.
   Requested and last verified titles are shown separately in settings and diagnostics.
 - Upgrading an enabled 0.15.x installation schedules the current title on startup;
-  no new playback request or settings change is required. A prior suspension remains
-  suspended until **Retry Plex update**. The database remains schema 9.
+  no new playback request or settings change is required. Version 0.16.1 also
+  clears suspensions caused solely by the retired media-property checks. Other
+  suspensions require **Retry Plex update**. The database remains schema 9.
 - The poster prefers the current event's game-thumbs matchup thumbnail,
   retaining its URL/style and landscape proportions. Without a matchup, it uses
   Teamarr's supplied `artwork.cover_url` unchanged. DAZN tennis day/court coverage
@@ -70,7 +71,7 @@ of the same internal projection; the artwork worker never polls it. See the
 [endpoint contract](now-playing.md). A 0.15.0 deployment returned 404 because that
 route was removed; it is restored in 0.15.1.
 
-## Media protection and verification
+## API scope and verification
 
 Artwork writes are raw image POSTs to the configured single item's
 `/library/metadata/{id}/posters` and `/library/metadata/{id}/arts`, matching
@@ -87,42 +88,37 @@ has no scan, refresh, analyze, arbitrary-field editor or Plex-database write met
 Versions 0.15.0–0.15.1 used singular upload paths that can return HTTP 404.
 Upgrade to 0.15.2 or later, then choose **Retry Plex update** in Plex settings
 (called **Retry artwork update** in 0.15.x).
-Restarting alone preserves the suspension. Retry first verifies the saved attempt
-and protected metadata before deciding whether an upload is needed. HTTP errors
+Restarting alone preserves the suspension. Retry first reads back the saved attempt
+before deciding whether an upload is needed. HTTP errors
 now include the method and relative request path, distinguishing failed uploads
 from missing metadata or image reads without exposing the token or server body.
 
-Every change compares protected metadata before/after the request: item duration,
-identity, summary and other descriptive fields, Media/Part/Stream attributes,
-bitrate, codecs, dimensions, media paths and stream properties. Transient stream
-selection/decision flags are excluded. Unexpected changes suspend further writes;
-the integration never attempts to repair those properties by writing them.
-Artwork writes also preserve the title and sort title. Title writes verify the exact
-requested title and its lock; Plex may derive an unlocked sort title, while a locked
-sort title and its lock state remain protected. No sort-title edit is sent.
+Version 0.16.1 removes before/after comparisons of media and descriptive
+properties, including duration, bitrate, streams and sort title. No property
+fingerprint is recorded or checked during normal delivery or retry recovery.
+The configured server/item identity is still checked. Title writes verify the
+requested title and its lock; no sort-title or media-property edit is sent.
 
 Images are read back and compared, tolerating small resizing/JPEG differences.
 An acknowledged upload/edit alone does not count as verified. Plex may update artwork
 bookkeeping and cache timestamps. The integration cannot guarantee unchanged
 internal SQL columns or force immediate artwork refresh in every Plex client.
 
-Before production acceptance, retain the XML from `GET /library/metadata/8`
-(or your configured item) before and after a controlled event/default transition.
-Confirm that technical fields are unchanged and that the intended images appear.
-For exact database-column comparison, take read-only snapshots of the relevant
-metadata/media/part/stream rows. Artwork uploads were confirmed working by the
-operator on 0.15.2. The title edit still needs live acceptance on the installed Plex server.
+Artwork uploads were confirmed working by the operator on 0.15.2. Verify the
+intended title and artwork on the installed Plex server after deployment.
 
 ## Failures and recovery
 
 Network/image-source failures retry with backoff from 5 seconds to 5 minutes.
-Invalid credentials, changed server/item identity, unsupported endpoints and
-protected-metadata drift suspend delivery. Correct the issue and use **Retry
-artwork update**, or save corrected settings.
+Invalid credentials, changed server/item identity and unsupported endpoints
+suspend delivery. Correct the issue and use **Retry Plex update**, or save
+corrected settings. Old media-property suspensions resume automatically on upgrade;
+other suspensions are retained.
 
-A timeout after sending an image has an uncertain outcome. The attempt, source
-image and original protected metadata are persisted. The worker reads Plex back
-before retrying. Poster and background writes are not atomic; successful slots
+A timeout after sending a title or image has an uncertain outcome. The attempt
+and intended title or source image are persisted. The worker reads Plex back
+before retrying, without comparing media properties. Obsolete fingerprints in
+older attempts are discarded during reconciliation. Poster and background writes are not atomic; successful slots
 are not uploaded again just because the other slot failed.
 
 Plex does not expose an artwork generation/CAS fence. Queued obsolete work is

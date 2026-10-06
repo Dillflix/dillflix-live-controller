@@ -4,7 +4,6 @@ import json
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from xml.etree import ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
 import httpx
@@ -17,8 +16,6 @@ from controller.plex.client import (
     PlexClient,
     PlexError,
     image_asset,
-    protected_metadata,
-    title_protected_metadata,
 )
 from controller.plex.state import configuration, runtime, save_configuration, save_runtime
 from controller.prime_player.diagnostics import redact
@@ -340,31 +337,84 @@ async def test_uncertain_title_resumes_after_restart_without_duplicate_write(set
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field", ["duration", "bitrate", "sort_title"])
-async def test_title_edit_preserves_media_and_locked_sort_title(setup, field):
+async def test_title_edit_ignores_unrelated_property_changes(setup, field):
     browser, service, plex = setup
     real_playback(service)
     enable(browser)
+    service.plex.worker.download = red_image
     plex.sort_locked = True
     plex.sort_title = "Live stream sort position"
     plex.title_drift = field
     await service.plex.worker.run_once("living-room")
-    assert "Protected Plex metadata changed" in state(service)["blocked"]
-    assert state(service)["in_flight"]["kind"] == "title"
-    assert not plex.writes()
+    assert not state(service)["blocked"] and not state(service)["pending"]
+    assert not state(service)["in_flight"]
+    assert plex.title == state(service)["desired"]["plex_title"]
+    assert len(plex.writes()) == 1
 
 
 @pytest.mark.asyncio
-async def test_title_retry_checks_media_before_accepting_timed_out_edit(setup):
+async def test_title_retry_ignores_media_changes_after_timed_out_edit(setup):
     browser, service, plex = setup
     real_playback(service)
     enable(browser)
+    service.plex.worker.download = red_image
     plex.title_timeout = True
     await service.plex.worker.run_once("living-room")
     plex.duration = "1"
     ready_retry(service)
     await service.plex.worker.run_once("living-room")
-    assert "Protected Plex metadata changed" in state(service)["blocked"]
-    assert len(plex.title_requests) == 1 and not plex.writes()
+    assert not state(service)["blocked"] and not state(service)["pending"]
+    assert len(plex.title_requests) == 1 and len(plex.writes()) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["title", "image"])
+async def test_upgrade_resumes_retired_media_suspension_without_duplicate_write(setup, kind):
+    browser, service, plex = setup
+    now, _ = real_playback(service)
+    enable(browser)
+    service.plex.worker.download = red_image
+    plex.title_timeout = kind == "title"
+    plex.timeout_after_write = kind == "image"
+    await service.plex.worker.run_once("living-room")
+    assert state(service)["in_flight"]
+    # Persist the old version's suspension and fingerprint before new reconciliation runs.
+    service.db.before_commit = None
+    with service.db.transaction() as db:
+        saved = runtime(db, "living-room")
+        error = "Protected Plex metadata changed; " + (
+            "updates suspended" if kind == "title" else "artwork updates suspended"
+        )
+        saved.update(blocked=error, error=error, retry_at=None)
+        saved["in_flight"].update(protected={"old": "media fingerprint"}, preserve_sort=True)
+        save_runtime(db, "living-room", saved)
+    plex.duration = "1"
+    await restart_plex(service, now).run_once("living-room")
+    assert not state(service)["blocked"] and not state(service)["pending"]
+    assert not state(service)["in_flight"]
+    assert len(plex.title_requests) == 1 and len(plex.writes()) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        "Plex returned HTTP 401 for GET /identity",
+        "Plex target identity changed; select the item again",
+    ],
+)
+async def test_upgrade_keeps_unrelated_suspensions(setup, error):
+    browser, service, plex = setup
+    now, _ = real_playback(service)
+    enable(browser)
+    with service.db.transaction() as db:
+        saved = runtime(db, "living-room")
+        saved.update(blocked=error, error=error, pending=True)
+        save_runtime(db, "living-room", saved)
+    plex.calls.clear()
+    await restart_plex(service, now).run_once("living-room")
+    assert state(service)["blocked"] == error
+    assert not plex.calls
 
 
 @pytest.mark.asyncio
@@ -414,13 +464,11 @@ async def test_title_http_failure_omits_query_and_does_not_start_artwork(setup):
 
 
 @pytest.mark.asyncio
-async def test_title_acknowledgement_requires_readback_and_preserves_locked_sort(setup):
+async def test_title_acknowledgement_requires_readback(setup):
     browser, service, plex = setup
     real_playback(service)
     enable(browser)
     service.plex.worker.download = red_image
-    plex.sort_locked = True
-    plex.sort_title = "Live stream sort position"
     plex.ignore_title = True
     await service.plex.worker.run_once("living-room")
     assert state(service)["pending"] and state(service)["in_flight"]
@@ -430,7 +478,6 @@ async def test_title_acknowledgement_requires_readback_and_preserves_locked_sort
     await service.plex.worker.run_once("living-room")
     assert not state(service)["pending"]
     assert plex.title == state(service)["desired"]["plex_title"]
-    assert plex.sort_title == "Live stream sort position" and plex.sort_locked
 
 
 @pytest.mark.asyncio
@@ -456,7 +503,6 @@ async def test_upload_uses_plural_route_and_reads_current_image(slot, upload, el
     plex = Plex()
     client = PlexClient("http://plex:32400", TOKEN, httpx.MockTransport(plex.handle))
     asset = image_asset(picture("red"))
-    before = protected_metadata(ET.fromstring(plex.metadata())[0])
     try:
         await client.set_image("8", slot, asset)
         assert (await client.image("8", slot)).digest == asset.digest
@@ -464,7 +510,6 @@ async def test_upload_uses_plural_route_and_reads_current_image(slot, upload, el
         await client.close()
     assert plex.writes() == [("POST", f"/library/metadata/8/{upload}", asset.data)]
     assert ("GET", f"/library/metadata/8/{element}/2", b"") in plex.calls
-    assert protected_metadata(ET.fromstring(plex.metadata())[0]) == before
 
 
 @pytest.mark.asyncio
@@ -506,7 +551,6 @@ async def test_retry_after_legacy_upload_404_checks_saved_attempt_before_writing
     now, _ = real_playback(service)
     enable(browser)
     service.plex.worker.download = red_image
-    before = title_protected_metadata(ET.fromstring(plex.metadata())[0], preserve_sort=False)
 
     async def legacy_upload(client, key, slot, asset):
         element = {"poster": "thumb", "background": "art"}[slot]
@@ -538,10 +582,6 @@ async def test_retry_after_legacy_upload_404_checks_saved_attempt_before_writing
     response = browser.post(PATH + "/retry", json={"command_id": "retry-404", "expected_revision": 3})
     assert response.status_code == 200, response.text
     await replacement.worker.run_once("living-room")
-    if metadata_drift:
-        assert "metadata changed" in state(service)["blocked"]
-        assert not plex.writes()
-        return
     assert not state(service)["blocked"] and not state(service)["pending"]
     assert not state(service)["in_flight"]
     assert plex.writes() == [("POST", "/library/metadata/8/posters", picture("red"))]
@@ -551,7 +591,6 @@ async def test_retry_after_legacy_upload_404_checks_saved_attempt_before_writing
         ("GET", "/library/metadata/8/thumb/1", b""),
     ]
     assert plex.images["thumb"] == picture("red")
-    assert title_protected_metadata(ET.fromstring(plex.metadata())[0], preserve_sort=False) == before
 
 
 def test_settings_capture_and_token_do_not_leak(setup):
@@ -613,10 +652,8 @@ async def test_event_upload_artwork_only_and_no_reupload_on_renewal(setup):
     now, cid = real_playback(service)
     enable(browser)
     service.plex.worker.download = red_image
-    before = title_protected_metadata(ET.fromstring(plex.metadata())[0], preserve_sort=False)
     await service.plex.worker.run_once("living-room")
     assert [c[1] for c in plex.writes()] == ["/library/metadata/8/posters"]
-    assert title_protected_metadata(ET.fromstring(plex.metadata())[0], preserve_sort=False) == before
     assert not state(service)["pending"]
     gen = state(service)["generation"]
     service.plex.now = lambda: now + timedelta(seconds=60)
@@ -654,7 +691,6 @@ async def test_existing_verified_tennis_replaces_default_with_provider_image(set
     assert not state(service)["pending"]
     assert plex.images["thumb"] == picture("black")
     generation = state(service)["generation"]
-    before = protected_metadata(ET.fromstring(plex.metadata())[0])
     downloaded = []
 
     async def download(url):
@@ -668,7 +704,6 @@ async def test_existing_verified_tennis_replaces_default_with_provider_image(set
     assert downloaded == [provider]
     assert plex.images == {"thumb": picture("green"), "art": picture("gray")}
     assert [c[1] for c in plex.writes()] == ["/library/metadata/8/posters"]
-    assert protected_metadata(ET.fromstring(plex.metadata())[0]) == before
     view = browser.get("/api/v1/devices/living-room/now-playing").json()
     assert view["state"] == "playing" and view["simulated"] is False
     assert view["event"]["title"] == "Beijing Open: Day 7"
@@ -730,14 +765,14 @@ async def test_upload_failure_has_uncertain_marker_and_reads_before_retry(setup)
 
 
 @pytest.mark.asyncio
-async def test_protected_media_drift_blocks_without_repair(setup):
+async def test_artwork_update_ignores_media_property_changes(setup):
     browser, service, plex = setup
     real_playback(service)
     enable(browser)
     service.plex.worker.download = red_image
     plex.drift = True
     await service.plex.worker.run_once("living-room")
-    assert "Protected" in state(service)["blocked"]
+    assert not state(service)["blocked"] and not state(service)["pending"]
     assert len(plex.writes()) == 1
     await service.plex.worker.run_once("living-room")
     assert len(plex.writes()) == 1
