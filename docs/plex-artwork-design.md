@@ -1,6 +1,11 @@
 # Controller-owned Plex artwork integration
 
-Status: proposed design; no implementation or live Plex writes.
+Status: implemented on the unmerged controller feature branch. Live Plex acceptance remains pending.
+
+The implementation uses a before-commit reconciliation hook with a savepoint to cover
+all controller write paths, including lifecycle-only changes. This replaces the
+per-call-site hooks proposed below; post-commit notifications remain change-driven.
+See [setup, delivered behavior and validation limits](plex-artwork.md).
 
 Reviewed controller main at `e1d36dbb046601dd3b3a93cca14174e1107f758c`
 (0.14.23), plus Plex's official PMS OpenAPI specification, version 1.2.3,

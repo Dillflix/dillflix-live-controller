@@ -10,6 +10,9 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 
 ## What works
 
+- Optional [Plex artwork updates](docs/plex-artwork.md), configured in Settings,
+  driven by accepted playback with durable five-minute fallback and artwork-only API writes.
+
 - A read-only [now-playing API](docs/now-playing.md) for programmatic consumers,
   with observed live-event metadata and horizontal game-thumbs matchup thumbnails.
 
@@ -60,6 +63,9 @@ State is stored in the `controller-data` volume. Rebuilding the container preser
 The Docker configuration is supplied but has not been build-tested in the development environment, which did not have a Docker engine.
 
 ## Update an existing installation
+
+Version 0.15.0 adds schema 9 and optional [Plex artwork integration](docs/plex-artwork.md).
+Back up the database before upgrading; Plex updates remain disabled until configured.
 
 From your existing checkout:
 

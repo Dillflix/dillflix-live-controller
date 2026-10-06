@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.0 — Plex artwork integration
+
+- Add controller-owned Plex artwork settings, default image upload/capture, and status previews.
+- Deliver verified-event artwork with durable five-minute fallback, per-slot retries and guarded read-back.
+- Limit Plex writes to thumb/art setters and suspend on protected metadata drift.
+- Add schema 9 storage, write-only credentials, restart recovery and restore suspension.
+- Remove the external now-playing route after extracting its internal playback projection.
+
 ## 0.14.22
 
 - Inspect other independently matched Prime parent tiles when the first has no entitled LIVE English or unlabeled broadcast. Apply the same selection loop to catalogue preflight and direct requests; stop when a suitable feed is found.

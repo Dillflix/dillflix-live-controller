@@ -272,3 +272,16 @@ resending Play; their original navigation deadlines still apply. An attempt that
 expires during device recovery does not add an event failure penalty. Once player
 health allows inspection again, planning reevaluates current intent and live
 status. Manual control and cancellation remain available throughout recovery.
+
+
+## Plex artwork integration (0.15.0)
+
+`current_playback.py` projects accepted live observations in a caller-owned
+transaction. `plex/` owns independently revisioned connection/binding settings,
+validated default assets, desired generations, per-slot delivery and retries.
+The database before-commit hook reconciles write transactions, including content
+lifecycle changes that do not write a device. It uses a savepoint and performs
+no external I/O. Only a changed desired state/deadline emits a post-commit wake-up.
+A separate async worker handles images and Plex without the playback lock.
+See [Plex setup and runtime semantics](plex-artwork.md). Schema 9 migrations
+default the integration off; backup restore disables it and clears runtime intent.

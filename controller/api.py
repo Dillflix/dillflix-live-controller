@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -25,6 +27,7 @@ from .models import (
 )
 from .now_playing import NowPlaying, now_playing
 from .planner import choose, priority, team_priority
+from .plex.api import install_plex_api
 from .screen import ScreenStream, serve_screen
 from .service import Controller
 
@@ -64,11 +67,20 @@ def create_app(settings=None, *, start_workers=True):
                 logger.setLevel(previous_level)
                 await asyncio.to_thread(recorder.close)
 
-    app = FastAPI(title="Dillflix Controller", version="0.13.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.15.0", lifespan=lifespan)
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
     install_executor_api(app, service)
+    install_plex_api(app, service)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        if "/plex" in request.url.path:
+            return JSONResponse(status_code=422, content={"detail": [
+                {"loc": e["loc"], "msg": e["msg"], "type": e["type"]} for e in exc.errors()
+            ]})
+        return await request_validation_exception_handler(request, exc)
 
     @app.middleware("http")
     async def record_unhandled_failure(request, call_next):

@@ -27,5 +27,3 @@ def matchup_thumbnail(artwork):
         return urlunsplit(source._replace(path=prefix + "/thumb.png"))
     except ValueError:
         return None
-
-
