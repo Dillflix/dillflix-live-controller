@@ -263,7 +263,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             d["id"],
         )
 
-    def observation_error(self, job, observation):
+    def observation_error(self, job, observation, *, now=None):
         if not isinstance(observation, dict):
             return "Playback verification is missing"
         identity = {
@@ -286,7 +286,7 @@ class PlaybackCoordinator(PlaybackRecovery):
         try:
             observed = parse_time(observation.get("observed_at"))
             until = parse_time(observation.get("valid_until"))
-            now = datetime.now(UTC)
+            now = now or datetime.now(UTC)
             if (
                 not observed
                 or not until
