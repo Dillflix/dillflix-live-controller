@@ -13,9 +13,6 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 - Optional [Plex artwork updates](docs/plex-artwork.md), configured in Settings,
   driven by accepted playback with durable five-minute fallback and artwork-only API writes.
 
-- A read-only [now-playing API](docs/now-playing.md) for programmatic consumers,
-  with observed live-event metadata and horizontal game-thumbs matchup thumbnails.
-
 - Live Prime playback using service results, deterministic or LLM label matching, durable tokens, scoped cancellation/stop, and current attempt monitoring.
 
 - **Take control** with a selectable duration (including 4 hours, up to 24 hours), mobile D-pad, focused keyboard shortcuts, and text entry. Extend the session, resume automation, or finish with automation paused. Sessions survive restarts; other browsers must explicitly take over. See [manual control](docs/manual-control.md).

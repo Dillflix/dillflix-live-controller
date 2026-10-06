@@ -4,11 +4,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from controller.artwork import matchup_thumbnail
+from controller.current_playback import current_playback
 from controller.database import encode
-from controller.now_playing import matchup_thumbnail
 
 URL = "/api/v1/devices/living-room/now-playing"
 ART = "http://game-thumbs:3001/proxy/nfl/DetroitLions/BuffaloBills/"
+
+
+def project(service, device_id="living-room"):
+    with service.db.transaction() as db:
+        return current_playback(service, db, device_id).model_dump()
 
 
 @pytest.fixture
@@ -35,7 +41,7 @@ def playing(rig):
     return client, service, settings
 
 
-def test_now_playing_metadata_is_observed_not_desired_and_read_only(playing, monkeypatch):
+def test_current_playback_is_observed_not_desired_and_read_only(playing, monkeypatch):
     client, service, _ = playing
     with service.db.transaction() as db:
         device = service.db.device(db)
@@ -45,15 +51,12 @@ def test_now_playing_metadata_is_observed_not_desired_and_read_only(playing, mon
         before = list(db.iterdump())
 
     def forbidden(*args, **kwargs):
-        pytest.fail("Now-playing reads must not poll the player or build the full catalogue")
+        pytest.fail("Current playback reads must not poll the player or build the full catalogue")
 
     monkeypatch.setattr(service, "items", forbidden)
     monkeypatch.setattr(service.playback, "observe", forbidden)
     monkeypatch.setattr(service, "tick", forbidden)
-    response = client.get(URL)
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    data = response.json()
+    data = project(service)
     assert data["state"] == "playing"
     assert data["playback_state"] == "navigating"
     assert data["simulated"] is True
@@ -102,7 +105,7 @@ def test_no_active_event_without_current_live_evidence(playing, condition):
         elif condition == "completed":
             device["manual_completions"]["demo:lions"] = datetime.now(UTC).isoformat()
         service.db.save_device(db, device)
-    data = client.get(URL).json()
+    data = project(service)
     assert data["state"] == "unverified"
     assert data["event"] is None
     assert data["valid_until"] is None
@@ -110,13 +113,14 @@ def test_no_active_event_without_current_live_evidence(playing, condition):
 
 def test_idle_pending_and_unknown_device(rig):
     client, service, _ = rig
-    assert client.get(URL).json()["state"] == "idle"
+    assert project(service)["state"] == "idle"
     with service.db.transaction() as db:
         device = service.db.device(db)
         device.update(desired="demo:lions", playback_state="navigating")
         service.db.save_device(db, device)
-    assert client.get(URL).json()["event"] is None
-    assert client.get("/api/v1/devices/missing/now-playing").status_code == 404
+    assert project(service)["event"] is None
+    with pytest.raises(KeyError):
+        project(service, "missing")
 
 
 def test_retained_event_survives_missing_feed_unknown_status_and_paused_automation(playing):
@@ -130,13 +134,13 @@ def test_retained_event_survives_missing_feed_unknown_status_and_paused_automati
         snapshot["expected_end_time"] = "2000-01-01T00:00:00Z"
         db.execute("UPDATE contents SET active=0,snapshot=? WHERE id='demo:lions'", (encode(snapshot),))
         db.execute("DELETE FROM content_status WHERE content_id='demo:lions'")
-    assert client.get(URL).json()["event"]["content_id"] == "demo:lions"
+    assert project(service)["event"]["content_id"] == "demo:lions"
 
 
 def test_broadcast_without_matchup_has_null_thumbnail(rig):
     client, service, _ = rig
     service.tick()
-    data = client.get(URL).json()
+    data = project(service)
     assert data["state"] == "playing"
     assert data["event"]["title"] == "NFL RedZone"
     assert data["event"]["thumbnail_url"] is None
@@ -154,7 +158,7 @@ def test_prime_retention_window_caps_reported_expiry(playing):
             simulated=False,
         )
         service.db.save_device(db, device)
-    data = client.get(URL).json()
+    data = project(service)
     assert data["state"] == "playing"
     assert data["simulated"] is False
     assert data["valid_until"] == (observed_at + timedelta(minutes=5)).isoformat()
@@ -167,7 +171,7 @@ def test_completed_lifecycle_is_not_reported_before_coordinator_tick(playing):
         snapshot["_simulation"]["override"] = "ended"
         db.execute("UPDATE contents SET snapshot=? WHERE id='demo:lions'", (encode(snapshot),))
         db.execute("DELETE FROM content_status WHERE content_id='demo:lions'")
-    assert client.get(URL).json()["event"] is None
+    assert project(service)["event"] is None
 
 
 def test_observation_from_another_device_cannot_be_reported(playing):
@@ -176,7 +180,7 @@ def test_observation_from_another_device_cannot_be_reported(playing):
         device = service.db.device(db)
         device["observed"]["device_id"] = "another-tv"
         service.db.save_device(db, device)
-    assert client.get(URL).json()["state"] == "unverified"
+    assert project(service)["state"] == "unverified"
 
 
 @pytest.mark.parametrize(
@@ -201,8 +205,8 @@ def test_thumbnail_preserves_upstream_identity_and_never_rewrites_provider_art(a
     assert matchup_thumbnail(artwork) == expected
 
 
-def test_endpoint_is_documented_in_openapi(rig):
+def test_internal_projection_has_no_public_endpoint(rig):
     client, _, _ = rig
     schema = client.get("/openapi.json").json()
-    response = schema["paths"]["/api/v1/devices/{device_id}/now-playing"]["get"]["responses"]["200"]
-    assert response["content"]["application/json"]["schema"]["$ref"].endswith("/NowPlaying")
+    assert "/api/v1/devices/{device_id}/now-playing" not in schema["paths"]
+    assert client.get(URL).status_code == 404

@@ -411,11 +411,11 @@ Required integration tests include:
 - UI at existing desktop/mobile sizes, inaccessible or invalid connection,
   write-only token handling, default capture, partial status and retry controls.
 
-Research validation completed: 68 existing tests passed and one module was
-skipped when running now-playing, configuration, Prime monitoring and manual
-control selections. The skipped Prime monitoring module requires the external
-`dillflix_prime_player` package. No integration code, new integration tests,
-Docker build, browser change or live Plex mutation has been performed.
+At the research stage, 68 existing tests passed and one module was skipped
+when running now-playing, configuration, Prime monitoring and manual-control
+selections. Implementation and automated integration/browser tests are now
+included on the feature branch; see [operation and acceptance](plex-artwork.md).
+Live Plex and Docker deployment acceptance remain pending.
 
 ## Sources
 
