@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.1 — Provider artwork and playback diagnostics
+
+- Use Teamarr's supplied provider cover unchanged when no game-thumbs matchup
+  thumbnail exists, including DAZN tennis day/court coverage.
+- Reconcile already-verified playback on startup so an applied default is
+  replaced without requiring another playback request.
+- Restore the read-only now-playing endpoint for diagnostics using the shared
+  internal projection; Plex delivery still has no HTTP polling dependency.
+
 ## 0.15.0 — Plex artwork integration
 
 - Fix container startup after an owner-only Git checkout: normalize packaged

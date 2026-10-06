@@ -27,7 +27,7 @@ Prime completion is written atomically to the executor report and durable conten
 | `controller/screen.py`, `controller/screen_capture.py` | Shared, on-demand view-only ADB/scrcpy capture; independent of planner and playback evidence |
 | `controller/fixtures.py` | Explicit sample lifecycle transitions, independent of estimated end times |
 | `controller/api.py` | Same-origin HTTP API, update notifications, and built frontend |
-| `controller/current_playback.py`, `controller/artwork.py` | Internal accepted live-event projection and landscape matchup artwork URLs |
+| `controller/current_playback.py`, `controller/artwork.py` | Accepted live-event projection and matchup/provider artwork selection |
 | `frontend/src` | React interface using server state rather than an independent browser watch plan |
 
 ## Selection rules
@@ -285,3 +285,8 @@ no external I/O. Only a changed desired state/deadline emits a post-commit wake-
 A separate async worker handles images and Plex without the playback lock.
 See [Plex setup and runtime semantics](plex-artwork.md). Schema 9 migrations
 default the integration off; backup restore disables it and clears runtime intent.
+
+The now-playing diagnostic endpoint exposes that same projection without player
+or Plex I/O. Matchup thumbnail derivation takes precedence, then a valid provider
+cover URL is used verbatim (including tennis coverage with no matchup). The
+integration calls the projection directly and never polls its HTTP endpoint.

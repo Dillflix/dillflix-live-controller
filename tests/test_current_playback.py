@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from controller.artwork import matchup_thumbnail
+from controller.artwork import matchup_thumbnail, playback_thumbnail
 from controller.current_playback import current_playback
 from controller.database import encode
 
@@ -65,6 +65,10 @@ def test_current_playback_is_observed_not_desired_and_read_only(playing, monkeyp
     assert data["event"]["thumbnail_url"] == ART + "thumb.png?style=6&logo=true&fallback=true"
     assert data["event"]["league"] == "nfl"
     assert data["observed_at"] and data["valid_until"]
+    response = client.get(URL)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == data
     with service.db.transaction() as db:
         assert list(db.iterdump()) == before
 
@@ -109,6 +113,7 @@ def test_no_active_event_without_current_live_evidence(playing, condition):
     assert data["state"] == "unverified"
     assert data["event"] is None
     assert data["valid_until"] is None
+    assert client.get(URL).json() == data
 
 
 def test_idle_pending_and_unknown_device(rig):
@@ -121,6 +126,7 @@ def test_idle_pending_and_unknown_device(rig):
     assert project(service)["event"] is None
     with pytest.raises(KeyError):
         project(service, "missing")
+    assert client.get("/api/v1/devices/missing/now-playing").status_code == 404
 
 
 def test_retained_event_survives_missing_feed_unknown_status_and_paused_automation(playing):
@@ -205,8 +211,42 @@ def test_thumbnail_preserves_upstream_identity_and_never_rewrites_provider_art(a
     assert matchup_thumbnail(artwork) == expected
 
 
-def test_internal_projection_has_no_public_endpoint(rig):
+def test_diagnostic_endpoint_is_documented_and_reports_idle(rig):
     client, _, _ = rig
     schema = client.get("/openapi.json").json()
-    assert "/api/v1/devices/{device_id}/now-playing" not in schema["paths"]
-    assert client.get(URL).status_code == 404
+    response = schema["paths"]["/api/v1/devices/{device_id}/now-playing"]["get"]["responses"]["200"]
+    assert response["content"]["application/json"]["schema"]["$ref"].endswith("/NowPlaying")
+    assert client.get(URL).json()["state"] == "idle"
+
+
+@pytest.mark.parametrize(
+    "cover",
+    [
+        None,
+        "",
+        42,
+        {},
+        "file:///tmp/a.png",
+        "/tennis/a.jpg",
+        "http://[invalid",
+        "https://a:bad/a.jpg",
+        "https://user:pass@example.com/a.jpg",
+        "https://example.com/a\nb.jpg",
+    ],
+)
+def test_provider_cover_rejects_invalid_or_credentialed_urls(cover):
+    assert playback_thumbnail({"cover_url": cover}) is None
+
+
+def test_provider_cover_is_preserved_and_matchup_keeps_precedence():
+    provider = "https://image.discovery.indazn.com/ca/v2/ca/image?id=day_7&width=666&height=374&format=jpg"
+    assert playback_thumbnail({"cover_url": provider, "matchup_logo_url": None}) == provider
+    assert (
+        playback_thumbnail({"cover_url": provider, "matchup_logo_url": ART + "logo.png?style=6"})
+        == ART + "thumb.png?style=6"
+    )
+    assert playback_thumbnail({"cover_url": provider, "matchup_logo_url": "http://[invalid"}) == provider
+    assert (
+        playback_thumbnail({"cover_url": {}, "matchup_logo_url": ART + "logo.png?style=6"})
+        == ART + "thumb.png?style=6"
+    )

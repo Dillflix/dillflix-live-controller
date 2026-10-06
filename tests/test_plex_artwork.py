@@ -246,6 +246,51 @@ async def test_event_upload_artwork_only_and_no_reupload_on_renewal(setup):
 
 
 @pytest.mark.asyncio
+async def test_existing_verified_tennis_replaces_default_with_provider_image(setup, monkeypatch):
+    browser, service, plex = setup
+    _, cid = real_playback(service)
+    provider = "https://image.discovery.indazn.com/ca/v2/ca/image?id=day_7&width=666&height=374&format=jpg"
+    with service.db.transaction() as db:
+        snapshot = json.loads(db.execute("SELECT snapshot FROM contents WHERE id=?", (cid,)).fetchone()[0])
+        snapshot.update(
+            title="Beijing Open: Day 7",
+            kind="broadcast",
+            competition="tennis",
+            event=None,
+            artwork={"matchup_logo_url": None, "cover_url": provider},
+        )
+        db.execute("UPDATE contents SET snapshot=? WHERE id=?", (encode(snapshot), cid))
+    # Reproduce persisted 0.15.0 state: the verified event had only its defaults applied.
+    with monkeypatch.context() as old:
+        old.setattr("controller.current_playback.playback_thumbnail", lambda _artwork: None)
+        enable(browser)
+        await service.plex.worker.run_once("living-room")
+    assert not state(service)["pending"]
+    assert plex.images["thumb"] == picture("black")
+    generation = state(service)["generation"]
+    before = protected_metadata(ET.fromstring(plex.metadata())[0])
+    downloaded = []
+
+    async def download(url):
+        downloaded.append(url)
+        return image_asset(picture("green"))
+
+    service.plex.worker.download = download
+    # Startup reconciliation needs neither a new play request nor an HTTP status poll.
+    await service.plex.worker.run_once("living-room")
+    assert state(service)["generation"] > generation
+    assert downloaded == [provider]
+    assert plex.images == {"thumb": picture("green"), "art": picture("gray")}
+    assert [c[1] for c in plex.writes()] == ["/library/metadata/8/thumb"]
+    assert protected_metadata(ET.fromstring(plex.metadata())[0]) == before
+    view = browser.get("/api/v1/devices/living-room/now-playing").json()
+    assert view["state"] == "playing" and view["simulated"] is False
+    assert view["event"]["title"] == "Beijing Open: Day 7"
+    assert view["event"]["thumbnail_url"] == provider
+    assert not state(service)["pending"]
+
+
+@pytest.mark.asyncio
 async def test_fallback_deadline_is_from_sample_not_last_read(setup):
     browser, service, plex = setup
     now, _ = real_playback(service)

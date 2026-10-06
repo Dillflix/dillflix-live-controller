@@ -7,7 +7,7 @@ player status checks, scans, analysis, or media-metadata editing operations.
 
 ## Configure
 
-1. Deploy this branch with your normal controller Compose files. Keep the
+1. Deploy the controller with your normal Compose files. Keep the
    existing `.env`, Prime Player socket configuration and persistent volume.
 2. Open **Settings → Plex artwork**. Enter the Plex server URL reachable from
    the controller container, a Plex token with artwork-edit permission, and the
@@ -28,9 +28,11 @@ container. Existing nginx authentication protects the settings and previews.
 
 ## Behavior
 
-- The poster uses the current event's game-thumbs matchup thumbnail, retaining
-  its URL/style and landscape proportions. There is no automatic crop or
-  substitution of the portrait cover.
+- The poster prefers the current event's game-thumbs matchup thumbnail,
+  retaining its URL/style and landscape proportions. Without a matchup, it uses
+  Teamarr's supplied `artwork.cover_url` unchanged. DAZN tennis day/court coverage
+  supplies a landscape provider image here; it does not define two competitors.
+  Provider URLs are never rewritten into game-thumbs paths. Images are not cropped.
 - The background uses its saved default until a distinct upstream background
   source is implemented. The two slots are tracked independently.
 - A desired/queued event does not replace the currently verified event's art.
@@ -55,6 +57,12 @@ The worker uses committed desired state and deadline/retry wake-ups. Ordinary
 controller restart retains the existing deadline and resolves uncertain writes
 before proceeding. A database **restore** suspends the integration and discards
 historical pending jobs; review the restored settings before enabling it again.
+
+For inspection, `GET /api/v1/devices/living-room/now-playing` returns the accepted
+playback and selected `event.thumbnail_url`. This is a read-only diagnostic view
+of the same internal projection; the artwork worker never polls it. See the
+[endpoint contract](now-playing.md). A 0.15.0 deployment returned 404 because that
+route was removed; it is restored in 0.15.1.
 
 ## Media protection and verification
 

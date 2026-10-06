@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
+from .current_playback import NowPlaying, current_playback
 from .device_input import DeviceInput, same_origin
 from .diagnostic_log import LogHandler, Recorder, read_logs
 from .executor.api import install_executor_api
@@ -66,7 +67,7 @@ def create_app(settings=None, *, start_workers=True):
                 logger.setLevel(previous_level)
                 await asyncio.to_thread(recorder.close)
 
-    app = FastAPI(title="Dillflix Controller", version="0.15.0", lifespan=lifespan)
+    app = FastAPI(title="Dillflix Controller", version="0.15.1", lifespan=lifespan)
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
@@ -213,6 +214,13 @@ def create_app(settings=None, *, start_workers=True):
     @app.get("/api/v1/devices/{device_id}/state")
     def state(device_id: str):
         return service.overview(device_id)["device"]
+
+    @app.get("/api/v1/devices/{device_id}/now-playing", response_model=NowPlaying)
+    def now_playing(device_id: str):
+        """Expose accepted playback for diagnostics without polling the player."""
+        with service.db.transaction() as db:
+            view = current_playback(service, db, device_id)
+        return JSONResponse(view.model_dump(), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/devices/{device_id}/watch-plan")
     def plan(device_id: str):

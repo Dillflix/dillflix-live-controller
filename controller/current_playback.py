@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from .artwork import matchup_thumbnail
+from .artwork import playback_thumbnail
 from .planner import parse_time
 
 
@@ -77,7 +77,7 @@ def current_playback(service, db, device_id, *, now=None):
     result.event = PlayingEvent(
         content_id=snapshot["id"],
         title=snapshot["title"],
-        thumbnail_url=matchup_thumbnail(snapshot.get("artwork") or {}),
+        thumbnail_url=playback_thumbnail(snapshot.get("artwork") or {}),
         kind=snapshot["kind"],
         league=(snapshot.get("event") or {}).get("league") or snapshot.get("competition"),
         start_time=snapshot.get("start_time"),

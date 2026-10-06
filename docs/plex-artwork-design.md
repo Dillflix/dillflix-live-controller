@@ -1,6 +1,11 @@
 # Controller-owned Plex artwork integration
 
-Status: implemented on the unmerged controller feature branch. Live Plex acceptance remains pending.
+Status: implemented in controller 0.15.1. Live event-artwork acceptance remains pending.
+
+Implementation follow-up (0.15.1): retain a read-only now-playing diagnostic
+endpoint over the shared projection, and use supplied provider artwork when a
+matchup thumbnail is unavailable. DAZN tennis coverage already supplies its image
+through Teamarr's `artwork.cover_url`; no upstream change is needed for that case.
 
 The implementation uses a before-commit reconciliation hook with a savepoint to cover
 all controller write paths, including lifecycle-only changes. This replaces the
