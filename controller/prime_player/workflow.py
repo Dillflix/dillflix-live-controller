@@ -17,7 +17,7 @@ from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
 from ..model_diagnostics import capture_model_calls
 from ..planner import parse_time
-from .broadcasts import refine
+from .broadcasts import choose_broadcast
 from .catalogue import CatalogueChecks
 from .client import PrimePlayerClient, correlated
 from .labels import search_queries
@@ -46,12 +46,12 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
     def recover(self):
         with self.db.transaction() as db:
             db.execute("DELETE FROM metadata WHERE key LIKE 'prime_catalogue_probe:%'")
-            if self.db.meta(db, "prime_catalogue_contract") != 12:
+            if self.db.meta(db, "prime_catalogue_contract") != 13:
                 for row in db.execute("SELECT id FROM devices").fetchall():
                     device = self.db.device(db, row[0])
                     device["prime_access"] = {}
                     self.db.save_device(db, device)
-                self.db.set_meta(db, "prime_catalogue_contract", 12)
+                self.db.set_meta(db, "prime_catalogue_contract", 13)
             for row in db.execute(
                 "SELECT * FROM executor_jobs WHERE request IS NOT NULL AND cancel_requested=0"
             ).fetchall():
@@ -278,8 +278,6 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             received = time.monotonic()
             self.store.phase(token, "matching")
             self.save_workflow(token, catalogue=results)
-            with capture_model_calls(lambda evidence: self.save_model_call(token, evidence)):
-                selected, audit = await self.matcher.choose(request, results, timezone)
 
             async def fetch_broadcasts(content_id):
                 current = await self.check_session(session, capabilities=("broadcasts",))
@@ -288,7 +286,15 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                     token, "PRIME_BROADCASTS", lambda: self.player.broadcasts(content_id, receipt)
                 )
 
-            selected, audit = await refine(request, results, selected, audit, fetch_broadcasts)
+            with capture_model_calls(lambda evidence: self.save_model_call(token, evidence)):
+                selected, audit = await choose_broadcast(
+                    request,
+                    results,
+                    timezone,
+                    self.matcher,
+                    fetch_broadcasts,
+                    lambda audit: self.save_workflow(token, selection=audit),
+                )
         self.save_workflow(
             token,
             selection=audit,

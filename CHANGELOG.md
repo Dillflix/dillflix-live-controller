@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.22
+
+- Inspect other independently matched Prime parent tiles when the first has no entitled LIVE English or unlabeled broadcast. Apply the same selection loop to catalogue preflight and direct requests; stop when a suitable feed is found.
+- Preserve uncertainty from failed, incomplete or ambiguous alternatives instead of permanently excluding the event. Record each parent's matching and broadcast evidence, and distinguish language eligibility from entitlement in access messages.
+- Clear cached exclusions from the old single-parent policy on startup so affected events can be reconsidered. See [parent selection semantics](docs/prime-parent-selection.md).
+
 ## 0.14.20
 
 - Replace hardcoded simulator labels in event cards, the now-playing badge, and Playback settings with labels based on observed playback and the configured adapter. Real Prime playback displays Live playback / Verified live; actual simulator evidence remains explicitly labelled.

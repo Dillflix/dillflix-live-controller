@@ -4,7 +4,7 @@ import re
 
 from ..executor.models import ExecutorError
 from .labels import norm
-from .matching import EXCLUDED, GTI, tile_state
+from .matching import EXCLUDED, GTI, selection_state, tile_state
 
 LANGUAGES = {
     "english": "en",
@@ -192,3 +192,74 @@ async def refine(request, results, selected, audit, fetch):
         "match_status": decision["match_status"],
         "reason": decision["reason"],
     }
+
+
+async def choose_broadcast(request, results, timezone, matcher, fetch, progress):
+    """Try independently matched parents until one supplies a playable broadcast.
+
+    Removing a rejected parent only changes this matching pass, never the saved
+    search response. The normal matcher must establish every alternative's event
+    identity and permitted route; similar search results are not interchangeable.
+    Caller deadlines bound the scan. Progress is persisted before each await so
+    interruption cannot erase which alternatives remained unexamined.
+    """
+    remaining, attempts, outcomes = results, [], []
+    uncertain = False
+    audit = {}
+
+    def report(**changes):
+        return {**audit, "parent_selections": list(attempts), **changes}
+
+    while True:
+        progress(report(match_status="uncertain", reason="Matching remaining Prime event alternatives"))
+        parent, audit = await matcher.choose(request, remaining, timezone)
+        if not parent:
+            uncertain |= audit.get("match_status") == "uncertain"
+            break
+        attempt = {"parent": parent, "matching": audit, "state": "pending"}
+        attempts.append(attempt)
+        progress(report(match_status="uncertain", reason="Inspecting matched Prime event broadcasts"))
+        try:
+            selected, refined = await refine(request, results, parent, audit, fetch)
+        except ExecutorError as exc:
+            if exc.code not in {
+                "prime_transport_unknown",
+                "prime_operation_unknown",
+                "prime_invalid_broadcasts",
+            }:
+                raise  # Session, ownership and cancellation fences stop the entire scan.
+            selected = None
+            refined = {**audit, "match_status": "uncertain", "reason": str(exc), "error": exc.detail()}
+        state = selection_state(selected, refined)
+        attempt.update(state=state, selected=selected, broadcast_selection=refined.get("broadcast_selection"))
+        if refined.get("error"):
+            attempt["error"] = refined["error"]
+        progress({**refined, "parent_selections": list(attempts)})
+        if state == "ready":
+            return selected, {**refined, "parent_selections": attempts}
+        uncertain |= state == "access_unknown"
+        outcomes.append((selected, refined))
+        remaining = {
+            **remaining,
+            "containers": [
+                {
+                    **container,
+                    "items": [
+                        item for item in container["items"] if item.get("content_id") != parent["content_id"]
+                    ],
+                }
+                for container in remaining["containers"]
+            ],
+        }
+
+    if uncertain:
+        return None, report(
+            match_status="uncertain",
+            reason="Some matching Prime event alternatives could not be fully evaluated",
+        )
+    if not outcomes:
+        return None, report()
+    # Upcoming/unknown access must never be hidden by a locked alternative.
+    order = ["waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"]
+    selected, final = min(outcomes, key=lambda outcome: order.index(selection_state(*outcome)))
+    return selected, {**final, "parent_selections": attempts}
