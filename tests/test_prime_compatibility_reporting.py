@@ -94,6 +94,7 @@ async def test_unsupported_operation_does_not_disable_other_validated_capabiliti
     with pytest.raises(ExecutorError) as error:
         PrimePlayerClient.require(health, "search")
     assert error.value.code == "prime_runtime_unsupported"
+    assert error.value.retryable is False
 
 
 @pytest.mark.parametrize("mode", ["blocked", "transitioning", "manual"])
@@ -123,7 +124,6 @@ async def test_catalogue_ownership_failure_is_not_reported_as_entitlement(tmp_pa
         assert not workflow.player.calls
     finally:
         await cleanup(controller)
-    assert error.value.retryable is False
 
 
 async def test_new_version_label_alone_does_not_mean_unsupported():
