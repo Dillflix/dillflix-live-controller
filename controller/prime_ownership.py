@@ -52,9 +52,27 @@ class PrimeOwnership:
         current = health.get("ownership", {})
         if current.get("owner_id") != "gateway:" + session_id:
             return
-        receipt = self.receipt if self.session_id == session_id and self.receipt else current
+        receipt = (
+            self.receipt
+            if self.session_id == session_id
+            and self.receipt
+            and self.receipt.get("session_id") == current.get("session_id")
+            else current
+        )
         released = await self.rpc("suspend", value=False, previous=receipt)
-        if released.get("acknowledged") is not True or released.get("mode") != "automatic":
+        # A restarted supervisor can durably release the manual hold before its
+        # backend is ready. This confirms intent release, not device readiness.
+        recovery_pending = (
+            released.get("recovery_pending") is True
+            and released.get("acknowledged") is False
+            and released.get("mode") == "blocked"
+            and released.get("owner_id", "") is None
+            and bool(current.get("session_id"))
+            and released.get("session_id") == current["session_id"]
+        )
+        if not recovery_pending and (
+            released.get("acknowledged") is not True or released.get("mode") != "automatic"
+        ):
             raise PrimeOwnershipError("Prime release is unconfirmed")
         if self.session_id == session_id:
             self.receipt = None

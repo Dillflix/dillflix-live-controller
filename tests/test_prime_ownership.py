@@ -21,6 +21,7 @@ class Bridge(PrimeOwnership):
             "last_seq": 0,
         }
         self.fail = False
+        self.recovering = False
 
     async def rpc(self, method, **params):
         self.calls.append((method, params))
@@ -29,15 +30,16 @@ class Bridge(PrimeOwnership):
         if method == "health":
             return {"api_version": 4, "serial": "fixture", "ownership": dict(self.state)}
         if method == "suspend":
-            if params["previous"]["epoch"] != self.state["epoch"]:
+            if any(params["previous"].get(key) != self.state[key] for key in ("session_id", "epoch", "handoff_id")):
                 raise PrimeOwnershipError("stale")
             self.state.update(
                 epoch=self.state["epoch"] + 1,
-                mode="manual" if params["value"] else "automatic",
+                mode="manual" if params["value"] else "blocked" if self.recovering else "automatic",
                 owner_id=params.get("owner_id"),
-                handoff_id="handoff",
+                handoff_id="handoff" if params["value"] else None,
+                acknowledged=not self.recovering,
             )
-            return dict(self.state)
+            return dict(self.state, recovery_pending=True) if self.recovering else dict(self.state)
         return {"delivered": True, "seq": params["seq"], "session_id": "service"}
 
 
@@ -76,6 +78,59 @@ async def test_gateway_restart_releases_only_matching_durable_owner():
     b.state.update(mode="manual", owner_id="gateway:stored", epoch=3, handoff_id="stored")
     await b.release("stored")
     assert b.state["mode"] == "automatic"
+
+
+async def test_player_restart_release_uses_current_player_receipt():
+    b = Bridge()
+    await b.acquire("stored")
+    b.state.update(session_id="restarted-player", epoch=0, handoff_id="restored")
+    current = dict(b.state)
+    await b.release("stored")
+    assert b.calls[-1] == ("suspend", {"value": False, "previous": current})
+    assert b.state["mode"] == "automatic"
+    assert b.receipt is None and b.session_id is None
+
+
+async def test_same_player_release_retains_cached_epoch_fence():
+    b = Bridge()
+    await b.acquire("stored")
+    b.state.update(epoch=8, handoff_id="newer-handoff")
+    with pytest.raises(PrimeOwnershipError, match="stale"):
+        await b.release("stored")
+    assert b.state["mode"] == "manual"
+
+
+async def test_recovering_player_release_clears_manual_authority_without_claiming_readiness():
+    b = Bridge()
+    await b.acquire("stored")
+    b.recovering = True
+    b.state.update(session_id="restarted-player", epoch=0, handoff_id="restored", acknowledged=False)
+    await b.release("stored")
+    assert b.state["mode"] == "blocked" and b.state["acknowledged"] is False
+    assert b.state["owner_id"] is None
+    assert b.receipt is None and b.session_id is None
+    with pytest.raises(PrimeOwnershipError, match="not acknowledged"):
+        await b.send("stored", WAKE_PACKET)
+    assert not any(method == "manual_input" for method, _ in b.calls)
+
+
+@pytest.mark.parametrize("invalid", [
+    {"recovery_pending": False}, {"acknowledged": True}, {"mode": "manual"},
+    {"owner_id": "gateway:stored"}, {"session_id": "another-player"},
+])
+async def test_incomplete_recovery_release_does_not_confirm_handoff(invalid):
+    b = Bridge()
+    await b.acquire("stored")
+    b.recovering = True
+    original = b.rpc
+
+    async def rpc(method, **params):
+        result = await original(method, **params)
+        return {**result, **invalid} if method == "suspend" and not params["value"] else result
+
+    b.rpc = rpc
+    with pytest.raises(PrimeOwnershipError, match="release is unconfirmed"):
+        await b.release("stored")
 
 
 async def test_bad_packet_is_not_forwarded():
@@ -177,3 +232,40 @@ def test_failed_prime_handoff_is_not_an_acknowledged_take_control(tmp_path):
         result = client.post(PATH, json=command(client))
         assert result.status_code == 503
     assert not any(m == "manual_input" for m, _ in bridge.calls)
+
+
+def test_gateway_releases_persisted_manual_hold_while_restarted_player_recovers(tmp_path):
+    from fastapi.testclient import TestClient
+    from test_manual_control import PATH, command, state, take
+
+    from controller.api import create_app
+    from controller.config import Settings
+
+    app = create_app(
+        Settings(
+            database=str(tmp_path / "prime-recovery.sqlite"),
+            screen_adb_serial="fixture",
+            prime_player_socket="unused",
+            simulation_delay=0,
+        ),
+        start_workers=False,
+    )
+    bridge = Bridge()
+    app.state.control.prime = bridge
+    with TestClient(app) as client:
+        body = take(client)
+        assert state(client)["automation"] == "paused"
+        bridge.recovering = True
+        bridge.state.update(session_id="restarted-player", epoch=0, handoff_id="restored", acknowledged=False)
+        result = client.post(PATH, json=command(
+            client, action="release", session_id=body["session_id"], owner_token=body["owner_token"],
+        ))
+        assert result.status_code == 200, result.text
+        current = state(client)
+        assert current["manual_control"] is None
+        assert current["automation"] == "active"
+        assert current["observed"] is None
+        assert bridge.receipt is None and bridge.session_id is None
+        assert bridge.state["mode"] == "blocked" and bridge.state["acknowledged"] is False
+        assert bridge.state["owner_id"] is None
+    assert not any(method == "manual_input" for method, _ in bridge.calls)
