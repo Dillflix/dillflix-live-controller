@@ -12,6 +12,10 @@
 - Add independently revisioned public action switches (off by default) and a restricted public API with actor-bound command receipts, proxy-authenticated PlexSSO identity, role checks for HTTP/WebSockets, and same-origin writes.
 - Upgrade to schema 10 so older releases cannot ignore source priority. Include PlexSSO/nginx deployment examples. Live SSO, Linux deployment, and target hardware acceptance remain pending.
 
+## 0.16.4 — Prime ownership diagnostics
+
+- Report unacknowledged automatic control as an ownership problem instead of unknown entitlement. Preserve the watch plan and existing retry behavior; never bypass manual control or uncertain operations.
+
 ## 0.16.3 — Automatic Prime runtime recovery
 
 - Distinguish automatic player adaptation from an incompatible Prime contract.

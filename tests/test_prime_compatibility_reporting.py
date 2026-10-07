@@ -8,7 +8,7 @@ from test_prime_catalogue import saved, setup_selection
 from test_prime_workflow import Player, cleanup, launch, rig, row
 
 from controller.executor.models import ExecutorError
-from controller.prime_player.catalogue import key
+from controller.prime_player.catalogue import CATALOGUE_ERROR_MESSAGES, key
 from controller.prime_player.client import COMPATIBILITY_MESSAGES, PrimePlayerClient, adaptation_status
 
 
@@ -94,6 +94,35 @@ async def test_unsupported_operation_does_not_disable_other_validated_capabiliti
     with pytest.raises(ExecutorError) as error:
         PrimePlayerClient.require(health, "search")
     assert error.value.code == "prime_runtime_unsupported"
+
+
+@pytest.mark.parametrize("mode", ["blocked", "transitioning", "manual"])
+async def test_catalogue_ownership_failure_is_not_reported_as_entitlement(tmp_path, monkeypatch, mode):
+    controller, workflow = rig(tmp_path)
+    _, item, intent = setup_selection(controller, monkeypatch)
+    original = workflow.player.health
+
+    async def unavailable():
+        health = await original()
+        health["ownership"].update(mode=mode, acknowledged=mode == "manual")
+        return health
+
+    monkeypatch.setattr(workflow.player, "health", unavailable)
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        await workflow.observe_catalogue(probe)
+        controller.stage_playback()
+        device, probe = saved(controller)
+        assert probe["error"]["code"] == "prime_ownership_unavailable"
+        reason = CATALOGUE_ERROR_MESSAGES["prime_ownership_unavailable"]
+        assert device["reason"] == reason
+        assert device["prime_access"][item["content_id"]]["reason"] == reason
+        assert device["intent_version"] == intent
+        assert device["plan"] == [{"content_id": item["content_id"]}]
+        assert not workflow.player.calls
+    finally:
+        await cleanup(controller)
     assert error.value.retryable is False
 
 

@@ -14,6 +14,13 @@ from .client import COMPATIBILITY_MESSAGES, RECOVERING_ADAPTATION_STATES, adapta
 from .labels import search_queries
 from .matching import selection_state
 
+CATALOGUE_ERROR_MESSAGES = {
+    **COMPATIBILITY_MESSAGES,
+    "prime_ownership_unavailable": (
+        "Prime automatic control is not acknowledged; catalogue check retries in 60 seconds"
+    ),
+}
+
 
 def key(device_id):
     return "prime_catalogue_probe:" + device_id
@@ -249,7 +256,7 @@ class CatalogueChecks:
             reason = reasons[state]
             if state == "access_unknown":
                 error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
-                reason = COMPATIBILITY_MESSAGES.get(error.get("code"), reason)
+                reason = CATALOGUE_ERROR_MESSAGES.get(error.get("code"), reason)
             broadcast_decision = (evidence.get("audit") or {}).get("broadcast_selection") or {}
             if state == "no_matching_feed" and broadcast_decision.get("match_status") == "no_match":
                 reason = "No English or unlabeled Prime broadcast on the permitted route; watch plan retained"
