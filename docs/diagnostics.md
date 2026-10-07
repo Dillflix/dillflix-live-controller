@@ -21,9 +21,15 @@ logs cannot be recovered retroactively.
 
 Playback monitoring and catalogue activity distinguish these conditions:
 
+- **Prime runtime update is being handled automatically; watch plan retained**:
+  the requested capability is unavailable while the player observes, discovers,
+  validates or backs off an adaptation. The controller honors the bounded retry
+  hint and checks health without searching or launching playback. Capabilities
+  that remain available, including monitoring or cancellation, keep working.
 - **Prime runtime unsupported; player adapter update required**: the requested
-  capability is unavailable and the player reports a quarantined resource or
-  behavior change. Waking or retrying the same runtime does not validate it.
+  capability is unavailable and the player reports an incompatible contract, or
+  an older player reports a quarantined resource or behavior change without an
+  automatic adaptation status. Waking does not validate an incompatible contract.
 - **Prime Player API unsupported; player service update required**: the service
   lacks the required API version or method.
 - **Prime Player compatibility unavailable; inspect player diagnostics**: the
@@ -33,9 +39,15 @@ These failures preserve the watch plan and event status. Periodic health checks
 continue so a supported service can recover without plan edits. "Executor: ok"
 describes executor contact, not Prime runtime compatibility. Capture health and
 compatibility evidence before restarting. A black screen alone does not establish
-sleep; Android power/activity evidence must be checked separately. The agreed
-[update resilience follow-up](roadmap.md#prime-update-resilience--agreed-follow-up)
-follows restoration of support for runtime 116633.
+sleep; Android power/activity evidence must be checked separately.
+
+The latest bounded adaptation state, revision, service identity and next health
+probe are retained in the device's `prime_runtime_adaptation` diagnostics across
+controller restarts. A health check that observes the previously blocked catalogue
+capability available makes its next catalogue check due; the current plan and
+ownership are reevaluated before any launch. Adaptation progress does not renew
+playback evidence or grant a capability. Catalogue results cannot authorize Play
+after the service session or reported compatibility generation changes.
 
 ## One-time supervised installation
 

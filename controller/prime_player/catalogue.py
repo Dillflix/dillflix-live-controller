@@ -10,7 +10,7 @@ from uuid import uuid4
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls
 from .broadcasts import choose_broadcast
-from .client import COMPATIBILITY_MESSAGES, rpc_context
+from .client import COMPATIBILITY_MESSAGES, RECOVERING_ADAPTATION_STATES, adaptation_status, rpc_context
 from .labels import search_queries
 from .matching import selection_state
 
@@ -35,6 +35,55 @@ def signature(device, item):
 
 
 class CatalogueChecks:
+    @staticmethod
+    def require_catalogue_generation(health, results):
+        generation = health.get("compatibility", {}).get("generation")
+        if generation is not None and results.get("generation") != generation:
+            raise ExecutorError("prime_stale_result", "Prime runtime changed after catalogue selection")
+
+    def record_runtime_adaptation(self, health):
+        """Wake a blocked catalogue check without adopting or replaying playback."""
+        adaptation = adaptation_status(health)
+        with self.db.transaction() as db:
+            device = self.db.device(db)
+            if not adaptation and not device.get("prime_runtime_adaptation"):
+                return
+            if adaptation:
+                device["prime_runtime_adaptation"] = {
+                    **adaptation,
+                    "session_id": health["session_id"],
+                    "checked_at": datetime.now(UTC).isoformat(),
+                    "next_probe_at": time.time() + min(60, adaptation["retry_after_seconds"])
+                    if adaptation["state"] in RECOVERING_ADAPTATION_STATES else None,
+                }
+            else:
+                device.pop("prime_runtime_adaptation", None)
+            probe = self.db.meta(db, key(device["id"]), {})
+            error = probe.get("error") or (probe.get("audit") or {}).get("error") or {}
+            capability = probe.get("runtime_capability", "search")
+            available = health.get("compatibility", {}).get("capabilities", {})
+            recovery_codes = {"prime_runtime_recovering", "prime_runtime_unsupported"}
+            if (
+                probe.get("state") == "access_unknown"
+                and error.get("code") in recovery_codes
+                and available.get(capability, {}).get("available") is True
+            ):
+                probe.update(retry_at=0, expires=0)
+                self.db.set_meta(db, key(device["id"]), probe)
+                access = device.get("prime_access", {}).get(probe.get("content_id"), {})
+                if access.get("catalogue_probe_id") == probe.get("id"):
+                    access["retry_after"] = datetime.now(UTC).isoformat()
+            # Catalogue probes are deliberately discarded on controller restart;
+            # their access records still identify which capability blocked them.
+            for access in device.get("prime_access", {}).values():
+                if (
+                    access.get("state") == "access_unknown"
+                    and access.get("runtime_error_code") in recovery_codes
+                    and available.get(access.get("runtime_capability"), {}).get("available") is True
+                ):
+                    access["retry_after"] = datetime.now(UTC).isoformat()
+            self.db.save_device(db, device)
+
     def prepare_selection(self, db, device, item):
         """Called under the staging transaction; never issues an RPC here."""
         token = signature(device, item)
@@ -89,6 +138,7 @@ class CatalogueChecks:
                     # A queued check can become obsolete before it obtains the RPC lane.
                     if not self.catalogue_current(probe):
                         return
+                    evidence["runtime_capability"] = "search"
                     health = await self.check_session(capabilities=("search",))
                     if health.get("api_version", 0) < 11:
                         raise ExecutorError(
@@ -101,6 +151,7 @@ class CatalogueChecks:
                     raise ExecutorError(
                         "prime_stale_result", "Catalogue result belongs to another session/query"
                     )
+                self.require_catalogue_generation(health, results)
                 evidence.update(
                     query=query, results=results, session_id=health["session_id"], received_at=time.time()
                 )
@@ -111,7 +162,9 @@ class CatalogueChecks:
                             raise ExecutorError(
                                 "prime_stale_result", "Plan changed during broadcast selection"
                             )
+                        evidence["runtime_capability"] = "broadcasts"
                         current = await self.check_session(health["session_id"], capabilities=("broadcasts",))
+                        self.require_catalogue_generation(current, results)
                         return await self.player.broadcasts(
                             content_id, self.player.ownership(current, automatic=True)
                         )
@@ -171,11 +224,17 @@ class CatalogueChecks:
             )
             now = datetime.now(UTC)
             state = evidence.get("state", "access_unknown") if valid else "discarded"
+            error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
+            adaptation = device.get("prime_runtime_adaptation") or {}
+            retry_seconds = (
+                adaptation.get("retry_after_seconds", 15)
+                if error.get("code") == "prime_runtime_recovering" else 60
+            )
             evidence.update(
                 state=state,
                 finished_at=now.isoformat(),
                 expires=evidence.get("received_at", time.time()) + 60,
-                retry_at=time.time() + 60 if valid else 0,
+                retry_at=time.time() + retry_seconds if valid else 0,
             )
             self.db.set_meta(db, key(device["id"]), evidence)
             if not valid or (evidence.get("error") or {}).get("code") == "prime_device_recovery":
@@ -198,11 +257,13 @@ class CatalogueChecks:
                 "state": state,
                 "reason": reason,
                 "observed_at": now.isoformat(),
-                "retry_after": (now + timedelta(seconds=60)).isoformat()
+                "retry_after": (now + timedelta(seconds=retry_seconds)).isoformat()
                 if state in {"waiting_for_feed", "access_unknown"}
                 else None,
                 "options": probe["request"]["allowed_viewing_options"],
                 "catalogue_probe_id": probe["id"],
+                "runtime_error_code": error.get("code") if error.get("code") in COMPATIBILITY_MESSAGES else None,
+                "runtime_capability": evidence.get("runtime_capability") if error.get("code") in COMPATIBILITY_MESSAGES else None,
             }
             self.db.save_device(db, device)
             self.db.log(
@@ -223,7 +284,7 @@ class CatalogueChecks:
                 device["id"],
             )
 
-    def prepared_catalogue(self, request, session):
+    def prepared_catalogue(self, request, session, *, generation=None):
         with self.db.transaction() as db:
             probe = self.db.meta(db, key(request["device_id"]), {})
         if (
@@ -231,6 +292,7 @@ class CatalogueChecks:
             and probe.get("launch_intent") == request["intent_version"]
             and probe.get("content_id") == request["content_id"]
             and probe.get("session_id") == session
+            and (generation is None or probe.get("results", {}).get("generation") == generation)
             and time.time() < probe.get("expires", 0)
             and probe.get("request", {}).get("content_snapshot") == request["content_snapshot"]
             and probe.get("request", {}).get("allowed_viewing_options") == request["allowed_viewing_options"]

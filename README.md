@@ -73,6 +73,11 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
+Version 0.16.3 recognizes automatic runtime adaptation reported by updated Prime
+Player services. Recovery preserves the watch plan and continues available
+operations; an incompatible contract remains a distinct diagnostic. No controller
+database migration is required. See [recovery status](docs/diagnostics.md#prime-compatibility-failures).
+
 Version 0.16.1 removes before/after Plex media-property comparisons while retaining
 title and artwork verification in the schema-9 [Plex integration](docs/plex-artwork.md).
 Existing enabled installations reconcile the current event title on startup;

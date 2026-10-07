@@ -6,6 +6,7 @@ No SDK/device runtime is embedded here and no mutation is retried by transport.
 import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from contextvars import ContextVar
@@ -19,10 +20,31 @@ from ..executor.models import ExecutorError
 rpc_context = ContextVar("prime_rpc_context", default={})
 
 COMPATIBILITY_MESSAGES = {
+    "prime_runtime_recovering": "Prime runtime update is being handled automatically; watch plan retained",
     "prime_runtime_unsupported": "Prime runtime unsupported; player adapter update required",
     "prime_api_incompatible": "Prime Player API unsupported; player service update required",
     "prime_incompatible": "Prime Player compatibility unavailable; inspect player diagnostics",
 }
+RECOVERING_ADAPTATION_STATES = frozenset({"observing", "discovering", "validating", "backoff"})
+
+
+def adaptation_status(health):
+    """Keep only bounded health metadata; a runtime label grants no capability."""
+    value = health.get("compatibility", {}).get("adaptation")
+    if not isinstance(value, dict) or not isinstance(value.get("state"), str) or value["state"] not in (
+        RECOVERING_ADAPTATION_STATES | {"ready", "contract_incompatible"}
+    ):
+        return None
+    delay = value.get("retry_after_seconds", 15)
+    if type(delay) not in (int, float) or not math.isfinite(delay):
+        delay = 15
+    revision = value.get("revision")
+    return {
+        "state": value["state"],
+        "retry_after_seconds": max(5, min(300, delay)),
+        "revision": revision[:200] if isinstance(revision, str) else revision if type(revision) is int else None,
+        "reason": value.get("reason", "")[:500] if isinstance(value.get("reason", ""), str) else "",
+    }
 
 
 def correlated(function):
@@ -165,9 +187,16 @@ class PrimePlayerClient:
                 and available.get("javascript_navigation" if name == "stop" else name, {}).get("available")
                 is not True
             ):
+                adaptation = adaptation_status(health)
+                if adaptation and adaptation["state"] in RECOVERING_ADAPTATION_STATES:
+                    raise ExecutorError(
+                        "prime_runtime_recovering", COMPATIBILITY_MESSAGES["prime_runtime_recovering"]
+                    )
                 quarantine = compatibility.get("quarantine", {})
-                if quarantine.get("javascript") is True or any(
-                    value is True for value in quarantine.get("behavior", {}).values()
+                if (
+                    (adaptation and adaptation["state"] == "contract_incompatible")
+                    or quarantine.get("javascript") is True
+                    or any(value is True for value in quarantine.get("behavior", {}).values())
                 ):
                     raise ExecutorError(
                         "prime_runtime_unsupported", COMPATIBILITY_MESSAGES["prime_runtime_unsupported"],

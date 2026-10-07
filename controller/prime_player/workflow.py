@@ -173,17 +173,24 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
 
     def player_recovery_ready(self, db, device):
         recovery = device.get("player_recovery")
-        if not recovery:
-            return True
+        adaptation = device.get("prime_runtime_adaptation") or {}
         task = getattr(self, "player_recovery_task", None)
-        if recovery.get("next_probe_at", 0) <= time.time() and (not task or task.done()):
-            recovery["next_probe_at"] = time.time() + 60
+        due = [
+            value for value in (recovery, adaptation)
+            if value and value.get("next_probe_at") is not None and value["next_probe_at"] <= time.time()
+        ]
+        if due and (not task or task.done()):
+            for value in due:
+                value["next_probe_at"] = time.time() + 60
+            self.db.save_device(db, device)
             if self.loop and self.loop.is_running() and not self.stopping:
                 def schedule():
                     task = getattr(self, "player_recovery_task", None)
                     if not task or task.done():
                         self.player_recovery_task = asyncio.create_task(self.probe_player_recovery())
                 self.loop.call_soon_threadsafe(schedule)
+        if not recovery:
+            return True
         device["reason"] = recovery["reason"]
         self.db.save_device(db, device)
         return False
@@ -204,9 +211,10 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                 "Prime Player restarted; the old attempt must not be replayed",
                 retryable=False,
             )
-        self.player.require(health, *capabilities)
         if health.get("serial") != self.settings.screen_adb_serial:
             raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from SCREEN_ADB_SERIAL")
+        self.record_runtime_adaptation(health)
+        self.player.require(health, *capabilities)
         if not control and self.record_player_health(health):
             raise ExecutorError("prime_device_recovery", "Player inspection unavailable; waiting for device recovery")
         return health
@@ -231,13 +239,15 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         except TimeoutError:
             self.store.fail(token, ExecutorError("navigation_timeout", "Prime playback workflow timed out"))
         except ExecutorError as exc:
-            if exc.code == "prime_device_recovery":
+            if exc.code in {"prime_device_recovery", "prime_runtime_recovering"}:
                 with self.db.transaction() as db:
                     current = self.store.get_row(db, token)
                     report = json.loads(current["report"])
                     report.setdefault("prime_player", {})["device_recovery"] = True
                     report["observation_status"] = {"state": "unavailable", "checked_at": utc(), "error": exc.detail()}
-                    self.store.write(db, token, report, next_check=time.time() + 60)
+                    adaptation = self.db.device(db).get("prime_runtime_adaptation") or {}
+                    delay = adaptation.get("retry_after_seconds", 15) if exc.code == "prime_runtime_recovering" else 60
+                    self.store.write(db, token, report, next_check=time.time() + delay)
             else:
                 self.store.fail(token, exc)
         except Exception:
@@ -263,7 +273,9 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             token, session_id=session, query=query, source="prime_player", selection=None, ownership=ownership
         )
         self.store.phase(token, "searching")
-        prepared = self.prepared_catalogue(request, session)
+        prepared = self.prepared_catalogue(
+            request, session, generation=health.get("compatibility", {}).get("generation")
+        )
         if prepared:
             results, selected, audit = prepared["results"], prepared["selected"], prepared["audit"]
             received = time.monotonic() - (time.time() - prepared["received_at"])
@@ -276,12 +288,14 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             )
             if results.get("session_id") != session or results.get("query") != query:
                 raise ExecutorError("prime_stale_result", "Search result belongs to another session or query")
+            self.require_catalogue_generation(health, results)
             received = time.monotonic()
             self.store.phase(token, "matching")
             self.save_workflow(token, catalogue=results)
 
             async def fetch_broadcasts(content_id):
                 current = await self.check_session(session, capabilities=("broadcasts",))
+                self.require_catalogue_generation(current, results)
                 receipt = self.player.ownership(current, automatic=True)
                 return await self.mutation(
                     token, "PRIME_BROADCASTS", lambda: self.player.broadcasts(content_id, receipt)
@@ -312,6 +326,7 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         if time.monotonic() - received > 90:
             raise ExecutorError("prime_stale_result", "Catalogue selection is stale; refresh before launch")
         health = await self.check_session(session, capabilities=("play",))
+        self.require_catalogue_generation(health, results)
         ownership = self.player.ownership(health, automatic=True)
         attempt = uuid4().hex
         self.save_workflow(

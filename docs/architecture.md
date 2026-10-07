@@ -282,6 +282,16 @@ expires during device recovery does not add an event failure penalty. Once playe
 health allows inspection again, planning reevaluates current intent and live
 status. Manual control and cancellation remain available throughout recovery.
 
+Runtime adaptation is a separate capability-scoped recovery condition. A transient
+adaptation state does not disable capabilities the player still reports available.
+The existing read-only health probe lane also polls adaptation while automation is
+active, retaining bounded timing and revision metadata across controller restarts.
+When the blocked catalogue capability becomes available, its retry becomes due;
+the coordinator rechecks current intent and performs a fresh catalogue check.
+Existing playback evidence and event failure counters are retained. Prepared
+catalogues and the final pre-Play check also require the current compatibility
+generation, when supplied by the player, in addition to service-session identity.
+
 
 ## Plex title and artwork integration (0.16.1)
 
