@@ -1,0 +1,103 @@
+{
+  "content_id": "amzn1.dv.gti.7f8432e3-af78-4cae-b07c-c104755c35ec",
+  "generation": 1,
+  "complete": true,
+  "coverage": "live_details_btf_response",
+  "session_id": "captured-session",
+  "request_id": "captured-request",
+  "resource": {
+    "containerList": [
+      {
+        "title": "Broadcasts",
+        "type": "BEARD_SUPPORTED_CAROUSEL",
+        "paginationLink": null,
+        "items": [
+          {
+            "gti": "amzn1.dv.gti.cef1b941-b519-4013-9d2b-be5cd8bdb009",
+            "title": "English Broadcast",
+            "synopsis": "Watch the Colorado Avalanche and the Winnipeg Jets face off at Canada Life Centre broadcasting live from Winnipeg!",
+            "contentType": "LIVE_EVENT_ITEM",
+            "cardType": "BONUS_SCHEDULE_CARD",
+            "liveliness": "LIVE",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Included with Prime",
+                "icon": "ENTITLED_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            }
+          },
+          {
+            "gti": "amzn1.dv.gti.fc65a7b8-afa1-4f53-bde6-f8f3158ff5f8",
+            "title": "French Broadcast",
+            "synopsis": "Watch the Colorado Avalanche and the Winnipeg Jets face off at Canada Life Centre broadcasting live from Winnipeg!",
+            "contentType": "LIVE_EVENT_ITEM",
+            "cardType": "BONUS_SCHEDULE_CARD",
+            "liveliness": "LIVE",
+            "entitlementMessaging": {
+              "GLANCE_MESSAGE_SLOT": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "ENTITLEMENT_MESSAGE_SLOT": {
+                "message": "Included with Prime",
+                "icon": "ENTITLED_ICON",
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                "message": "",
+                "icon": null,
+                "level": null,
+                "type": null,
+                "messages": null,
+                "metadata": null
+              },
+              "TITLE_METADATA_BADGE_SLOT": {
+                "message": "LIVE",
+                "icon": null,
+                "level": "INFO_HIGHLIGHT",
+                "type": "BADGE",
+                "messages": null,
+                "metadata": null
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

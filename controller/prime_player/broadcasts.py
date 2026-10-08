@@ -1,37 +1,8 @@
 """Choose a broadcast of an already matched event from the captured BTF contract."""
 
-import re
-
 from ..executor.models import ExecutorError
-from .labels import norm
-from .matching import EXCLUDED, GTI, selection_state, tile_state
-
-LANGUAGES = {
-    "english": "en",
-    "anglais": "en",
-    "en": "en",
-    "enca": "en",
-    "enus": "en",
-    "french": "fr",
-    "francais": "fr",
-    "fr": "fr",
-    "frca": "fr",
-    "spanish": "es",
-    "espanol": "es",
-    "german": "de",
-    "deutsch": "de",
-    "portuguese": "pt",
-    "italian": "it",
-    "hindi": "hi",
-    "arabic": "ar",
-}
-
-
-def title_language(title):
-    # A localized synopsis or /en-US artwork URL does not identify audio language.
-    # In particular, "French Open" is an event name, not a broadcast qualifier.
-    match = re.search(r"\(\s*(?:in\s+|en\s+)?([^()]+)\s*\)\s*$", title, re.I)
-    return LANGUAGES.get(norm(match[1])) if match else None
+from .broadcast_matching import choose as choose_variant
+from .matching import GTI, selection_state
 
 
 def parse(response):
@@ -56,8 +27,10 @@ def parse(response):
                 raise ExecutorError("prime_invalid_broadcasts", "Unrecognized broadcast row")
             continue
         rows += 1
-        if container.get("type") != "STANDARD_CAROUSEL" or rows > 1:
-            raise ExecutorError("prime_invalid_broadcasts", "Unrecognized broadcast row structure")
+        # Carousel type controls Prime's presentation, not broadcast semantics.
+        # Validate the row's contents below, independently of that UI hint.
+        if rows > 1:
+            raise ExecutorError("prime_invalid_broadcasts", "Multiple broadcast rows")
         has_more = bool(container.get("paginationLink") or container.get("seeMore"))
         for raw in container["items"]:
             if (
@@ -84,7 +57,7 @@ def parse(response):
                 dict(
                     content_id=raw["gti"],
                     title=raw["title"],
-                    language=title_language(raw["title"]),
+                    synopsis=raw.get("synopsis") if isinstance(raw.get("synopsis"), str) else None,
                     entitlement_status="ENTITLED"
                     if entitled and not offer
                     else "UNENTITLED"
@@ -99,8 +72,15 @@ def parse(response):
     return items, has_more, bool(rows)
 
 
-def select(parent, parent_title, response, option):
+async def select(parent, parent_item, response, option, *, target, matcher):
     items, has_more, has_row = parse(response)
+    if not has_row:
+        items = [
+            {
+                **parent,
+                **{k: parent_item.get(k) for k in ("title", "synopsis", "entitlement_messaging")},
+            }
+        ]
     audit = dict(
         parent=parent,
         request_id=response.get("request_id"),
@@ -108,66 +88,27 @@ def select(parent, parent_title, response, option):
         complete=not has_more,
         policy="english_then_unlabeled; skip_other_explicit_languages",
     )
-    if not has_row:
-        # A direct event with no alternate broadcasts keeps its original ID.
-        items = [{**parent, "title": parent_title, "language": title_language(parent_title)}]
-    elif not items:
+    if not items:
         return None, {**audit, "match_status": "uncertain", "reason": "Broadcast row has no choices"}
-    preferred = [i for i in items if i["language"] in (None, "en") and not EXCLUDED.search(i["title"])]
-    route_unknown = False
-    # The parent matcher already evaluated a direct route. Recheck constraints
-    # only when substituting a child broadcast with potentially different coverage.
-    for field in ("channel", "stream_title") if has_row else ():
-        required_text = option.get(field)
-        if required_text:
-
-            def route_matches(item):
-                text = (
-                    item["title"]
-                    + " "
-                    + " ".join(
-                        str(v.get("message") or "")
-                        for v in item.get("entitlement_messaging", {}).values()
-                        if isinstance(v, dict)
-                    )
-                )
-                return bool(norm(required_text)) and norm(required_text) in norm(text)
-
-            matched = [i for i in preferred if route_matches(i)]
-            route_unknown = route_unknown or len(matched) < len(preferred)
-            preferred = matched
-    required = option.get("language")
-    if required:
-        language = LANGUAGES.get(norm(required))
-        preferred = [i for i in preferred if language and i["language"] == language]
-    if not preferred:
-        uncertain = (
-            has_more or route_unknown or (bool(required) and any(i["language"] is None for i in items))
-        )
-        return None, {
-            **audit,
-            "match_status": "uncertain" if uncertain else "no_match",
-            "reason": "No English or unlabeled broadcast satisfies the permitted route",
-        }
-    states = ["ready", "waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"]
-    chosen = min(
-        preferred, key=lambda i: (states.index(tile_state(i)), i["language"] != "en", i["content_id"])
+    chosen, decision = await choose_variant(
+        items,
+        parent={"content_id": parent["content_id"], "title": parent_item["title"]},
+        target=target,
+        option=option,
+        complete=not has_more,
+        direct=not has_row,
+        matcher=matcher,
     )
-    readiness = tile_state(chosen)
-    if has_more and readiness not in {"ready", "waiting_for_feed"}:
-        return None, {**audit, "match_status": "uncertain", "reason": "More broadcasts remain uninspected"}
-    selected = {**parent, **chosen, "readiness": readiness}
+    audit.update(decision)
+    if chosen is None:
+        return None, audit
+    selected = {**parent, **chosen}
     if has_row:
         selected.update(parent_content_id=parent["content_id"], starts_at=None, ends_at=None)
-    return selected, {
-        **audit,
-        "match_status": "matched",
-        "selected": chosen,
-        "reason": "Preferred language group; entitlement and live state checked per broadcast",
-    }
+    return selected, {**audit, "selected": chosen}
 
 
-async def refine(request, results, selected, audit, fetch):
+async def refine(request, results, selected, audit, fetch, matcher=None):
     if not selected or selected["readiness"] != "ready":
         return selected, audit
     response = await fetch(selected["content_id"])
@@ -177,14 +118,13 @@ async def refine(request, results, selected, audit, fetch):
         or response.get("generation") != results.get("generation")
     ):
         raise ExecutorError("prime_stale_result", "Broadcast response belongs to another event or runtime")
-    title = next(
-        i["title"]
-        for c in results["containers"]
-        for i in c["items"]
-        if i.get("content_id") == selected["content_id"]
+    parent_item = next(
+        i for c in results["containers"] for i in c["items"] if i.get("content_id") == selected["content_id"]
     )
     option = next(o for o in request["allowed_viewing_options"] if o["id"] == selected["viewing_option_id"])
-    choice, decision = select(selected, title, response, option)
+    choice, decision = await select(
+        selected, parent_item, response, option, target=request["content_snapshot"], matcher=matcher
+    )
     return choice, {
         **audit,
         "event_match": selected,
@@ -220,12 +160,15 @@ async def choose_broadcast(request, results, timezone, matcher, fetch, progress)
         attempts.append(attempt)
         progress(report(match_status="uncertain", reason="Inspecting matched Prime event broadcasts"))
         try:
-            selected, refined = await refine(request, results, parent, audit, fetch)
+            selected, refined = await refine(request, results, parent, audit, fetch, matcher)
         except ExecutorError as exc:
             if exc.code not in {
                 "prime_transport_unknown",
                 "prime_operation_unknown",
                 "prime_invalid_broadcasts",
+                "prime_broadcast_selection_unavailable",
+                "prime_broadcast_selection_failed",
+                "prime_broadcast_selection_invalid",
             }:
                 raise  # Session, ownership and cancellation fences stop the entire scan.
             selected = None
@@ -256,6 +199,7 @@ async def choose_broadcast(request, results, timezone, matcher, fetch, progress)
         return None, report(
             match_status="uncertain",
             reason="Some matching Prime event alternatives could not be fully evaluated",
+            error=next((attempt["error"] for attempt in attempts if attempt.get("error")), None),
         )
     if not outcomes:
         return None, report()

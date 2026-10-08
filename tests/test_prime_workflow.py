@@ -178,6 +178,9 @@ def rig(tmp_path):
     )
     controller = Controller(configuration)
     workflow = controller.executor
+    from broadcast_model import FixtureBroadcastModel
+
+    workflow.matcher.model = FixtureBroadcastModel()
     workflow.player = Player()
     return controller, workflow
 

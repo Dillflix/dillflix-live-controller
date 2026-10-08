@@ -76,8 +76,9 @@ Prime did not provide a separate audio-language field in the October 5 capture. 
 absence. Full artwork, provider logos, overlays, messaging and native metadata
 remain available from the player; the controller uses the fields needed to match.
 
-Without `PRIME_PLAYER_MATCH_MODEL`, unambiguous deterministic matches still work;
-other cases abstain. The shared prompt is versioned with the candidate contract: it
+Event identity can still match deterministically, but final broadcast selection now
+requires `PRIME_PLAYER_MATCH_MODEL`, including direct and single-broadcast events.
+The event-identity prompt is versioned with the candidate contract: it
 explains feed windows, structured source identities and explicit route constraints.
 Both catalogue preflight and playback use it for the same identity task; readiness
 and launch decisions remain in code. Each model request receives one readiness
@@ -298,3 +299,28 @@ explicit child GTIs resolve to themselves; the parent default resolved to French
 The endpoint was exercised on-device without requesting navigation or playback.
 Automatic controller selection and launch still need deployment acceptance.
 Existing verified playback is not forcibly switched when this update starts.
+
+## Broadcast selection (0.16.5)
+
+A dedicated `broadcast_selection` prompt uses the existing text model and transport.
+It interprets language, provider and presentation semantically; there is no regex
+fallback. It prefers English, permits genuinely unlabeled coverage, and rejects
+explicit other languages. Missing required-route evidence or conflicting language
+labels cause abstention. The language of a synopsis is not audio-language evidence.
+
+The input contains compact event identity/competitor context, matched parent ID/title,
+permitted route constraints, completeness, and each child's ID, title, synopsis,
+subscription messages, structured entitlement/state and controller-assigned readiness.
+Artwork, analytics and transport metadata are omitted. Code supplies selectable IDs
+for one readiness group at a time (live entitled first), validates the selected ID
+and exact evidence quotes, and preserves all normal ownership/intent/generation fences.
+The model cannot override availability. Single broadcasts and direct events are also
+checked; model absence/failure never falls back to playing the parent.
+
+The Broadcasts row's carousel type is ignored because it describes presentation.
+Item identity, structure and completeness are still checked, and related-event rows
+are not treated as alternate broadcasts. Parsing and model failures are retained
+through parent scanning and reported separately from unknown entitlement. Model calls
+and decisions use the existing bounded diagnostic capture. No extra navigation or
+new Prime Player API is required. Live model/device acceptance is separate from the
+scripted-response regression suite.

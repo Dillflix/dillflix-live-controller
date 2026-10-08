@@ -2,6 +2,7 @@ import asyncio
 import copy
 
 import pytest
+from broadcast_model import FixtureBroadcastModel
 from test_prime_broadcasts import CAPTURE, ENGLISH
 from test_prime_catalogue import saved, setup_selection
 from test_prime_matching import GTI
@@ -120,4 +121,64 @@ async def test_late_broadcast_selection_cannot_authorize_a_switch(tmp_path, monk
         assert not any(c[0] == "play" for c in workflow.player.calls)
     finally:
         release.set()
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("change", ["intent", "manual"])
+async def test_plan_change_during_model_selection_cannot_authorize_switch(tmp_path, monkeypatch, change):
+    controller, workflow = rig(tmp_path)
+    install(workflow)
+    setup_selection(controller, monkeypatch)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class DelayedModel(FixtureBroadcastModel):
+        async def completion(self, *args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await super().completion(*args, **kwargs)
+
+    workflow.matcher.model = DelayedModel()
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        task = asyncio.create_task(workflow.observe_catalogue(probe))
+        await asyncio.wait_for(entered.wait(), 2)
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            if change == "intent":
+                device["intent_version"] += 1
+            else:
+                device["manual_control"] = {"active": True}
+            controller.db.save_device(db, device)
+        release.set()
+        await task
+        assert saved(controller)[1]["state"] == "discarded"
+        assert not any(c[0] == "play" for c in workflow.player.calls)
+    finally:
+        release.set()
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("mode", ["missing", "failed"])
+async def test_model_failure_is_reported_without_playing_parent(tmp_path, monkeypatch, mode):
+    controller, workflow = rig(tmp_path)
+    install(workflow)
+    _, item, intent = setup_selection(controller, monkeypatch)
+
+    class FailedModel(FixtureBroadcastModel):
+        async def completion(self, *args, **kwargs):
+            raise TimeoutError("model timed out")
+
+    workflow.matcher.model = None if mode == "missing" else FailedModel()
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        await workflow.observe_catalogue(probe)
+        device, evidence = saved(controller)
+        code = "prime_broadcast_selection_unavailable" if mode == "missing" else "prime_broadcast_selection_failed"
+        assert evidence["audit"]["error"]["code"] == code
+        assert "model" in device["prime_access"][item["content_id"]]["reason"]
+        assert device["intent_version"] == intent
+        assert not any(c[0] == "play" for c in workflow.player.calls)
+    finally:
         await cleanup(controller)

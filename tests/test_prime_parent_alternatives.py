@@ -3,6 +3,7 @@ import copy
 import json
 
 import pytest
+from broadcast_model import FixtureBroadcastModel
 from test_prime_broadcast_workflow import install
 from test_prime_broadcasts import ENGLISH
 from test_prime_catalogue import saved, setup_selection
@@ -14,8 +15,10 @@ from controller.executor.models import ExecutorError
 SECOND = GTI + "-second"
 
 
-class MatchingModel:
+class MatchingModel(FixtureBroadcastModel):
     async def completion(self, model, messages, schema, **kwargs):
+        if kwargs.get("name") == "broadcast_selection":
+            return await super().completion(model, messages, schema, **kwargs)
         candidates = json.loads(messages[1]["content"])["candidates"]
         candidate = next((c for c in candidates if c["title"] == "Jets vs. Lions"), None)
         return json.dumps(
@@ -121,6 +124,16 @@ async def test_unresolved_parent_prevents_durable_locked_exclusion(tmp_path, mon
         assert device["prime_access"][item["content_id"]]["retry_after"] is not None
         assert len(evidence["audit"]["parent_selections"]) == 2
         assert not any(c[0] == "play" for c in workflow.player.calls)
+        if first == "malformed":
+            assert evidence["audit"]["error"]["code"] == "prime_invalid_broadcasts"
+            reason = "Prime broadcast data could not be parsed; catalogue check retries in 60 seconds"
+            assert device["prime_access"][item["content_id"]]["reason"] == reason
+            with controller.db.transaction() as db:
+                activity = db.execute(
+                    "SELECT * FROM activity WHERE kind='prime_catalogue' ORDER BY sequence DESC LIMIT 1"
+                ).fetchone()
+            assert activity["message"] == reason
+            assert json.loads(activity["detail"])["error"]["code"] == "prime_invalid_broadcasts"
     finally:
         await cleanup(controller)
 

@@ -1,14 +1,19 @@
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from broadcast_model import FixtureBroadcastModel, answer
 
 from controller.executor.models import ExecutorError
-from controller.prime_player.broadcasts import parse, refine, select, title_language
-from controller.prime_player.client import PrimePlayerClient
+from controller.prime_player.broadcast_matching import PROMPT
+from controller.prime_player.broadcasts import choose_broadcast, parse, refine, select
 
 CAPTURE = json.loads(Path(__file__).with_name("fixtures").joinpath("prime_broadcasts.json").read_text())
+AVALANCHE = json.loads(
+    Path(__file__).with_name("fixtures").joinpath("prime_broadcasts_avalanche.json").read_text()
+)
 PARENT = CAPTURE["content_id"]
 ENGLISH = "amzn1.dv.gti.a0f3772b-99fe-4b62-a454-a37d04a0b359"
 FRENCH = "amzn1.dv.gti.87219723-d95a-4ff8-b30f-c9d9782badcd"
@@ -26,8 +31,34 @@ def parent():
     )
 
 
-def choose(response=None, option=None, title="Lions vs. Panthers"):
-    return select(parent(), title, CAPTURE if response is None else response, option or {"id": "prime"})
+class Model:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    async def completion(self, model, messages, schema, **kwargs):
+        self.calls.append(json.loads(messages[1]["content"]))
+        assert messages[0]["content"] == PROMPT
+        assert kwargs["name"] == "broadcast_selection"
+        value = self.responses.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value if isinstance(value, str) else json.dumps(value)
+
+
+def matcher(model):
+    return SimpleNamespace(model=model, config=SimpleNamespace(prime_match_model="fixture-model"))
+
+
+async def choose(response=None, option=None, model=None, title="Lions vs. Panthers"):
+    return await select(
+        parent(),
+        {"title": title, "synopsis": "Fixture synopsis"},
+        CAPTURE if response is None else response,
+        option or {"id": "prime"},
+        target={"title": "Fixture event"},
+        matcher=matcher(model or FixtureBroadcastModel()),
+    )
 
 
 def response(*indexes):
@@ -37,95 +68,56 @@ def response(*indexes):
     return value
 
 
-def test_real_capture_selects_unlabeled_entitled_feed_and_preserves_unknown_language():
-    items, has_more, has_row = parse(CAPTURE)
-    assert has_row and not has_more and len(items) == 8
-    assert items[0]["language"] == "fr" and items[1]["language"] is None
-    assert all(i["entitlement_status"] == "UNENTITLED" for i in items[2:])
-    selected, audit = choose()
+async def test_captured_nhl_variants_are_sent_to_model_and_english_id_selected():
+    items, more, row = parse(AVALANCHE)
+    model = Model(answer(items[0], "en"))
+    selected, audit = await choose(AVALANCHE, model=model)
+    assert row and not more
+    assert selected["content_id"] == "amzn1.dv.gti.cef1b941-b519-4013-9d2b-be5cd8bdb009"
+    assert selected["readiness"] == "ready" and selected["language"] == "en"
+    assert audit["method"] == "llm"
+    assert [i["title"] for i in model.calls[0]["candidates"]] == ["English Broadcast", "French Broadcast"]
+    assert all(i["synopsis"] for i in model.calls[0]["candidates"])
+    assert model.calls[0]["permitted_viewing_option"] == {"id": "prime"}
+    assert model.calls[0]["parent"]["content_id"] == PARENT
+    assert "BEARD_SUPPORTED_CAROUSEL" not in json.dumps(model.calls)
+
+
+async def test_existing_nfl_capture_still_selects_unlabeled_entitled_child():
+    selected, audit = await choose()
     assert selected["content_id"] == ENGLISH and selected["parent_content_id"] == PARENT
-    assert selected["viewing_option_id"] == "prime" and selected["readiness"] == "ready"
-    assert selected["language"] is None
-    assert audit["parent"]["content_id"] == PARENT
+    assert selected["language"] is None and selected["readiness"] == "ready"
     assert audit["candidates"][0]["content_id"] == FRENCH
 
 
-def test_only_french_is_skipped_without_calling_it_locked():
-    selected, audit = choose(response(0))
+async def test_single_french_broadcast_is_evaluated_and_excluded_by_model():
+    value = copy.deepcopy(AVALANCHE)
+    value["resource"]["containerList"][0]["items"] = value["resource"]["containerList"][0]["items"][1:]
+    model = Model(answer())
+    selected, audit = await choose(value, model=model)
     assert selected is None and audit["match_status"] == "no_match"
-    assert audit["candidates"][0]["entitlement_status"] == "ENTITLED"
+    assert len(model.calls) == 1
+    assert model.calls[0]["candidates"][0]["title"] == "French Broadcast"
 
 
-def test_explicit_english_precedes_unlabeled_but_not_entitlement():
-    value = response(0, 1)
-    french = value["resource"]["containerList"][0]["items"][0]
-    french["title"] = "Lions @ Panthers (In English)"
-    assert choose(value)[0]["content_id"] == FRENCH
-    french["entitlementMessaging"] = {"ENTITLEMENT_MESSAGE_SLOT": {"icon": "OFFER_ICON"}}
-    assert choose(value)[0]["content_id"] == ENGLISH
-
-
-@pytest.mark.parametrize(
-    "title,expected",
-    [
-        ("French Open", None),
-        ("Lions (In French)", "fr"),
-        ("Lions (en français)", "fr"),
-        ("Lions (In Spanish)", "es"),
-        ("Lions (In English)", "en"),
-    ],
-)
-def test_only_explicit_title_qualifiers_establish_language(title, expected):
-    assert title_language(title) == expected
-
-
-@pytest.mark.parametrize(
-    "state,expected",
-    [("UPCOMING", "waiting_for_feed"), ("ENDED", "no_matching_feed"), (None, "access_unknown")],
-)
-def test_parent_live_state_does_not_override_selected_broadcast(state, expected):
-    value = response(0, 1)
-    value["resource"]["containerList"][0]["items"][1]["liveliness"] = state
-    assert choose(value)[0]["readiness"] == expected
-
-
-@pytest.mark.parametrize("messages", [{}, {"a": {"icon": "ENTITLED_ICON"}, "b": {"icon": "OFFER_ICON"}}])
-def test_missing_or_conflicting_entitlement_never_inherits_parent_access(messages):
-    value = response(1)
-    value["resource"]["containerList"][0]["items"][0]["entitlementMessaging"] = messages
-    assert choose(value)[0]["readiness"] == "access_unknown"
-
-
-def test_incomplete_language_absence_remains_unknown_but_known_good_feed_can_play():
-    value = response(0)
-    value["resource"]["containerList"][0]["paginationLink"] = {"next": True}
-    assert choose(value)[1]["match_status"] == "uncertain"
-    value = response(0, 1)
-    value["resource"]["containerList"][0]["paginationLink"] = {"next": True}
-    assert choose(value)[0]["content_id"] == ENGLISH
-
-
-def test_explicit_route_language_is_not_satisfied_by_unknown_language():
-    selected, audit = choose(option={"id": "prime", "language": "English"})
-    assert selected is None and audit["match_status"] == "uncertain"
-
-
-def test_broadcast_switch_does_not_bypass_channel_constraint():
-    assert choose(option={"id": "prime", "channel": "DAZN"})[0]["content_id"] == ENGLISH
-    selected, audit = choose(option={"id": "prime", "channel": "Sportsnet"})
-    assert selected is None and audit["match_status"] == "uncertain"
-
-
-def test_direct_event_without_alternatives_keeps_original_id_but_checks_language():
+@pytest.mark.parametrize("presentation", ["BEARD_SUPPORTED_CAROUSEL", "FUTURE_LAYOUT", None])
+def test_broadcast_contents_are_independent_of_presentation(presentation):
     value = copy.deepcopy(CAPTURE)
-    value["resource"]["containerList"] = []
-    assert choose(value)[0]["content_id"] == PARENT
-    assert choose(value, option={"id": "prime", "channel": "New live locator"})[0]["content_id"] == PARENT
-    assert choose(value, title="Lions (In French)")[0] is None
+    row = value["resource"]["containerList"][0]
+    if presentation is None:
+        row.pop("type")
+    else:
+        row["type"] = presentation
+    assert parse(value) == parse(CAPTURE)
+    row["items"][0]["gti"] = "invalid"
+    with pytest.raises(ExecutorError, match="Unrecognized broadcast item"):
+        parse(value)
 
 
-@pytest.mark.parametrize("change", ["incomplete", "duplicate", "renamed", "bad_id", "malformed"])
-def test_unrecognized_or_incomplete_broadcast_data_cannot_fall_back_to_parent(change):
+@pytest.mark.parametrize(
+    "change", ["incomplete", "duplicate", "renamed", "bad_id", "malformed", "duplicate_row"]
+)
+def test_invalid_or_incomplete_broadcast_data_is_rejected(change):
     value = response(0, 1)
     row = value["resource"]["containerList"][0]
     if change == "incomplete":
@@ -138,14 +130,145 @@ def test_unrecognized_or_incomplete_broadcast_data_cannot_fall_back_to_parent(ch
         row["items"][0]["gti"] = "arbitrary"
     if change == "malformed":
         row["items"] = None
+    if change == "duplicate_row":
+        value["resource"]["containerList"].append(copy.deepcopy(row))
     with pytest.raises(ExecutorError):
-        choose(value)
+        parse(value)
+
+
+@pytest.mark.parametrize(
+    "state,expected",
+    [("UPCOMING", "waiting_for_feed"), ("ENDED", "no_matching_feed"), (None, "access_unknown")],
+)
+async def test_parent_live_state_does_not_override_child(state, expected):
+    value = response(1)
+    value["resource"]["containerList"][0]["items"][0]["liveliness"] = state
+    selected, _ = await choose(value)
+    assert selected["readiness"] == expected
+
+
+@pytest.mark.parametrize("messages", [{}, {"a": {"icon": "ENTITLED_ICON"}, "b": {"icon": "OFFER_ICON"}}])
+async def test_missing_or_conflicting_child_entitlement_does_not_inherit_parent(messages):
+    value = response(1)
+    value["resource"]["containerList"][0]["items"][0]["entitlementMessaging"] = messages
+    assert (await choose(value))[0]["readiness"] == "access_unknown"
+
+
+async def test_model_cannot_choose_locked_english_from_live_entitled_group():
+    value = response(0, 1)
+    value["resource"]["containerList"][0]["items"][1]["entitlementMessaging"] = {"a": {"icon": "OFFER_ICON"}}
+    items, _, _ = parse(value)
+    model = Model(answer(items[1], "en"))
+    with pytest.raises(ExecutorError, match="outside the supplied"):
+        await choose(value, model=model)
+    assert model.calls[0]["selectable_content_ids"] == [FRENCH]
+
+
+async def test_upcoming_english_does_not_hide_live_unlabeled():
+    value = response(0, 1)
+    value["resource"]["containerList"][0]["items"][0].update(title="English Broadcast", liveliness="UPCOMING")
+    model = Model(answer(parse(value)[0][1]))
+    selected, _ = await choose(value, model=model)
+    assert selected["content_id"] == ENGLISH and selected["readiness"] == "ready"
+    assert model.calls[0]["selectable_content_ids"] == [ENGLISH]
+
+
+async def test_incomplete_broadcast_list_cannot_establish_no_match():
+    value = response(0)
+    value["resource"]["containerList"][0]["paginationLink"] = {"next": True}
+    assert (await choose(value, model=Model(answer())))[1]["match_status"] == "uncertain"
+    value = response(1)
+    value["resource"]["containerList"][0]["paginationLink"] = {"next": True}
+    assert (await choose(value))[0]["readiness"] == "ready"
+
+
+async def test_ambiguous_ready_candidate_cannot_establish_all_alternatives_locked():
+    value = response(0, 2)
+    items = parse(value)[0]
+    model = Model(answer(status="uncertain"), answer(items[1]))
+    selected, audit = await choose(value, model=model)
+    assert selected is None and audit["match_status"] == "uncertain"
+
+
+async def test_direct_event_without_broadcast_row_still_uses_model_and_preserves_id():
+    value = copy.deepcopy(CAPTURE)
+    value["resource"]["containerList"] = []
+    item = {"content_id": PARENT, "title": "French Open"}
+    model = Model(answer(item))
+    selected, _ = await choose(value, model=model, title=item["title"])
+    assert selected["content_id"] == PARENT and "parent_content_id" not in selected
+    assert model.calls[0]["direct_event"] is True
+    assert model.calls[0]["candidates"][0]["synopsis"] == "Fixture synopsis"
+
+
+async def test_provider_language_constraints_are_supplied_to_model():
+    model = Model(answer(status="uncertain"))
+    option = {
+        "id": "prime",
+        "channel": "Sportsnet",
+        "language": "English",
+        "stream_title": "National coverage",
+    }
+    selected, audit = await choose(response(1), option=option, model=model)
+    assert selected is None and audit["match_status"] == "uncertain"
+    assert model.calls[0]["permitted_viewing_option"] == option
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "unknown_id",
+        "invented_quote",
+        "missing_quote",
+        "other_language",
+        "unlabeled_required",
+        "abstention_id",
+        "invalid_json",
+    ],
+)
+async def test_invalid_model_answers_cannot_authorize_playback(bad):
+    item = parse(response(1))[0][0]
+    choice = answer(item)
+    option = None
+    if bad == "unknown_id":
+        choice["content_id"] = "amzn1.dv.gti.fabricated"
+    if bad == "invented_quote":
+        choice["evidence"][0]["quote"] = "English Broadcast"
+    if bad == "missing_quote":
+        choice["evidence"] = []
+    if bad == "other_language":
+        choice["language"] = "fr"
+    if bad == "unlabeled_required":
+        option = {"id": "prime", "language": "English"}
+    if bad == "abstention_id":
+        choice["match_status"] = "no_match"
+    if bad == "invalid_json":
+        choice = "not JSON"
+    with pytest.raises(ExecutorError) as error:
+        await choose(response(1), option=option, model=Model(choice))
+    assert error.value.code == "prime_broadcast_selection_invalid"
+
+
+async def test_model_failure_does_not_fall_back_to_regex_or_parent():
+    with pytest.raises(ExecutorError) as error:
+        await choose(response(1), model=Model(TimeoutError("model timed out")))
+    assert error.value.code == "prime_broadcast_selection_failed"
+    with pytest.raises(ExecutorError) as error:
+        await select(
+            parent(),
+            {"title": "English Broadcast"},
+            response(1),
+            {"id": "prime"},
+            target={},
+            matcher=matcher(None),
+        )
+    assert error.value.code == "prime_broadcast_selection_unavailable"
 
 
 @pytest.mark.parametrize(
     "field,value", [("session_id", "different"), ("generation", 9), ("content_id", FRENCH)]
 )
-async def test_late_foreign_responses_never_select_a_broadcast(field, value):
+async def test_foreign_response_never_reaches_model(field, value):
     data = copy.deepcopy(CAPTURE)
     data[field] = value
 
@@ -156,25 +279,40 @@ async def test_late_foreign_responses_never_select_a_broadcast(field, value):
         await refine({}, {"session_id": CAPTURE["session_id"], "generation": 1}, parent(), {}, fetch)
 
 
-async def test_unmatched_and_upcoming_parents_never_issue_broadcast_request():
+async def test_unmatched_and_upcoming_parents_do_not_fetch_broadcasts():
     async def fetch(content_id):
-        raise AssertionError("unnecessary broadcast request")
+        raise AssertionError("unnecessary request")
 
     for selected in (None, {**parent(), "readiness": "waiting_for_feed"}):
         assert await refine({}, {}, selected, {}, fetch) == (selected, {})
 
 
-def test_broadcast_capability_requires_implementation_and_runtime_availability():
-    health = {
-        "api_version": 11,
-        "capabilities": ["broadcasts"],
-        "compatibility": {"capabilities": {"broadcasts": {"available": True}}},
-    }
-    PrimePlayerClient.require(health, "broadcasts")
-    health["compatibility"]["capabilities"]["broadcasts"]["available"] = False
-    with pytest.raises(ExecutorError, match="broadcasts"):
-        PrimePlayerClient.require(health, "broadcasts")
-    health["compatibility"]["capabilities"]["broadcasts"]["available"] = True
-    health["capabilities"] = []
-    with pytest.raises(ExecutorError, match="broadcasts"):
-        PrimePlayerClient.require(health, "broadcasts")
+async def test_parse_failure_survives_final_unmatched_pass():
+    class Matcher:
+        async def choose(self, request, results, timezone):
+            return (
+                (parent(), {"match_status": "matched"})
+                if results["containers"][0]["items"]
+                else (None, {"match_status": "no_match"})
+            )
+
+    async def fetch(content_id):
+        value = response(0)
+        value["resource"]["containerList"][0]["items"] = None
+        return value
+
+    selected, audit = await choose_broadcast(
+        {"allowed_viewing_options": [{"id": "prime"}], "content_snapshot": {}},
+        {
+            "session_id": CAPTURE["session_id"],
+            "generation": 1,
+            "containers": [{"items": [{"content_id": PARENT, "title": "Lions vs. Panthers"}]}],
+        },
+        "America/Vancouver",
+        Matcher(),
+        fetch,
+        lambda audit: None,
+    )
+    assert selected is None and audit["match_status"] == "uncertain"
+    assert audit["error"]["code"] == "prime_invalid_broadcasts"
+    assert audit["parent_selections"][0]["error"] == audit["error"]

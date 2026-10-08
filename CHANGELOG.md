@@ -12,6 +12,12 @@
 - Add independently revisioned public action switches (off by default) and a restricted public API with actor-bound command receipts, proxy-authenticated PlexSSO identity, role checks for HTTP/WebSockets, and same-origin writes.
 - Upgrade to schema 10 so older releases cannot ignore source priority. Include PlexSSO/nginx deployment examples. Live SSO, Linux deployment, and target hardware acceptance remain pending.
 
+## 0.16.5 — Semantic Prime broadcast selection
+
+- Interpret broadcast language and permitted routes with a dedicated prompt using the configured matching model, including single-broadcast and direct events. Prefer English, allow unlabeled coverage, and skip explicit other languages. Validate selected IDs/evidence and retain code-enforced availability and ownership checks.
+- Accept valid broadcast contents independently of carousel presentation type, including the captured `BEARD_SUPPORTED_CAROUSEL` response.
+- Preserve broadcast parsing/model errors through alternative-parent scans and display their actual cause instead of unknown entitlement. No player update or database migration is required; `PRIME_PLAYER_MATCH_MODEL` is required for final feed selection.
+
 ## 0.16.4 â€” Prime ownership diagnostics
 
 - Report unacknowledged automatic control as an ownership problem instead of unknown entitlement. Preserve the watch plan and existing retry behavior; never bypass manual control or uncertain operations.

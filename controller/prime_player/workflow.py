@@ -318,7 +318,7 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             search_observed_at=results.get("observed_at"),
         )
         if not selected:
-            self.complete_search(token, selection_state(selected, audit))
+            self.complete_search(token, selection_state(selected, audit), error=audit.get("error"))
             return False
         if selected["readiness"] != "ready":
             self.complete_search(token, selected["readiness"], selected)
@@ -347,13 +347,13 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             self.save_workflow(token, launch_error=exc.detail())
         return True
 
-    def complete_search(self, token, state, selected=None):
+    def complete_search(self, token, state, selected=None, *, error=None):
         with self.db.transaction() as db:
             row = self.store.allowed(db, token, navigation=True)
             report = json.loads(row["report"])
             report["prime_player"].update(selected=selected, readiness=state)
             report["operation"].update(
-                state=state, phase=state, finished_at=utc(), updated_at=utc(), error=None
+                state=state, phase=state, finished_at=utc(), updated_at=utc(), error=error
             )
             self.store.write(db, token, report, state=state)
 

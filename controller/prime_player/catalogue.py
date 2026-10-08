@@ -19,6 +19,12 @@ CATALOGUE_ERROR_MESSAGES = {
     "prime_ownership_unavailable": (
         "Prime automatic control is not acknowledged; catalogue check retries in 60 seconds"
     ),
+    "prime_broadcast_selection_unavailable": "Prime broadcast selection requires a configured matching model",
+    "prime_broadcast_selection_failed": "Prime broadcast selection model failed; catalogue check retries in 60 seconds",
+    "prime_broadcast_selection_invalid": "Prime broadcast selection response was invalid; catalogue check retries in 60 seconds",
+    "prime_invalid_broadcasts": (
+        "Prime broadcast data could not be parsed; catalogue check retries in 60 seconds"
+    ),
 }
 
 
@@ -284,7 +290,7 @@ class CatalogueChecks:
                         "selected": evidence.get("selected"),
                         "broadcast_selection": (evidence.get("audit") or {}).get("broadcast_selection"),
                         "parent_selections": (evidence.get("audit") or {}).get("parent_selections"),
-                        "error": evidence.get("error"),
+                        "error": error or None,
                     }
                 ),
                 "prime_catalogue",
