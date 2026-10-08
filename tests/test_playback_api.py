@@ -1,6 +1,7 @@
 import time
 
 import pytest
+from broadcast_model import FixtureBroadcastModel
 from fastapi.testclient import TestClient
 from playback_fixtures import HEADERS, payload, settings
 from test_prime_workflow import Player
@@ -13,6 +14,7 @@ from controller.executor.models import CancelResult, PlaybackReport
 def api(tmp_path):
     app = create_app(settings(tmp_path), start_workers=False)
     engine = app.state.controller.executor
+    engine.matcher.model = FixtureBroadcastModel()
     engine.player = Player()
     with TestClient(app) as client:
         yield client, app.state.controller, engine
