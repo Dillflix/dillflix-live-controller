@@ -47,7 +47,7 @@ def redzone(now):
     [
         ({}, "ready"),
         ({"event_state": "UPCOMING"}, "waiting_for_feed"),
-        ({"event_state": "UNAVAILABLE"}, "access_unknown"),
+        ({"event_state": "UNAVAILABLE"}, "feeds_unavailable"),
         ({"entitlement_status": "UNENTITLED"}, "feeds_locked"),
         ({"event_state": "ENDED"}, "no_matching_feed"),
         ({"title": "NFL RedZone Replay"}, "no_matching_feed"),
