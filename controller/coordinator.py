@@ -335,7 +335,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             except (TypeError, ValueError):
                 pass
             completed_search = (
-                readiness in {"waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"}
+                readiness in {"waiting_for_feed", "access_unknown", "feeds_unavailable", "feeds_locked", "no_matching_feed"}
                 and finished is not None
                 and job["deadline_at"] is not None
                 and finished.timestamp() <= min(job["deadline_at"], time.time())
@@ -358,9 +358,12 @@ class PlaybackCoordinator(PlaybackRecovery):
                 reason = {
                     "waiting_for_feed": "Waiting for the live feed; search will retry in 60 seconds",
                     "access_unknown": "Prime access or readiness is unknown; search will retry in 60 seconds",
+                    "feeds_unavailable": "Matching Prime feeds are unavailable; watch-plan entry retained",
                     "feeds_locked": "Matching feeds are not entitled; watch-plan entry retained",
                     "no_matching_feed": "No matching Prime feed found; automatic retry suppressed; watch-plan entry retained",
                 }[readiness]
+                if readiness == "access_unknown" and report.get("reason"):
+                    reason = str(report["reason"])[:1000] + "; search will retry in 60 seconds"
                 d.setdefault("prime_access", {})[job["content_id"]] = {
                     "state": readiness,
                     "reason": reason,
@@ -382,7 +385,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                     db,
                     self.now(db).isoformat(),
                     reason,
-                    "Prime search completed without launching playback",
+                    report.get("reason") or "Prime search completed without launching playback",
                     "navigation",
                     d["id"],
                 )
@@ -512,7 +515,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             jobs = [
                 dict(r)
                 for r in db.execute(
-                    "SELECT * FROM jobs WHERE device_id='living-room' AND state IN ('cancelled','superseded','failed','timed_out','rejected','waiting_for_feed','access_unknown','feeds_locked','no_matching_feed') AND cancel_sent=0"
+                    "SELECT * FROM jobs WHERE device_id='living-room' AND state IN ('cancelled','superseded','failed','timed_out','rejected','waiting_for_feed','access_unknown','feeds_unavailable','feeds_locked','no_matching_feed') AND cancel_sent=0"
                 )
             ]
         for job in jobs:

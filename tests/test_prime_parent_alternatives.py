@@ -50,6 +50,9 @@ def alternatives(workflow, first="locked", second="ready"):
         if mode == "locked":
             # Reproduce Falcons: entitled French plus locked unlabeled TSN feeds.
             response["resource"]["containerList"][0]["items"] = [items[0], *items[2:]]
+        elif mode == "unavailable":
+            from test_prime_matching import UNAVAILABLE_BADGE
+            items[1]["entitlementMessaging"].update(UNAVAILABLE_BADGE)
         elif mode == "french":
             response["resource"]["containerList"][0]["items"] = items[:1]
         elif mode == "upcoming":
@@ -70,7 +73,7 @@ def alternatives(workflow, first="locked", second="ready"):
     return broadcasts
 
 
-@pytest.mark.parametrize("first", ["locked", "french", "upcoming", "error", "malformed", "partial"])
+@pytest.mark.parametrize("first", ["locked", "unavailable", "french", "upcoming", "error", "malformed", "partial"])
 async def test_direct_launch_checks_second_parent_and_plays_its_entitled_broadcast(tmp_path, first):
     controller, workflow = rig(tmp_path)
     alternatives(workflow, first)

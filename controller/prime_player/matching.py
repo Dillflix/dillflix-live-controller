@@ -157,12 +157,15 @@ def candidates(results, snapshot, timezone):
                 "synopsis",
             )
         }
+        candidate["availability_status"] = availability_status(item)
         candidate["titles"] = [title]
         if len(json.dumps(candidate)) > 16000:
             raise ExecutorError("prime_selection_limit", "Catalogue item exceeds matcher bounds")
         if cid in grouped:
             current = grouped[cid]
             current["titles"] = list(dict.fromkeys([*current["titles"], title]))
+            if candidate["availability_status"] == "UNAVAILABLE":
+                current["availability_status"] = "UNAVAILABLE"
             for field in ("entitlement_status", "event_state", "starts_at", "ends_at"):
                 if current[field] != candidate[field]:
                     current[field] = None
@@ -181,10 +184,24 @@ def selection_state(selected, audit):
     return "no_matching_feed"
 
 
+def availability_status(item):
+    """Explicit availability is independent of subscription and event lifecycle."""
+    if item.get("availability_status") == "UNAVAILABLE" or item.get("event_state") == "UNAVAILABLE":
+        return "UNAVAILABLE"
+    messaging = item.get("entitlement_messaging")
+    badge = messaging.get("TITLE_METADATA_BADGE_SLOT") if isinstance(messaging, dict) else None
+    message = badge.get("message") if isinstance(badge, dict) else None
+    if isinstance(message, str) and message.strip().upper() == "UNAVAILABLE":
+        return "UNAVAILABLE"
+    return None
+
+
 def tile_state(item):
     """Catalogue evidence only; UI actions and estimated times confer no readiness."""
     if item.get("event_state") == "ENDED":
         return "no_matching_feed"
+    if availability_status(item) == "UNAVAILABLE":
+        return "feeds_unavailable"
     if item.get("entitlement_status") == "UNENTITLED":
         return "feeds_locked"  # Retain durable outcome spelling; source is entitlement.
     if item.get("entitlement_status") != "ENTITLED":
@@ -226,7 +243,9 @@ class EventMatcher:
         # Identity matching is independent of readiness. Consider accessible
         # alternatives first; an unentitled result never hides an entitled feed.
         history = []
-        for state in ("ready", "waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"):
+        for state in (
+            "ready", "waiting_for_feed", "access_unknown", "feeds_unavailable", "feeds_locked", "no_matching_feed",
+        ):
             pool = [t for t in eligible if tile_state(t) == state]
             if not pool:
                 continue
@@ -235,8 +254,8 @@ class EventMatcher:
             if selected:
                 tile = next(t for t in pool if t["content_id"] == selected["content_id"])
                 # Ambiguous higher-ranked results cannot establish that *all*
-                # matching alternatives are locked.
-                if state == "feeds_locked" and any(
+                # matching alternatives are locked or unavailable.
+                if state in {"feeds_unavailable", "feeds_locked"} and any(
                     a.get("match_status") == "uncertain" for a in history[:-1]
                 ):
                     return None, {
@@ -249,7 +268,10 @@ class EventMatcher:
                     }
                 return {
                     **selected,
-                    **{k: tile[k] for k in ("entitlement_status", "event_state", "starts_at", "ends_at")},
+                    **{
+                        k: tile[k]
+                        for k in ("entitlement_status", "event_state", "availability_status", "starts_at", "ends_at")
+                    },
                     "readiness": state,
                 }, {**audit, "readiness": state, "passes": history}
         return None, {

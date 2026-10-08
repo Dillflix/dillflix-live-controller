@@ -63,6 +63,7 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                 if report["operation"]["state"] in {
                     "waiting_for_feed",
                     "access_unknown",
+                    "feeds_unavailable",
                     "feeds_locked",
                     "no_matching_feed",
                 }:
@@ -399,7 +400,16 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                 outcome["state"] == "failed"
                 and outcome.get("evidence", {}).get("launch", {}).get("disposition") == "not_invoked"
             ):
-                self.complete_search(token, "waiting_for_feed", workflow.get("selected"))
+                reason = outcome.get("reason")
+                message = "Prime refused live playback"
+                if isinstance(reason, str) and reason.strip():
+                    message += ": " + reason.strip()[:800]
+                self.complete_search(
+                    token,
+                    "access_unknown",
+                    workflow.get("selected"),
+                    error=ExecutorError("prime_launch_refused", message).detail(),
+                )
                 return
             if outcome["state"] in {"failed", "unknown", "cancelled", "stopped"}:
                 reason = outcome.get("reason")

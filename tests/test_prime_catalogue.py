@@ -161,7 +161,7 @@ async def test_replacement_barrier_does_not_stop_previous_playback(tmp_path):
         await cleanup(controller)
 
 
-async def test_confirmed_launch_refusal_is_waiting_not_failure_or_denial(tmp_path):
+async def test_confirmed_launch_refusal_is_unknown_not_upcoming_or_denial(tmp_path):
     controller, workflow = rig(tmp_path)
     original = workflow.player.outcome
     workflow.player.outcome = lambda: {
@@ -169,13 +169,42 @@ async def test_confirmed_launch_refusal_is_waiting_not_failure_or_denial(tmp_pat
         "state": "failed",
         "resolved_id": None,
         "evidence": {"launch": {"disposition": "not_invoked"}, "resolution": {"playbackClass": "detail"}},
-        "reason": "Feed not ready",
+        "reason": "Resolver returned a non-playback result",
     }
     try:
         token = await launch(workflow)
         report = workflow.store.report(token)
-        assert report["operation"]["state"] == "waiting_for_feed"
-        assert report["operation"]["error"] is None
+        assert report["operation"]["state"] == "access_unknown"
+        assert report["operation"]["error"]["code"] == "prime_launch_refused"
+        assert "non-playback result" in report["operation"]["error"]["message"]
         assert report["prime_player"]["launch_outcome"]["evidence"]["launch"]["disposition"] == "not_invoked"
+    finally:
+        await cleanup(controller)
+
+
+async def test_unavailable_catalogue_preserves_plan_without_play_or_upcoming_retry(tmp_path, monkeypatch):
+    from test_prime_matching import UNAVAILABLE_BADGE
+
+    controller, workflow = rig(tmp_path)
+    _, item, intent = setup_selection(controller, monkeypatch)
+    original = workflow.player.search
+
+    async def search(*args):
+        return {**await original(*args), **results(tile(entitlement_messaging=UNAVAILABLE_BADGE))}
+
+    workflow.player.search = search
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        await workflow.observe_catalogue(probe)
+        device, evidence = saved(controller)
+        assert evidence["state"] == "feeds_unavailable"
+        assert evidence["selected"]["entitlement_status"] == "ENTITLED"
+        assert evidence["selected"]["event_state"] == "LIVE"
+        access = device["prime_access"][item["content_id"]]
+        assert "unavailable" in access["reason"] and access["retry_after"] is None
+        assert device["intent_version"] == intent
+        assert any(p["content_id"] == item["content_id"] for p in device["plan"])
+        assert not any(c[0] in {"play", "stop", "cancel"} for c in workflow.player.calls)
     finally:
         await cleanup(controller)

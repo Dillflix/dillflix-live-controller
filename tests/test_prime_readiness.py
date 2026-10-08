@@ -6,7 +6,7 @@ import pytest
 from playback_fixtures import payload
 from test_controller import command, overview
 from test_playback import jobs, pending, successful_report
-from test_prime_matching import GTI, results, tile
+from test_prime_matching import GTI, UNAVAILABLE_BADGE, results, tile
 from test_prime_workflow import cleanup, launch, row
 from test_prime_workflow import rig as workflow_rig
 
@@ -21,7 +21,7 @@ from controller.service import Controller
     [
         ("UPCOMING", "waiting_for_feed"),
         ("LIVE", "ready"),
-        ("UNAVAILABLE", "access_unknown"),
+        ("UNAVAILABLE", "feeds_unavailable"),
         ("ENDED", "no_matching_feed"),
     ],
 )
@@ -74,6 +74,7 @@ async def test_conflicting_occurrences_do_not_silently_use_first_lock_state():
     [
         ("waiting_for_feed", {"event_state": "UPCOMING"}),
         ("feeds_locked", {"entitlement_status": "UNENTITLED"}),
+        ("feeds_unavailable", {"entitlement_messaging": UNAVAILABLE_BADGE}),
         ("access_unknown", {"entitlement_status": "UNKNOWN"}),
     ],
 )
@@ -158,7 +159,7 @@ def test_waiting_holds_selection_without_failure_then_retries_with_new_deadline(
     assert jobs(client)[0]["deadline_at"] > job["deadline_at"]
 
 
-@pytest.mark.parametrize("state", ["feeds_locked", "no_matching_feed"])
+@pytest.mark.parametrize("state", ["feeds_unavailable", "feeds_locked", "no_matching_feed"])
 def test_locked_feed_falls_back_without_removing_plan_or_repeated_search(rig, state):
     client, service, _ = rig
     job, _ = complete_search(rig, state)
@@ -175,7 +176,7 @@ def test_locked_feed_falls_back_without_removing_plan_or_repeated_search(rig, st
     assert overview(client)["device"]["desired"] == job["content_id"]
 
 
-@pytest.mark.parametrize("state", ["feeds_locked", "no_matching_feed"])
+@pytest.mark.parametrize("state", ["feeds_unavailable", "feeds_locked", "no_matching_feed"])
 def test_changed_options_release_lock_exclusion(rig, monkeypatch, state):
     client, service, _ = rig
     job, _ = complete_search(rig, state)
@@ -468,3 +469,17 @@ async def test_ruled_out_entitled_results_allow_identifying_unentitled_target():
     assert selected["readiness"] == "feeds_locked"
     assert len(model.calls) == 1
     assert all(c["entitlement_status"] == "ENTITLED" for c in model.calls[0]["candidates"])
+
+
+def test_resolution_refusal_reason_reaches_monitoring_without_upcoming_claim(rig):
+    client, service, _ = rig
+    job = pending(rig)
+    report = successful_report(service, job)
+    report.update(state="access_unknown", observation=None, finished_at=datetime.now(UTC).isoformat(),
+                  reason="Prime refused live playback: resolver returned a non-playback result")
+    service.receive_playback_report(job["id"], report)
+    device = overview(client)["device"]
+    assert "Prime refused live playback" in device["reason"]
+    assert "non-playback result" in device["reason"]
+    assert "Waiting for the live feed" not in device["reason"]
+    assert device["prime_access"][job["content_id"]]["retry_after"] is not None

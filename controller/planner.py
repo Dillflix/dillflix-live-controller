@@ -140,6 +140,7 @@ def choose(device, items, now, real_now):
             continue
         evidence = access.get(item["content_id"], {})
         if evidence.get("options") == item["viewing_options"] and evidence.get("state") in {
+            "feeds_unavailable",
             "feeds_locked",
             "no_matching_feed",
         }:
@@ -237,7 +238,8 @@ def choose(device, items, now, real_now):
     current_access = access.get(current_id, {})
     current_locked = (
         current
-        and current_access.get("state") in {"feeds_locked", "no_matching_feed"}
+        and current_access.get("state") in {"feeds_unavailable",
+            "feeds_locked", "no_matching_feed"}
         and current_access.get("options") == current["viewing_options"]
     )
     route_present = (
@@ -247,7 +249,8 @@ def choose(device, items, now, real_now):
     )
     leaving_current = (
         device.get("playback_state") == "navigating"
-        or waiting.get("state") in {"waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"}
+        or waiting.get("state") in {"waiting_for_feed", "access_unknown", "feeds_unavailable",
+            "feeds_locked", "no_matching_feed"}
     ) and device.get("desired") != current_id
     if (
         route_present

@@ -109,7 +109,7 @@ async def select(parent, parent_item, response, option, *, target, matcher):
 
 
 async def refine(request, results, selected, audit, fetch, matcher=None):
-    if not selected or selected["readiness"] != "ready":
+    if not selected or selected["readiness"] not in {"ready", "feeds_unavailable"}:
         return selected, audit
     response = await fetch(selected["content_id"])
     if (
@@ -204,6 +204,6 @@ async def choose_broadcast(request, results, timezone, matcher, fetch, progress)
     if not outcomes:
         return None, report()
     # Upcoming/unknown access must never be hidden by a locked alternative.
-    order = ["waiting_for_feed", "access_unknown", "feeds_locked", "no_matching_feed"]
+    order = ["waiting_for_feed", "access_unknown", "feeds_unavailable", "feeds_locked", "no_matching_feed"]
     selected, final = min(outcomes, key=lambda outcome: order.index(selection_state(*outcome)))
     return selected, {**final, "parent_selections": attempts}

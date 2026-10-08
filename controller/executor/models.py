@@ -118,6 +118,7 @@ class Operation(Strict):
         "timed_out",
         "waiting_for_feed",
         "access_unknown",
+        "feeds_unavailable",
         "feeds_locked",
         "no_matching_feed",
     ]

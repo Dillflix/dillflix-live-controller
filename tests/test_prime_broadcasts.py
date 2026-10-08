@@ -316,3 +316,61 @@ async def test_parse_failure_survives_final_unmatched_pass():
     assert selected is None and audit["match_status"] == "uncertain"
     assert audit["error"]["code"] == "prime_invalid_broadcasts"
     assert audit["parent_selections"][0]["error"] == audit["error"]
+
+
+async def test_unavailable_child_does_not_hide_available_alternative():
+    from test_prime_matching import UNAVAILABLE_BADGE
+
+    value = response(0, 1)
+    raw = value["resource"]["containerList"][0]["items"][0]
+    raw["title"] = "English Broadcast"
+    raw["entitlementMessaging"].update(UNAVAILABLE_BADGE)
+    model = Model(answer(parse(value)[0][1]))
+    selected, _ = await choose(value, model=model)
+    assert selected["content_id"] == ENGLISH and selected["readiness"] == "ready"
+    blocked = model.calls[0]["candidates"][0]
+    assert blocked["entitlement_status"] == "ENTITLED" and blocked["event_state"] == "LIVE"
+    assert blocked["availability_status"] == "UNAVAILABLE"
+    assert model.calls[0]["selectable_content_ids"] == [ENGLISH]
+    with pytest.raises(ExecutorError, match="outside the supplied"):
+        await choose(value, model=Model(answer(parse(value)[0][0], "en")))
+
+
+@pytest.mark.parametrize("has_more", [False, True])
+async def test_all_suitable_broadcasts_unavailable_preserves_completeness(has_more):
+    from test_prime_matching import UNAVAILABLE_BADGE
+
+    value = response(1)
+    container = value["resource"]["containerList"][0]
+    container["items"][0]["entitlementMessaging"].update(UNAVAILABLE_BADGE)
+    if has_more:
+        container["paginationLink"] = {"next": True}
+    selected, audit = await choose(value)
+    if has_more:
+        assert selected is None and audit["match_status"] == "uncertain"
+    else:
+        assert selected["readiness"] == "feeds_unavailable"
+
+
+async def test_unavailable_parent_still_inspects_independently_available_child():
+    from test_prime_matching import UNAVAILABLE_BADGE
+
+    blocked = {**parent(), "availability_status": "UNAVAILABLE", "readiness": "feeds_unavailable"}
+    catalogue = {
+        "session_id": CAPTURE["session_id"], "generation": CAPTURE["generation"],
+        "containers": [{"items": [{"content_id": PARENT, "title": "Lions vs. Panthers",
+                                  "entitlement_messaging": UNAVAILABLE_BADGE}]}]
+    }
+    fetched = []
+
+    async def fetch(cid):
+        fetched.append(cid)
+        return CAPTURE
+
+    selected, _ = await refine(
+        {"allowed_viewing_options": [{"id": "prime"}], "content_snapshot": {"title": "Fixture event"}},
+        catalogue, blocked, {}, fetch, matcher(FixtureBroadcastModel())
+    )
+    assert fetched == [PARENT]
+    assert selected["content_id"] == ENGLISH and selected["readiness"] == "ready"
+    assert selected["availability_status"] is None

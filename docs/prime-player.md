@@ -266,6 +266,21 @@ showed a lock. The planner considers another permitted event while retaining the
 original plan entry. **Play now** clears the exclusion; changed viewing options
 also permit a new check. No provider-wide subscription assumption is stored.
 
+`feeds_unavailable` means Prime explicitly reports UNAVAILABLE, including a
+`TITLE_METADATA_BADGE_SLOT` badge alongside ENTITLED and LIVE. Subscription access,
+event lifecycle and feed availability are independent. The unavailable flag wins
+for that feed. The controller still checks other matching parents and each child
+broadcast's own metadata before excluding the event. An unavailable direct event
+never reaches Play. Unresolved alternatives remain unknown rather than proving
+all feeds unavailable. The planner retains the plan and tries another event;
+unchanged routes are excluded until **Play now** or a route change permits a new
+check, as with locked feeds. This never marks the event completed.
+
+A resolution refusal without a more specific availability observation is
+`access_unknown`, with the player's refusal reason reported and a 60-second retry.
+It is not evidence of an upcoming feed. Stop-before-switch still runs only after
+the player obtains a valid live playback resolution.
+
 A catalogue ENDED state prevents a new launch for that feed. It does not mark the
 sporting event completed or stop an already playing event. Existing native
 completion and Teamarr lifecycle handling retain that responsibility.

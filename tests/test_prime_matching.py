@@ -228,3 +228,33 @@ async def test_model_can_select_equivalent_valid_feed_instead_of_abstaining_for_
         payload(), results(tile(cid=GTI + "-other"), tile()), "America/Vancouver"
     )
     assert selected["content_id"] == GTI and selected["readiness"] == "ready"
+
+
+UNAVAILABLE_BADGE = {
+    "TITLE_METADATA_BADGE_SLOT": {
+        "message": "UNAVAILABLE", "icon": None, "level": "INFO_INACTIVE", "type": "BADGE"
+    }
+}
+
+
+@pytest.mark.parametrize("duplicate_first", [False, True])
+async def test_unavailable_badge_overrides_entitled_live_even_on_duplicate(duplicate_first):
+    blocked = tile(entitlement_messaging=UNAVAILABLE_BADGE)
+    items = [tile(), blocked] if duplicate_first else [blocked, tile()]
+    selected, audit = await EventMatcher(ExecutorConfig()).choose(
+        payload(), results(*items), "America/Vancouver"
+    )
+    assert selected["readiness"] == "feeds_unavailable"
+    assert selected["entitlement_status"] == "ENTITLED"
+    assert selected["event_state"] == "LIVE"
+    assert selected["availability_status"] == "UNAVAILABLE"
+    assert len(audit["candidates"]) == 1
+
+
+async def test_unavailable_feed_does_not_hide_available_parent():
+    selected, _ = await EventMatcher(ExecutorConfig()).choose(
+        payload(), results(tile(entitlement_messaging=UNAVAILABLE_BADGE), tile(cid=GTI + "-open")),
+        "America/Vancouver"
+    )
+    assert selected["content_id"] == GTI + "-open"
+    assert selected["readiness"] == "ready"

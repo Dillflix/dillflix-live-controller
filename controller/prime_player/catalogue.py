@@ -256,6 +256,7 @@ class CatalogueChecks:
                 "ready": "Prime catalogue reports an entitled live feed",
                 "waiting_for_feed": "Prime feed is upcoming; catalogue check retries in 60 seconds",
                 "access_unknown": "Prime entitlement or event state is unknown; catalogue check retries in 60 seconds",
+                "feeds_unavailable": "Matching Prime feeds are unavailable; watch plan retained",
                 "feeds_locked": "No entitled English or unlabeled feed on the inspected matching Prime routes; watch plan retained",
                 "no_matching_feed": "No matching live or upcoming Prime feed found; watch plan retained",
             }
