@@ -35,23 +35,33 @@ def teams(snapshot):
 
 
 def search_queries(snapshot):
+    """Bounded opponent queries from provider identities, never title parsing."""
     pair = teams(snapshot)
 
-    def label(team):
-        return (
-            (team.get("name") or team.get("full_name") or team.get("short_name"))
-            if isinstance(team, dict)
-            else team
-        )
+    def label(team, fields):
+        values = [team.get(k) for k in fields] if isinstance(team, dict) else [team]
+        return next((v.strip() for v in values if isinstance(v, str) and v.strip()), None)
 
-    names = [label(t) for t in pair]
     queries = []
-    if all(names):
-        queries.append(" ".join(names))  # Archive: paired opponents improve search disambiguation.
-    queries.append(snapshot.get("title", ""))
-    if all(names):
-        queries.append(names[0])
-    return list(dict.fromkeys(q.strip()[:300] for q in queries if isinstance(q, str) and q.strip()))[:3]
+    # Preserve the established query first; full/short identities are fallbacks.
+    for fields in (
+        ("name", "full_name", "short_name"),
+        ("full_name", "short_name", "name"),
+        ("short_name", "full_name", "name"),
+    ):
+        names = [label(team, fields) for team in pair]
+        if all(names):
+            queries.append(" ".join(names))
+    queries.append(snapshot.get("title"))
+    # Case/punctuation variants are not useful extra searches. Keep supplied text
+    # intact in the actual query, including apostrophes in school/team names.
+    unique = {}
+    for query in queries:
+        if isinstance(query, str) and query.strip():
+            query = query.strip()[:300]
+            if norm(query):
+                unique.setdefault(norm(query), query)
+    return list(unique.values())[:4]
 
 
 def date_agrees(text, snapshot, captured_at, timezone):

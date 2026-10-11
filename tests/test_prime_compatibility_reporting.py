@@ -313,7 +313,7 @@ async def test_controller_restart_retains_adaptation_and_refreshes_access_after_
         _, probe = saved(controller)
         await workflow.observe_catalogue(probe)
         with controller.db.transaction() as db:
-            controller.db.set_meta(db, "prime_catalogue_contract", 13)
+            controller.db.set_meta(db, "prime_catalogue_contract", 14)
         workflow.recover()
         device, probe = saved(controller)
         assert not probe

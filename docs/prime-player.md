@@ -287,8 +287,25 @@ completion and Teamarr lifecycle handling retain that responsibility.
 
 ### No matching feed versus a feed that has not started
 
+Catalogue checks and direct playback requests share the same bounded search
+helper. The existing paired `name` query stays first. If it finds no suitable
+match, the controller tries paired `full_name`, paired `short_name`, and the
+original event title, skipping duplicate queries. Every query uses supplied
+metadata; team names are never inferred from display text. There are at most
+four searches under the existing overall deadline, with the same event identity,
+language and access validation on each result. A usable match stops the scan.
+A positively identified upcoming, locked or unavailable feed keeps its existing
+handling without repeating its search under alternate names. Transport or model
+errors stop the scan; unresolved matches and interrupted scans remain unknown.
+Diagnostics retain each query's coverage, match audit and outcome in
+`search_attempts`, including pending work when a check is interrupted.
+
+On upgrade to this search contract, old access exclusions are cleared once so
+previous single-query misses can be checked again. Plans and completion records
+are retained; subsequent restarts preserve exclusions from the new contract.
+
 A Teamarr live event with a configured Prime league route qualifies for a search,
-not proof that Prime carries that event. When that search cannot identify a
+not proof that Prime carries that event. When the distinct fallback queries cannot identify a
 matching feed, `no_matching_feed` suppresses automatic retries for the unchanged
 viewing options. The watch-plan entry remains. **Play now** clears the result,
 and changed viewing options allow another search. Incomplete search coverage

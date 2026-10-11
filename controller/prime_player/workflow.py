@@ -17,11 +17,10 @@ from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
 from ..model_diagnostics import capture_model_calls
 from ..planner import parse_time
-from .broadcasts import choose_broadcast
 from .catalogue import CatalogueChecks
 from .client import PrimePlayerClient, correlated
-from .labels import search_queries
 from .matching import EventMatcher, selection_state
+from .search import choose_search
 
 
 class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
@@ -46,12 +45,12 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
     def recover(self):
         with self.db.transaction() as db:
             db.execute("DELETE FROM metadata WHERE key LIKE 'prime_catalogue_probe:%'")
-            if self.db.meta(db, "prime_catalogue_contract") != 13:
+            if self.db.meta(db, "prime_catalogue_contract") != 14:
                 for row in db.execute("SELECT id FROM devices").fetchall():
                     device = self.db.device(db, row[0])
                     device["prime_access"] = {}
                     self.db.save_device(db, device)
-                self.db.set_meta(db, "prime_catalogue_contract", 13)
+                self.db.set_meta(db, "prime_catalogue_contract", 14)
             for row in db.execute(
                 "SELECT * FROM executor_jobs WHERE request IS NOT NULL AND cancel_requested=0"
             ).fetchall():
@@ -269,9 +268,8 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         with self.db.transaction() as db:
             self.store.allowed(db, token, navigation=True)
             timezone = self.db.device(db, request["device_id"])["preferences"]["timezone"]
-        query = search_queries(request["content_snapshot"])[0]
         self.save_workflow(
-            token, session_id=session, query=query, source="prime_player", selection=None, ownership=ownership
+            token, session_id=session, source="prime_player", selection=None, ownership=ownership
         )
         self.store.phase(token, "searching")
         prepared = self.prepared_catalogue(
@@ -280,21 +278,27 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         if prepared:
             results, selected, audit = prepared["results"], prepared["selected"], prepared["audit"]
             received = time.monotonic() - (time.time() - prepared["received_at"])
-            self.save_workflow(token, catalogue_probe_id=prepared["id"], catalogue=results)
+            self.save_workflow(token, catalogue_probe_id=prepared["id"], catalogue=results, query=prepared["query"])
         else:
-            results = await self.mutation(
-                token,
-                "PRIME_SEARCH",
-                lambda: self.player.search(query, self.config.prime_search_timeout, ownership),
-            )
-            if results.get("session_id") != session or results.get("query") != query:
-                raise ExecutorError("prime_stale_result", "Search result belongs to another session or query")
-            self.require_catalogue_generation(health, results)
-            received = time.monotonic()
-            self.store.phase(token, "matching")
-            self.save_workflow(token, catalogue=results)
+            async def search(query):
+                nonlocal received
+                current = await self.check_session(session, capabilities=("search",))
+                receipt = self.player.ownership(current, automatic=True)
+                self.save_workflow(token, query=query)
+                self.store.phase(token, "searching")
+                results = await self.mutation(
+                    token, "PRIME_SEARCH",
+                    lambda: self.player.search(query, self.config.prime_search_timeout, receipt),
+                )
+                if results.get("session_id") != session:
+                    raise ExecutorError("prime_stale_result", "Search result belongs to another session")
+                self.require_catalogue_generation(current, results)
+                received = time.monotonic()
+                self.store.phase(token, "matching")
+                self.save_workflow(token, catalogue=results)
+                return results
 
-            async def fetch_broadcasts(content_id):
+            async def fetch_broadcasts(results, content_id):
                 current = await self.check_session(session, capabilities=("broadcasts",))
                 self.require_catalogue_generation(current, results)
                 receipt = self.player.ownership(current, automatic=True)
@@ -302,13 +306,10 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                     token, "PRIME_BROADCASTS", lambda: self.player.broadcasts(content_id, receipt)
                 )
 
+            received = None
             with capture_model_calls(lambda evidence: self.save_model_call(token, evidence)):
-                selected, audit = await choose_broadcast(
-                    request,
-                    results,
-                    timezone,
-                    self.matcher,
-                    fetch_broadcasts,
+                results, selected, audit = await choose_search(
+                    request, timezone, self.matcher, search, fetch_broadcasts,
                     lambda audit: self.save_workflow(token, selection=audit),
                 )
         self.save_workflow(

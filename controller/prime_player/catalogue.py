@@ -9,10 +9,9 @@ from uuid import uuid4
 
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls
-from .broadcasts import choose_broadcast
 from .client import COMPATIBILITY_MESSAGES, RECOVERING_ADAPTATION_STATES, adaptation_status, rpc_context
-from .labels import search_queries
 from .matching import selection_state
+from .search import choose_search
 
 CATALOGUE_ERROR_MESSAGES = {
     **COMPATIBILITY_MESSAGES,
@@ -147,48 +146,42 @@ class CatalogueChecks:
         evidence = {**probe, "model_calls": []}
         try:
             async with asyncio.timeout(self.config.prime_search_timeout + self.config.model_timeout + 50):
-                async with self.input_lock:
-                    # A queued check can become obsolete before it obtains the RPC lane.
-                    if not self.catalogue_current(probe):
-                        return
-                    evidence["runtime_capability"] = "search"
-                    health = await self.check_session(capabilities=("search",))
-                    if health.get("api_version", 0) < 11:
-                        raise ExecutorError(
-                            "prime_api_incompatible", "Prime Player API 11 or newer is required", retryable=False
-                        )
-                    ownership = self.player.ownership(health, automatic=True)
-                    query = search_queries(probe["request"]["content_snapshot"])[0]
-                    results = await self.player.search(query, self.config.prime_search_timeout, ownership)
-                if results.get("session_id") != health["session_id"] or results.get("query") != query:
-                    raise ExecutorError(
-                        "prime_stale_result", "Catalogue result belongs to another session/query"
-                    )
-                self.require_catalogue_generation(health, results)
-                evidence.update(
-                    query=query, results=results, session_id=health["session_id"], received_at=time.time()
-                )
+                session = None
 
-                async def fetch_broadcasts(content_id):
+                async def search(query):
+                    nonlocal session
                     async with self.input_lock:
                         if not self.catalogue_current(probe):
+                            raise ExecutorError("prime_stale_result", "Plan changed before catalogue search")
+                        evidence["runtime_capability"] = "search"
+                        health = await self.check_session(session, capabilities=("search",))
+                        if health.get("api_version", 0) < 11:
                             raise ExecutorError(
-                                "prime_stale_result", "Plan changed during broadcast selection"
+                                "prime_api_incompatible", "Prime Player API 11 or newer is required", retryable=False
                             )
+                        session = health["session_id"]
+                        ownership = self.player.ownership(health, automatic=True)
+                        results = await self.player.search(query, self.config.prime_search_timeout, ownership)
+                    if results.get("session_id") != session:
+                        raise ExecutorError("prime_stale_result", "Catalogue result belongs to another session")
+                    self.require_catalogue_generation(health, results)
+                    evidence.update(query=query, results=results, session_id=session, received_at=time.time())
+                    return results
+
+                async def fetch_broadcasts(results, content_id):
+                    async with self.input_lock:
+                        if not self.catalogue_current(probe):
+                            raise ExecutorError("prime_stale_result", "Plan changed during broadcast selection")
                         evidence["runtime_capability"] = "broadcasts"
-                        current = await self.check_session(health["session_id"], capabilities=("broadcasts",))
+                        current = await self.check_session(session, capabilities=("broadcasts",))
                         self.require_catalogue_generation(current, results)
                         return await self.player.broadcasts(
                             content_id, self.player.ownership(current, automatic=True)
                         )
 
                 with capture_model_calls(lambda value: evidence["model_calls"].append(value)):
-                    selected, audit = await choose_broadcast(
-                        probe["request"],
-                        results,
-                        probe["timezone"],
-                        self.matcher,
-                        fetch_broadcasts,
+                    _, selected, audit = await choose_search(
+                        probe["request"], probe["timezone"], self.matcher, search, fetch_broadcasts,
                         lambda audit: evidence.update(audit=audit),
                     )
                 state = selection_state(selected, audit)

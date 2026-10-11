@@ -12,6 +12,7 @@ from test_prime_workflow import rig as workflow_rig
 
 from controller.executor.config import ExecutorConfig
 from controller.executor.models import CancelRequest, PlaybackReport
+from controller.prime_player.labels import search_queries
 from controller.prime_player.matching import EventMatcher
 from controller.service import Controller
 
@@ -341,7 +342,7 @@ async def test_no_identifiable_tiles_completes_without_retry_or_play(tmp_path):
         assert report["operation"]["error"] is None
         assert report["prime_player"]["selection"]["candidates"] == []
         assert report["prime_player"]["selection"]["complete"] is False
-        assert [c[0] for c in workflow.player.calls] == ["search"]
+        assert workflow.player.calls == [("search", q) for q in search_queries(payload()["content_snapshot"])]
         workflow.recover()
         assert workflow.store.report(token)["operation"]["state"] == "no_matching_feed"
     finally:
