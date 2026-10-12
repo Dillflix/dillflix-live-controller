@@ -23,7 +23,7 @@ def test_schema_nine_lineages_upgrade_without_losing_state(rig, lineage):
     upgraded = Database(settings.database)
     with upgraded.transaction() as db:
         assert upgraded.device(db) == device
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert db.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
         assert not configuration(db, "living-room")["enabled"]
         for table in ("plex_settings", "plex_runtime", "plex_assets", "plex_commands"):
             db.execute("SELECT * FROM " + table).fetchall()

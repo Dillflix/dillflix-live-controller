@@ -1,6 +1,7 @@
 # Dillflix Controller
 
 For incident exports and persistent player/controller boot services, see [diagnostics and recovery](docs/diagnostics.md).
+Chooser model calls are automatically retained for later dataset preparation; see [capture and JSONL export](docs/model-capture.md).
 
 A self-hosted live-sports planner with a responsive web interface. It reads the unified feed from **Dillflix/teamarr**, maintains an ordered watch plan, chooses live content from configurable priorities, and prepares durable playback requests.
 

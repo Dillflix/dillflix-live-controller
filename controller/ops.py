@@ -33,6 +33,7 @@ JSON_COLUMNS = {
     "plex_settings": ("payload",),
     "plex_runtime": ("payload",),
     "plex_commands": ("result",),
+    "chooser_captures": ("payload",),
 }
 
 

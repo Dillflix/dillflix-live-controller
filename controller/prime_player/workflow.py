@@ -15,6 +15,7 @@ from ..database import encode
 from ..executor.models import ExecutorError
 from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
+from ..model_capture import ModelCaptureStore
 from ..model_diagnostics import capture_model_calls
 from ..planner import parse_time
 from .catalogue import CatalogueChecks
@@ -26,6 +27,7 @@ from .search import choose_search
 class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
     def __init__(self, database, settings, *, player=None, matcher=None):
         super().__init__(database, settings)
+        self.model_captures = ModelCaptureStore(database.path)
         self.player = player or PrimePlayerClient(self.config.prime_socket)
         self.matcher = matcher or EventMatcher(self.config)
 
@@ -307,7 +309,13 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                 )
 
             received = None
-            with capture_model_calls(lambda evidence: self.save_model_call(token, evidence)):
+            with capture_model_calls(
+                lambda evidence: self.save_model_call(token, evidence),
+                recorder=self.model_captures.record,
+                context={"source": "playback", "device_id": request["device_id"],
+                         "content_id": request["content_id"], "request_id": request["request_id"],
+                         "intent_version": request["intent_version"], "token": token},
+            ):
                 results, selected, audit = await choose_search(
                     request, timezone, self.matcher, search, fetch_broadcasts,
                     lambda audit: self.save_workflow(token, selection=audit),

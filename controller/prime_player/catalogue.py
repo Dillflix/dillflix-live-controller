@@ -179,7 +179,17 @@ class CatalogueChecks:
                             content_id, self.player.ownership(current, automatic=True)
                         )
 
-                with capture_model_calls(lambda value: evidence["model_calls"].append(value)):
+                def diagnostic(value):
+                    evidence["model_calls"] = [
+                        call for call in evidence["model_calls"] if call["call_id"] != value["call_id"]
+                    ] + [value]
+
+                with capture_model_calls(
+                    diagnostic, recorder=self.model_captures.record,
+                    context={"source": "catalogue", "device_id": probe["device_id"],
+                             "content_id": probe["content_id"], "catalogue_probe_id": probe["id"],
+                             "intent_version": probe["intent"]},
+                ):
                     _, selected, audit = await choose_search(
                         probe["request"], probe["timezone"], self.matcher, search, fetch_broadcasts,
                         lambda audit: evidence.update(audit=audit),

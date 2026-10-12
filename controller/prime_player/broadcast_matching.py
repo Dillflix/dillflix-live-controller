@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import Field, ValidationError
 
 from ..executor.models import ExecutorError, Strict
+from ..model_diagnostics import model_decision
 from .labels import teams
 from .matching import Evidence, availability_status, evidence_fields, tile_state
 
@@ -131,54 +132,55 @@ async def choose(items, *, parent, target, option, complete, direct, matcher):
             raise ExecutorError(
                 "prime_broadcast_selection_invalid", "Broadcast selection context exceeds its bound"
             )
-        try:
-            answer = await matcher.model.completion(
-                matcher.config.prime_match_model,
-                [{"role": "system", "content": PROMPT}, {"role": "user", "content": encoded}],
-                BroadcastChoice.model_json_schema(),
-                name="broadcast_selection",
-                max_tokens=1600,
-            )
-        except Exception as exc:
-            raise ExecutorError(
-                "prime_broadcast_selection_failed", "Broadcast selection model failed: " + str(exc)[:500]
-            ) from exc
-        try:
-            choice = BroadcastChoice.model_validate_json(answer).model_dump()
-        except (ValidationError, ValueError, TypeError) as exc:
-            raise ExecutorError(
-                "prime_broadcast_selection_invalid", "Model returned an invalid broadcast selection"
-            ) from exc
-        passes.append({"readiness": state, **choice})
-        if choice["match_status"] != "matched":
-            if choice["content_id"] is not None or choice["language"] is not None or choice["evidence"]:
-                raise ExecutorError(
-                    "prime_broadcast_selection_invalid", "Abstention contains a broadcast selection"
+        with model_decision():
+            try:
+                answer = await matcher.model.completion(
+                    matcher.config.prime_match_model,
+                    [{"role": "system", "content": PROMPT}, {"role": "user", "content": encoded}],
+                    BroadcastChoice.model_json_schema(),
+                    name="broadcast_selection",
+                    max_tokens=1600,
                 )
-            continue
-        chosen = next((i for i in pool if i["content_id"] == choice["content_id"]), None)
-        fields = evidence_fields(chosen) if chosen else {}
-        if (
-            chosen is None
-            or choice["language"] is None
-            or not choice["evidence"]
-            or any(fields.get(e["field"]) != e["quote"] for e in choice["evidence"])
-            or (choice["language"] == "unlabeled" and option.get("language"))
-        ):
-            raise ExecutorError(
-                "prime_broadcast_selection_invalid", "Model selected outside the supplied broadcast evidence"
-            )
-        if state in {"feeds_unavailable", "feeds_locked", "no_matching_feed"} and (
-            not complete or any(p["match_status"] == "uncertain" for p in passes[:-1])
-        ):
-            return None, dict(
-                match_status="uncertain", reason="Broadcast alternatives remain unresolved", passes=passes
-            )
-        return {**chosen, "language": "en" if choice["language"] == "en" else None}, {
-            **choice,
-            "method": "llm",
-            "passes": passes,
-        }
+            except Exception as exc:
+                raise ExecutorError(
+                    "prime_broadcast_selection_failed", "Broadcast selection model failed: " + str(exc)[:500]
+                ) from exc
+            try:
+                choice = BroadcastChoice.model_validate_json(answer).model_dump()
+            except (ValidationError, ValueError, TypeError) as exc:
+                raise ExecutorError(
+                    "prime_broadcast_selection_invalid", "Model returned an invalid broadcast selection"
+                ) from exc
+            passes.append({"readiness": state, **choice})
+            if choice["match_status"] != "matched":
+                if choice["content_id"] is not None or choice["language"] is not None or choice["evidence"]:
+                    raise ExecutorError(
+                        "prime_broadcast_selection_invalid", "Abstention contains a broadcast selection"
+                    )
+                continue
+            chosen = next((i for i in pool if i["content_id"] == choice["content_id"]), None)
+            fields = evidence_fields(chosen) if chosen else {}
+            if (
+                chosen is None
+                or choice["language"] is None
+                or not choice["evidence"]
+                or any(fields.get(e["field"]) != e["quote"] for e in choice["evidence"])
+                or (choice["language"] == "unlabeled" and option.get("language"))
+            ):
+                raise ExecutorError(
+                    "prime_broadcast_selection_invalid", "Model selected outside the supplied broadcast evidence"
+                )
+            if state in {"feeds_unavailable", "feeds_locked", "no_matching_feed"} and (
+                not complete or any(p["match_status"] == "uncertain" for p in passes[:-1])
+            ):
+                return None, dict(
+                    match_status="uncertain", reason="Broadcast alternatives remain unresolved", passes=passes
+                )
+            return {**chosen, "language": "en" if choice["language"] == "en" else None}, {
+                **choice,
+                "method": "llm",
+                "passes": passes,
+            }
     uncertain = not complete or any(p["match_status"] == "uncertain" for p in passes)
     return None, dict(
         match_status="uncertain" if uncertain else "no_match",

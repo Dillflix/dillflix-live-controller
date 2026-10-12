@@ -1,16 +1,23 @@
 """Bounded OpenAI-compatible structured text completion transport."""
 
 import asyncio
+import hashlib
 import json
 import re
 import time
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
 from uuid import uuid4
 
 import httpx
 
 from .executor.models import ExecutorError
 from .model_diagnostics import body_evidence, publish
+
+try:
+    CONTROLLER_VERSION = version("dillflix-controller")
+except PackageNotFoundError:
+    CONTROLLER_VERSION = "uninstalled"
 
 
 def strict_schema(schema):
@@ -103,13 +110,20 @@ class ChatClient:
                 ]
         started = time.monotonic()
         trace = {
+            "schema_version": 1,
             "call_id": uuid4().hex,
+            "task": name,
+            "controller_version": CONTROLLER_VERSION,
+            "validation": {"state": "not_checked"},
             "started_at": datetime.now(UTC).isoformat(),
             "state": "pending",
             "request": body_evidence(json.dumps(body).encode(), self.config.api_key, 1024 * 1024),
             "http_status": None,
             "response": None,
         }
+        trace["request_sha256"] = hashlib.sha256(
+            json.dumps(trace["request"], sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
         publish(trace)
         raw = bytearray()
         try:
@@ -132,10 +146,11 @@ class ChatClient:
                                 trace["response_truncated"] = True
                                 raise ExecutorError("model_output_limit", "Model response exceeded its limit")
                 payload = json.loads(raw)
-                choices = payload.get("choices")
+                choices = payload.get("choices") if isinstance(payload, dict) else None
                 if (
                     not isinstance(choices, list)
                     or len(choices) != 1
+                    or not isinstance(choices[0], dict)
                     or choices[0].get("finish_reason") != "stop"
                 ):
                     raise ExecutorError("model_incomplete", "Model response was incomplete or ambiguous")

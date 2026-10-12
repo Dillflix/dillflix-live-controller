@@ -118,9 +118,12 @@ def collect(path, device_id="living-room"):
             "in_flight": bool(plex_runtime.get("in_flight")),
             "desired": {key: value for key, value in (plex_runtime.get("desired") or {}).items() if key != "sources"},
         }
+        from ..model_capture import ModelCaptureStore
+
         return redact(
             {
                 "schema_version": 1,
+                "model_capture": ModelCaptureStore(path).status(),
                 "plex_artwork": plex_summary,
                 "captured_at": datetime.now(UTC).isoformat(),
                 "device": {

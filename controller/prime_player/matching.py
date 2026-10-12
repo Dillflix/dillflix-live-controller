@@ -11,6 +11,7 @@ from pydantic import Field, ValidationError
 
 from ..executor.models import ExecutorError, Strict
 from ..llm import ChatClient
+from ..model_diagnostics import model_decision
 from ..planner import parse_time
 from .labels import norm, prime_option, team_aliases, teams
 
@@ -342,37 +343,38 @@ class EventMatcher:
         encoded = json.dumps(goal, ensure_ascii=False)
         if len(encoded) > 512000:
             raise ExecutorError("prime_selection_limit", "Selection context exceeds its bound")
-        answer = await self.model.completion(
-            self.config.prime_match_model,
-            [{"role": "system", "content": PROMPT}, {"role": "user", "content": encoded}],
-            Choice.model_json_schema(),
-            name="event_match",
-            max_tokens=1200,
-        )
-        try:
-            choice = Choice.model_validate_json(answer).model_dump()
-        except ValidationError as exc:
-            raise ExecutorError("prime_selection_invalid", "Matcher returned an invalid selection") from exc
-        audit.update(method="llm", **choice)
-        if choice["match_status"] != "matched":
-            if (
-                choice["content_id"] is None
-                and choice["viewing_option_id"] is None
-                and not choice["evidence"]
-            ):
-                return None, audit
-            raise ExecutorError("prime_selection_invalid", "Matcher selected outside the supplied evidence")
-        selected = next((t for t in eligible if t["content_id"] == choice["content_id"]), None)
-        supplied = evidence_fields(selected) if selected else {}
-        if (
-            not selected
-            or choice["viewing_option_id"] not in {o["id"] for o in options}
-            or not choice["evidence"]
-            or not any(
-                e["field"] in {"title", "synopsis"} or e["field"].startswith("titles.")
-                for e in choice["evidence"]
+        with model_decision():
+            answer = await self.model.completion(
+                self.config.prime_match_model,
+                [{"role": "system", "content": PROMPT}, {"role": "user", "content": encoded}],
+                Choice.model_json_schema(),
+                name="event_match",
+                max_tokens=1200,
             )
-            or any(supplied.get(e["field"]) != e["quote"] for e in choice["evidence"])
-        ):
-            raise ExecutorError("prime_selection_invalid", "Matcher selected outside the supplied evidence")
-        return choice, audit
+            try:
+                choice = Choice.model_validate_json(answer).model_dump()
+            except ValidationError as exc:
+                raise ExecutorError("prime_selection_invalid", "Matcher returned an invalid selection") from exc
+            audit.update(method="llm", **choice)
+            if choice["match_status"] != "matched":
+                if (
+                    choice["content_id"] is None
+                    and choice["viewing_option_id"] is None
+                    and not choice["evidence"]
+                ):
+                    return None, audit
+                raise ExecutorError("prime_selection_invalid", "Matcher selected outside the supplied evidence")
+            selected = next((t for t in eligible if t["content_id"] == choice["content_id"]), None)
+            supplied = evidence_fields(selected) if selected else {}
+            if (
+                not selected
+                or choice["viewing_option_id"] not in {o["id"] for o in options}
+                or not choice["evidence"]
+                or not any(
+                    e["field"] in {"title", "synopsis"} or e["field"].startswith("titles.")
+                    for e in choice["evidence"]
+                )
+                or any(supplied.get(e["field"]) != e["quote"] for e in choice["evidence"])
+            ):
+                raise ExecutorError("prime_selection_invalid", "Matcher selected outside the supplied evidence")
+            return choice, audit

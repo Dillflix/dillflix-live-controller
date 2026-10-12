@@ -20,6 +20,8 @@ TABLES = (
     "executor_jobs",
     "executor_actions",
     "executor_devices",
+    # Training evidence has independent, indefinite retention; prune never deletes it.
+    "chooser_captures",
 )
 
 

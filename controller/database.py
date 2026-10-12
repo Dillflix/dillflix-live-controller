@@ -17,7 +17,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 10
+    SCHEMA_VERSION = 11
 
     def __init__(self, path):
         self.path = path
@@ -142,6 +142,9 @@ class Database:
                 db.execute("CREATE TABLE IF NOT EXISTS plex_runtime (device_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
                 db.execute("CREATE TABLE IF NOT EXISTS plex_assets (digest TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL)")
                 db.execute("CREATE TABLE IF NOT EXISTS plex_commands (device_id TEXT NOT NULL, id TEXT NOT NULL, body_hash TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(device_id,id))")
+            if version < 11:
+                db.execute("""CREATE TABLE IF NOT EXISTS chooser_captures (
+                    call_id TEXT PRIMARY KEY, recorded_at TEXT NOT NULL, payload TEXT NOT NULL)""")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
