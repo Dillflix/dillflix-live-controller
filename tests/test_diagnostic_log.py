@@ -111,6 +111,7 @@ async def test_web_export_reads_player_history_after_health_and_rpc_failure(tmp_
     from controller.api import create_app
     from controller.config import Settings
     from controller.executor.config import ExecutorConfig
+    from controller.model_capture import ModelCaptureStore
 
     settings = Settings(
         database=str(tmp_path / "controller.sqlite"),
@@ -129,13 +130,19 @@ async def test_web_export_reads_player_history_after_health_and_rpc_failure(tmp_
         raise ConnectionError("player offline")
 
     service = app.state.controller
-    service.executor = SimpleNamespace(player=SimpleNamespace(rpc=rpc), worker=None)
+    captures = ModelCaptureStore(settings.database)
+    assert captures.record({"call_id": None}) is False
+    service.executor = SimpleNamespace(player=SimpleNamespace(rpc=rpc), worker=None, model_captures=captures)
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
             response = await client.get("/api/v1/devices/living-room/diagnostics")
         assert response.status_code == 200
+        capture_health = response.json()["model_capture"]
+        assert capture_health["state"] == "error"
+        assert capture_health["failure_count_since_start"] == 1
+        assert capture_health["count"] == 0
         bundle = response.json()["prime_player"]
         assert calls == ["health", "diagnostics"]
         assert (
