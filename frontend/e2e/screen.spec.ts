@@ -67,7 +67,7 @@ test("background tabs release capture and return to a fresh live stream", async 
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await expect(page.getByTestId("screen-state")).toHaveText("Live screen");
-  expect(fixture.opened).toBeGreaterThan(1);
+  await expect.poll(() => fixture.opened).toBeGreaterThan(1);
 });
 
 test("an excessive retained video buffer is replaced with a fresh stream", async ({
