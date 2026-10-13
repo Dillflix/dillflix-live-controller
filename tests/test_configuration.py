@@ -94,7 +94,7 @@ def test_undo_preserves_pause_and_does_not_replay_completed_content(rig):
     assert undo(c).status_code == 200
     d = overview(c)["device"]
     assert d["automation"] == "paused"
-    assert d["plan"] == original
+    assert d["plan"] == []  # Undo cannot restore a reservation that has since finished.
     c.post(
         "/api/v1/devices/living-room/automation",
         json={"command_id": str(uuid4()), "expected_revision": d["revision"], "mode": "active"},

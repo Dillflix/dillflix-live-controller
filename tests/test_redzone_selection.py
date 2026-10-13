@@ -173,7 +173,9 @@ async def test_ready_catalogue_cannot_launch_a_now_ineligible_broadcast(tmp_path
         controller.stage_playback()
         with controller.db.transaction() as db:
             assert not db.execute("SELECT 1 FROM jobs").fetchone()
-            assert controller.db.device(db)["plan"][0]["content_id"] == broadcast["id"]
+            assert [p["content_id"] for p in controller.db.device(db)["plan"]] == (
+                [] if change == "completed" else [broadcast["id"]]
+            )
         assert [call[0] for call in workflow.player.calls] == ["search"]
     finally:
         await cleanup(controller)
