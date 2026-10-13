@@ -81,7 +81,7 @@ Maintenance runs at startup and approximately hourly, independently of pause/res
 
 Defaults apply to existing `.env` files. After editing these values, recreate the service with `docker compose up -d`.
 
-Safety references can exceed history limits. Cleanup preserves pending work, unacknowledged cancellation, current controller/simulator observations, the latest request, highest simulator intent evidence, and undo references. Every manual commitment remains, even after completion; removing it is a user action. Active catalog entries and the team directory remain too. Old inactive entries survive while referenced by a watch plan, undo snapshot, current playback, or outstanding work. Cleanup never manufactures event completion.
+Safety references can exceed history limits. Cleanup preserves pending work, unacknowledged cancellation, current controller/simulator observations, the latest request, highest simulator intent evidence, and undo references. Unfinished manual commitments remain. Confirmed ended/cancelled reservations are removed by status/planning reconciliation and at startup, while completion evidence and undo references persist. Active catalog entries and the team directory remain too. Old inactive entries survive while referenced by a watch plan, undo snapshot, current playback, or outstanding work. Cleanup never manufactures event completion.
 
 Simulator request/cancellation history is removed only after a strictly higher persisted intent permanently fences old work. Cancellation records with no provable device intent stay retained. Real executor full payloads/reports retire seven days after cancellation acknowledgment. Compact request-ID/hash/token/intent tombstones remain; unresolved stop obligations never expire.
 

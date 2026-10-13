@@ -149,7 +149,7 @@ current content must match, with `matches_attempt=true`, `is_playing=false` and 
 error. Superseded/cancelled work, paused automation and manual ownership cannot
 publish completion. The operation becomes `completed`, lifecycle source becomes
 `prime_player`, and scheduling advances on its next cycle without a playback
-failure. The watch-plan entry remains. Completion survives restart, expiry and
+failure. The completed watch-plan entry is removed. Completion survives restart, expiry and
 late Teamarr live responses. This uses the existing read-only monitoring call;
 it requires no extra navigation or player upgrade.
 
