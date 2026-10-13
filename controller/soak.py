@@ -96,7 +96,11 @@ async def run_soak(days=30):
         def check(expected):
             data = controller.overview()
             d = data["device"]
-            assert {p["content_id"] for p in d["plan"]} == expected, "Manual commitment lost"
+            with controller.db.transaction() as db:
+                terminal = {item["content_id"] for item in controller.items(db)
+                            if item["lifecycle"]["state"] in {"ended", "cancelled"}}
+            expected.difference_update(terminal)
+            assert {p["content_id"] for p in d["plan"]} == expected, "Unfinished commitment lost"
             if d["playback_state"] == "verified":
                 assert d["observed"]["verified"] and d["observed"]["content_id"] == d["desired"]
                 assert parse_time(d["observed"]["valid_until"]) > Clock.now(UTC)

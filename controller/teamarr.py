@@ -53,7 +53,7 @@ class TeamarrClient:
             teams[team["key"]] = team
         return list(teams.values())
 
-    async def fetch_snapshot(self, leagues=None):
+    async def fetch_snapshot(self, leagues=None, *, start=None, end=None, sources=None, lookback_hours=None):
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         async with httpx.AsyncClient(
             timeout=20, headers=headers, transport=self.transport, follow_redirects=False
@@ -61,8 +61,8 @@ class TeamarrClient:
             for attempt in range(2):
                 now = datetime.now(UTC)
                 params = {
-                    "start": now.isoformat(),
-                    "end": (now + timedelta(days=3)).isoformat(),
+                    "start": (start or now).isoformat(),
+                    "end": (end or now + timedelta(days=3)).isoformat(),
                     "limit": 500,
                 }
                 if leagues is not None:
@@ -72,6 +72,10 @@ class TeamarrClient:
                         # Omitting league would restore Teamarr's defaults. Keep
                         # other configured coverage sources but skip game discovery.
                         params["source"] = ["nfl_redzone", "golf", "special_events", "dazn_tennis"]
+                if sources is not None:
+                    params["source"] = sources
+                if lookback_hours is not None:
+                    params["lookback_hours"] = lookback_hours
                 entries, cursors = {}, set()
                 schema_version = None
                 for page_number in range(100):
@@ -113,3 +117,18 @@ class TeamarrClient:
                 else:
                     raise ValueError("Too many Teamarr pages")
             raise ValueError("Teamarr snapshot expired repeatedly")
+
+    async def fetch_content_status(self, snapshot):
+        """Revisit an event's original window; identity, not its age, decides the result."""
+        start = parse_time(snapshot["start_time"])
+        league = snapshot.get("competition") or (snapshot.get("event") or {}).get("league")
+        source = snapshot.get("source")
+        if not start or not league or source not in {
+            "games", "nfl_redzone", "golf", "special_events", "dazn_tennis"
+        }:
+            raise ValueError("Content is missing its historical feed query context")
+        entries, _ = await self.fetch_snapshot(
+            [league], start=start - timedelta(hours=1), end=start + timedelta(hours=1),
+            sources=[source], lookback_hours=0,
+        )
+        return next((entry for entry in entries if entry["id"] == snapshot["id"]), None)

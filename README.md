@@ -30,7 +30,7 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 - **Take control** with a selectable duration (including 4 hours, up to 24 hours), mobile D-pad, focused keyboard shortcuts, and text entry. Extend the session, resume automation, or finish with automation paused. Sessions survive restarts; other browsers must explicitly take over. See [manual control](docs/manual-control.md).
 - An optional live device-screen panel with inline phone video, fullscreen, automatic reconnect, shared capture across viewers, and cleanup when the panel or tab is hidden. See [screen setup](docs/screen-mirroring.md).
 - Events page with live/upcoming views, league filters, search, structured team names, provider logos, event details, and manual selection.
-- A persistent watch plan. The first eligible manual entry wins an overlap; the others resume while still live. Play now moves an event to the front without deleting other commitments.
+- A persistent watch plan that automatically removes confirmed ended or cancelled events. The first eligible manual entry wins an overlap; the others resume while still live. Play now moves an event to the front without deleting other commitments.
 - Ordered priority rules for leagues, season stages, teams, content kind, and coverage sources, all editable in the UI. Team rankings break ties within a rule.
 - A persistent, searchable team directory. Rank preferred teams even when they have no event in the schedule window; unranked teams tie.
 - Durable undo for watch-plan, priority, team-ranking, and settings edits, including after a restart.
@@ -73,6 +73,13 @@ CI builds the Docker image from an owner-only checkout and checks application
 imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
+
+Version 0.16.9 removes confirmed completed/cancelled entries from the watch plan,
+including existing entries at startup. Stale retained events now query Teamarr's
+historical feed window by exact content ID to obtain current status. No Teamarr
+or player upgrade is required. Missing results and failed lookups preserve the
+reservation. Marking an event finished removes it immediately; undo restores the
+reservation and completion intent together. No database migration is required.
 
 Version 0.16.3 recognizes automatic runtime adaptation reported by updated Prime
 Player services. Recovery preserves the watch plan and continues available
@@ -133,7 +140,7 @@ Settings shows content-status health independently of schedule and team-director
 
 `STATUS_INTERVAL_SECONDS` defaults to 15 (minimum 5). Lookups have a five-second timeout and bounded retry backoff. They continue while automation is paused. The internal lookup contract carries `content_id` and the complete original Teamarr entry, preserving identifiers for a future real service. Real mode uses acquired Prime Video completion evidence plus unchanged Teamarr feed facts through the same internal boundary.
 
-**Teamarr evidence retains its original freshness.** The default simulator rereads cached feed status; real mode additionally monitors the requested Prime Video content for scoped completion. Neither mode independently fetches sports-results facts for every unplayed/out-of-window reservation. Without fresh evidence those events stay unknown. Teamarr supplies no provider observation timestamp: `observed_at` is null, `received_at` is the feed read, and `timestamp_basis` is `feed_received`. Native Prime completion uses `device_observed` acquisition times. See [evidence policy](docs/executor-api-handoff.md#reading-status).
+**Teamarr evidence retains its original freshness.** When saved feed evidence expires, the status worker queries Teamarr for the event's original historical window and matches its exact content ID. Explicit final/cancelled results remove the reservation; missing results and failed lookups keep it unknown. Real mode also monitors the requested Prime Video content for scoped completion. Teamarr supplies no provider observation timestamp: `observed_at` is null, `received_at` is the feed read, and `timestamp_basis` is `feed_received`. Native Prime completion uses `device_observed` acquisition times. See [evidence policy](docs/executor-api-handoff.md#reading-status).
 
 ## Connect the Teamarr catalog
 

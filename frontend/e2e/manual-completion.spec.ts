@@ -43,24 +43,20 @@ for (const width of [1280, 390]) {
     await expect(page.locator(".df-playing-title")).toContainText(
       "Waiting for live sports",
     );
-    const { device: after, events } = await (
+    const { device: after } = await (
       await request.get("/api/v1/overview")
     ).json();
-    expect(after.plan).toEqual(before.plan);
+    expect(after.plan).toEqual([]);
     expect(after.preferences).toEqual(before.preferences);
     expect(after.automation).toBe("paused");
-    expect(
-      events.find(
-        (e: { content_id: string }) => e.content_id === "demo:canadiens",
-      ).lifecycle.source,
-    ).toBe("manual_completion");
+    expect(after.manual_completions["demo:canadiens"]).toBeTruthy();
     await page
       .getByRole("button", { name: "Watch plan", exact: false })
       .first()
       .click();
     await expect(
       page.locator(".df-plan-row").filter({ hasText: "Canadiens" }),
-    ).toContainText("ended");
+    ).toHaveCount(0);
     await page
       .getByRole("button", { name: "Undo last edit", exact: true })
       .click();
@@ -103,5 +99,5 @@ test("event details can complete active playback and automation selects another 
     .click();
   await expect(
     page.locator(".df-plan-row").filter({ hasText: "Canadiens" }),
-  ).toContainText("ended");
+  ).toHaveCount(0);
 });

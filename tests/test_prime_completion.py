@@ -56,7 +56,7 @@ async def test_bound_ended_persists_immediately_and_planner_moves_on(tmp_path):
         with controller.db.transaction() as db:
             device = controller.db.device(db)
             assert device["desired"] == "fallback-game"
-            assert [p["content_id"] for p in device["plan"]] == ["fixture-game", "fallback-game"]
+            assert [p["content_id"] for p in device["plan"]] == ["fallback-game"]
             assert "fixture-game" not in device["failures"]
             assert (
                 db.execute(

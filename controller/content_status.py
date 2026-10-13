@@ -68,6 +68,28 @@ class ContentStatusAdapter(Protocol):
     async def lookup(self, request: dict) -> dict | None: ...
 
 
+class TeamarrContentStatusAdapter:
+    def __init__(self, client, ttl):
+        self.client, self.ttl = client, ttl
+
+    async def lookup(self, request):
+        now = datetime.now(UTC)
+        observation = source_observation(
+            request["content_snapshot"], request["catalog_seen_at"], now, now, "teamarr", self.ttl
+        )
+        source = "teamarr_feed"
+        if observation["state"] not in TERMINAL and observation_expiry(observation, self.ttl) <= now:
+            entry = await self.client.fetch_content_status(request["content_snapshot"])
+            if entry is None:
+                return None
+            now = datetime.now(UTC)
+            observation = source_observation(entry, now.isoformat(), now, now, "teamarr", self.ttl)
+            source = "teamarr_history"
+        observation.update(source=source, simulated=False)
+        return {"schema_version": 1, "request_id": request["request_id"],
+                "content_id": request["content_id"], "observation": observation}
+
+
 class SimulatedContentStatusAdapter:
     def __init__(self, mode, ttl):
         self.mode, self.ttl = mode, ttl
@@ -170,6 +192,36 @@ def lifecycle_view(observation, check, now, ttl):
 
 
 class ContentStatusCoordinator:
+    def prune_completed_plan(self, db, device, *, increment_revision=True):
+        """Remove only confirmed terminal reservations; never infer an end from age."""
+        removed = []
+        now, real = self.now(db), datetime.now(UTC)
+        for entry in device["plan"]:
+            content_id = entry["content_id"]
+            completed_at = device["manual_completions"].get(content_id)
+            row = db.execute("SELECT * FROM contents WHERE id=?", (content_id,)).fetchone()
+            check = db.execute("SELECT * FROM content_status WHERE content_id=?", (content_id,)).fetchone()
+            if not row and not completed_at:
+                continue
+            lifecycle = self.content_lifecycle(row, check, now, real, True, completed_at)
+            if lifecycle["state"] in TERMINAL:
+                removed.append({"content_id": content_id, "state": lifecycle["state"],
+                                "source": lifecycle["source"]})
+        if not removed:
+            return False
+        ids = {entry["content_id"] for entry in removed}
+        device["plan"] = [entry for entry in device["plan"] if entry["content_id"] not in ids]
+        if increment_revision:
+            device["revision"] += 1
+        self.db.save_device(db, device)
+        self.db.log(db, now.isoformat(), "Completed events removed from watch plan", encode(removed),
+                    "plan", device["id"])
+        return True
+
+    def prune_completed_plans(self, db):
+        for row in db.execute("SELECT id FROM devices").fetchall():
+            self.prune_completed_plan(db, self.db.device(db, row["id"]))
+
     @staticmethod
     def pinned_content_ids(db, *, device_id=None, for_lookup=False):
         ids = set()
@@ -314,7 +366,8 @@ class ContentStatusCoordinator:
                     (
                         encode(observation),
                         now.isoformat(),
-                        time.time() + self.settings.status_interval,
+                        time.time() + max(self.settings.status_interval,
+                                          60 if observation["source"] == "teamarr_history" else 0),
                         request["content_id"],
                     ),
                 )
@@ -326,6 +379,8 @@ class ContentStatusCoordinator:
                         f"{request['content_snapshot']['title']}: {observation['state']}",
                         "status",
                     )
+                if observation["state"] in TERMINAL:
+                    self.prune_completed_plans(db)
                 return True
             except (TypeError, ValueError, AttributeError, KeyError) as exc:
                 # Never store transport URLs, provider response bodies, or credentials.
@@ -360,6 +415,7 @@ class ContentStatusCoordinator:
                 max(30, 8 * self.settings.status_lookup_timeout + 15),
             ):
                 return
+            self.prune_completed_plans(db)
             pins = self.pinned_content_ids(db, for_lookup=True)
             requests = []
             # Cap work per pass. Due checks sort before future checks, preventing starvation.

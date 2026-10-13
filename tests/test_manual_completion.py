@@ -28,7 +28,8 @@ def complete(client, content_id="demo:lions", **changes):
 
 
 def event(service, content_id="demo:lions", device_id="living-room"):
-    return next(e for e in service.overview(device_id)["events"] if e["content_id"] == content_id)
+    with service.db.transaction() as db:
+        return next(e for e in service.items(db, device_id) if e["content_id"] == content_id)
 
 
 async def test_complete_paused_out_of_feed_playback_survives_refresh_and_restart(rig):
@@ -63,7 +64,7 @@ async def test_complete_paused_out_of_feed_playback_survives_refresh_and_restart
     after = overview(c)["device"]
     assert after["desired"] is after["observed"] is None
     assert after["automation"] == "paused"
-    assert after["plan"] == before["plan"]
+    assert after["plan"] == [p for p in before["plan"] if p["content_id"] != "demo:lions"]
     for key in s.CONFIG_FIELDS:
         assert after[key] == before[key]
     with s.db.transaction() as db:
@@ -87,7 +88,7 @@ def test_complete_active_event_selects_fallback_and_undo_restores_eligibility(ri
     s.tick()
     data = overview(c)
     assert data["device"]["observed"]["content_id"] == "demo:redzone"
-    assert data["device"]["plan"] == plan
+    assert data["device"]["plan"] == [p for p in plan if p["content_id"] != "demo:lions"]
     response = c.post(
         "/api/v1/devices/living-room/undo",
         json={
@@ -98,6 +99,7 @@ def test_complete_active_event_selects_fallback_and_undo_restores_eligibility(ri
     )
     assert response.status_code == 200
     assert event(s)["playable"]
+    assert overview(c)["device"]["plan"] == plan
     s.tick()
     assert overview(c)["device"]["observed"]["content_id"] == "demo:lions"
 
@@ -184,8 +186,8 @@ async def test_stale_teamarr_target_can_be_completed_without_touching_feed_healt
         await s.refresh_status(force=True)
         after = overview(client)
         assert after["health"] == before["health"]
-        assert after["status_health"]["state"] == "ok"
-        assert after["device"]["plan"] == before["device"]["plan"]
+        assert after["status_health"]["state"] == "idle"
+        assert after["device"]["plan"] == []
         assert after["device"]["desired"] is None
         assert event(s)["lifecycle"]["state"] == "ended"
         with s.db.transaction() as db:

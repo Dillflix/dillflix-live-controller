@@ -3,7 +3,8 @@
 import json
 from datetime import UTC, datetime
 
-from ..content_status import source_observation
+from ..content_status import TeamarrContentStatusAdapter
+from ..teamarr import TeamarrClient
 from .models import CancelRequest
 
 
@@ -94,6 +95,10 @@ class IntegratedPlaybackAdapter:
 class ExecutorContentStatusAdapter:
     def __init__(self, executor):
         self.executor = executor
+        settings = executor.settings
+        self.feed_status = TeamarrContentStatusAdapter(
+            TeamarrClient(settings.teamarr_url, settings.teamarr_token), settings.status_ttl
+        )
 
     async def lookup(self, request):
         observation = None
@@ -109,18 +114,8 @@ class ExecutorContentStatusAdapter:
                 if candidate and candidate["state"] in {"ended", "cancelled"}:
                     observation = candidate
                     break
-        feed = source_observation(
-            request["content_snapshot"],
-            request["catalog_seen_at"],
-            datetime.now(UTC),
-            datetime.now(UTC),
-            "teamarr",
-            self.executor.settings.status_ttl,
-        )
-        if feed:
-            feed.update(source="teamarr_feed", simulated=False)
         if observation is None:
-            observation = feed
+            return await self.feed_status.lookup(request)
         # Do not replace confirmed completion with a cached feed's live/unknown
         # state just because a periodic catalog fetch refreshed its receipt time.
         return (

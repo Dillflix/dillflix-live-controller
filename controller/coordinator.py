@@ -44,6 +44,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             if not self.db.lease(db, "device:living-room", self.owner, time.time()):
                 return False
             d = self.db.device(db)
+            self.prune_completed_plan(db, d)
             if d.get("manual_control") or d.get("input_handoff") or d["automation"] == "paused":
                 return True
             if d.get("executor_health", {}).get("state") == "offline":

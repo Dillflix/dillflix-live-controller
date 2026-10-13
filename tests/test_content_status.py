@@ -15,7 +15,8 @@ from controller.service import Controller
 
 
 def card(service, content_id="demo:lions"):
-    return next(e for e in service.overview()["events"] if e["content_id"] == content_id)
+    with service.db.transaction() as db:
+        return next(e for e in service.items(db) if e["content_id"] == content_id)
 
 
 def report(request, state="live", **changes):
@@ -102,7 +103,7 @@ async def test_event_outside_discovery_remains_live_then_completes_from_lookup(r
     s.tick()
     assert card(s)["lifecycle"]["state"] == "ended"
     assert s.overview()["device"]["observed"]["content_id"] == "demo:redzone"
-    assert s.overview()["device"]["plan"][0]["content_id"] == "demo:lions"
+    assert "demo:lions" not in {p["content_id"] for p in s.overview()["device"]["plan"]}
 
 
 async def test_failure_preserves_fresh_evidence_then_expires_without_completing(rig, monkeypatch):
@@ -324,6 +325,10 @@ async def test_lease_loss_rejects_the_result(rig, monkeypatch):
 async def test_terminal_evidence_survives_unknown_but_allows_explicit_correction(rig, monkeypatch):
     _, s, _ = rig
     only_lions(s)
+    with s.db.transaction() as db:
+        device = s.db.device(db)
+        device["desired"] = "demo:lions"  # Keep testing corrections after plan cleanup.
+        s.db.save_device(db, device)
     state = "ended"
 
     async def lookup(request):
@@ -368,7 +373,7 @@ def test_v3_upgrade_preserves_device_jobs_and_catalog(rig):
         assert db.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
 
 
-def test_outside_feed_demo_reaches_completion_without_losing_the_plan(rig):
+def test_outside_feed_demo_reaches_completion_and_removes_reservation(rig):
     c, s, _ = rig
     scenario(c, "outside_feed")
     s.tick()
@@ -377,7 +382,7 @@ def test_outside_feed_demo_reaches_completion_without_losing_the_plan(rig):
     c.post("/api/v1/simulation", json={"action": "advance", "minutes": 120})
     s.tick()
     assert card(s, "demo:canadiens")["lifecycle"]["state"] == "ended"
-    assert s.overview()["device"]["plan"][0]["content_id"] == "demo:canadiens"
+    assert s.overview()["device"]["plan"] == []
 
 
 @pytest.mark.parametrize('pinned', [False, True])

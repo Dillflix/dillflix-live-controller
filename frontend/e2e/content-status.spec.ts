@@ -49,7 +49,7 @@ test("phone: a reserved event outside discovery stays live until its independent
     .click();
   await expect(
     page.locator(".df-plan-row").filter({ hasText: "Canadiens" }),
-  ).toContainText("ended");
+  ).toHaveCount(0);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

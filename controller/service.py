@@ -10,7 +10,12 @@ from datetime import UTC, datetime, timedelta
 from fastapi import HTTPException
 
 from .access import LEGACY_ADMIN
-from .content_status import ContentStatusAdapter, ContentStatusCoordinator, SimulatedContentStatusAdapter
+from .content_status import (
+    ContentStatusAdapter,
+    ContentStatusCoordinator,
+    SimulatedContentStatusAdapter,
+    TeamarrContentStatusAdapter,
+)
 from .coordinator import PlaybackCoordinator
 from .database import Database, encode
 from .fixtures import default_device, fixtures, make_team
@@ -48,9 +53,12 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 playback = playback or IntegratedPlaybackAdapter(self.executor)
                 status = status or ExecutorContentStatusAdapter(self.executor)
             self.playback = playback or SimulatedPlaybackAdapter(self.db, settings.observation_ttl)
-            self.status_adapter = status or SimulatedContentStatusAdapter(settings.mode, settings.status_ttl)
-            self.owner = str(uuid.uuid4())
             self.client = TeamarrClient(settings.teamarr_url, settings.teamarr_token)
+            self.status_adapter = status or (
+                SimulatedContentStatusAdapter(settings.mode, settings.status_ttl)
+                if settings.mode == "demo" else TeamarrContentStatusAdapter(self.client, settings.status_ttl)
+            )
+            self.owner = str(uuid.uuid4())
             self.tasks = []
             # Serialize playback calls with manual handoff, never on the event loop.
             self.playback_lock = threading.RLock()
@@ -123,6 +131,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 team = {**make_team("Vancouver", "Canucks", "VAN"), "league": "nhl"}
                 team["key"] = team_key(team, team["league"])
                 self.db.upsert_team(db, team, datetime.now(UTC).isoformat())
+            self.prune_completed_plans(db)
 
     def remember_teams(self, db, item, fetched):
         event = item.get("event") or {}
@@ -269,6 +278,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 )
             before = encode({k: device[k] for k in history[0]}) if history else None
             apply(db, device)
+            self.prune_completed_plan(db, device, increment_revision=False)
             if history:
                 after = encode({k: device[k] for k in history[0]})
                 if before != after:
@@ -591,7 +601,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             if (device.get("next_candidate") or {}).get("content_id") == content_id:
                 device["next_candidate"] = None
             if was_desired or was_observed:
-                device["reason"] = "Event marked finished manually. Watch plan retained."
+                device["reason"] = "Event marked finished manually."
                 if not device.get("desired"):
                     device["playback_state"] = "waiting"
             self.db.log(
@@ -609,7 +619,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             command.expected_revision,
             command.model_dump(),
             apply,
-            history=(("manual_completions",), "Mark event finished"),
+            history=(("manual_completions", "plan"), "Mark event finished"),
         )
 
     def automation_command(self, device_id, update):
