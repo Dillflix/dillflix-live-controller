@@ -350,6 +350,9 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             referenced = {r["team_id"] for r in config["rules"] if r["team_id"]}
             referenced.update(key for keys in config["team_ranks"].values() for key in keys)
             warnings = []
+            vpn = config["preferences"].get("vpn_policy")
+            if vpn and vpn.get("enabled"):
+                warnings.append("This configuration enables VPN fallback and permits playback-interrupting location changes.")
             if request.document.source_mode != self.settings.mode:
                 warnings.append(
                     "This file was exported from a different mode. Demo and real team identities differ."

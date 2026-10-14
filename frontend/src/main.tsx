@@ -2276,6 +2276,23 @@ function App() {
                     </p>
                   ))}
                 <p>
+                  VPN fallback:{" "}
+                  {modal.preview.configuration.preferences.vpn_policy?.enabled
+                    ? "enabled"
+                    : "disabled or legacy deployment policy"}
+                  .
+                  {modal.preview.configuration.preferences.vpn_policy?.locations.map(
+                    (row) => (
+                      <span key={row.target_id}>
+                        <br />
+                        {row.target_id}:{" "}
+                        {row.team_cities.join(", ") ||
+                          "No permitted team cities"}
+                      </span>
+                    ),
+                  )}
+                </p>
+                <p>
                   Leagues to discover:{" "}
                   {modal.preview.configuration.preferences.discovery_leagues
                     .map(leagueName)

@@ -150,6 +150,7 @@ class NetworkAcquisition:
             async def current(capability):
                 self._network_allowed(token, acquisition)
                 value = await self.check_session(session, capabilities=(capability,))
+                self._network_allowed(token, acquisition)
                 if value.get("network", {}).get("context_id") != context:
                     raise ExecutorError("prime_network_context_changed", "Network changed during feed acquisition")
                 return value

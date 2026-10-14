@@ -28,9 +28,10 @@ export function VPNSettings({
   const [draft, setDraft] = useState<VPNPolicy>(value || defaults);
   const [locations, setLocations] = useState<Location[]>([]);
   const [error, setError] = useState("");
+  const saved = JSON.stringify(value || defaults);
   useEffect(() => {
-    setDraft(value || defaults);
-  }, [value]);
+    setDraft(JSON.parse(saved));
+  }, [saved]);
   const refresh = () => {
     setError("");
     api<{ locations: Location[] }>(`/devices/${deviceId}/vpn-locations`)
