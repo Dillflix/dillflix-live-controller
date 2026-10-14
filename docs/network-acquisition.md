@@ -2,6 +2,14 @@
 
 Requires the coordinated Prime Player API 12 branch, Android VPN bridge, operator-provisioned OpenVPN for Android profiles/service credentials, and completed device qualification. Disabled by default. This controller never installs VPN software, receives credentials, sends ADB input, or lets a chooser model invent network routes.
 
+Use the player's [versioned signed bundle and provisioning command](https://github.com/Dillflix/dillflix-prime-player/blob/feat/vpn-network-transitions/docs/vpn-provisioning.md)
+for new, additional, or wiped sticks. Builds and signing run in CI. Keep a pinned
+bundle and reusable profile recipe; pairing, profile UUIDs, and qualification
+belong to each device installation. Each controller instance must use its own
+player socket/state directory. Reprovisioning does not restore old network
+contexts or automatically enable this policy. Pause controller automation during
+installation and repeat player qualification after a wipe.
+
 Mount a JSON policy file read-only into the controller container and set `PRIME_NETWORK_POLICY_FILE` to its container path. Use original Teamarr viewing-option IDs observed in diagnostics:
 
 ```json
