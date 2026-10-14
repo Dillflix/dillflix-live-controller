@@ -153,6 +153,36 @@ async def test_incompatible_contract_without_legacy_quarantine_is_terminal_for_a
     assert error.value.retryable is False
 
 
+@pytest.mark.parametrize(("category", "message"), [
+    ("acquisition", "resource download failed"),
+    ("packaging", "resource packaging could not be validated"),
+    ("loaded_image", "loaded-library verification failed"),
+])
+async def test_resource_failures_are_specific_and_retryable(tmp_path, monkeypatch, category, message):
+    controller, workflow = rig(tmp_path)
+    _, item, _ = setup_selection(controller, monkeypatch)
+    health = disable(await workflow.player.health(), "unvalidated")
+    health["compatibility"]["adaptation"] = {"state": "backoff", "failure_category": category}
+    async def unavailable():
+        return deepcopy(health)
+    monkeypatch.setattr(workflow.player, "health", unavailable)
+    try:
+        with pytest.raises(ExecutorError) as error:
+            PrimePlayerClient.require(health, "search")
+        assert error.value.code == "prime_runtime_recovering"
+        assert error.value.retryable
+        assert message in error.value.detail()["message"]
+        controller.stage_playback()
+        _, probe = saved(controller)
+        await workflow.observe_catalogue(probe)
+        controller.stage_playback()
+        device, _ = saved(controller)
+        assert message in device["prime_access"][item["content_id"]]["reason"]
+        assert "adapter update required" not in device["reason"]
+    finally:
+        await cleanup(controller)
+
+
 @pytest.mark.parametrize("kind", ["old_api", "missing_api"])
 async def test_adaptation_does_not_mask_missing_service_api(kind):
     health = disable(await Player().health(), kind)

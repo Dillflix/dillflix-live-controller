@@ -1,5 +1,11 @@
 # Playback diagnostics and boot recovery
 
+With Prime Player 0.1.0a36, controller 0.16.10 distinguishes resource download,
+packaging-validation and loaded-library verification failures from actual runtime
+contract incompatibility. The former retain automatic recovery and display their
+category in playback/catalogue errors. Older players retain the generic recovery
+message when they do not supply `failure_category`.
+
 Activity now shows the controller state, executor availability, current job progress/deadline and last job error. Manual-control cancellation failures are retained on the ownership barrier and explained in the remote. Loss of verified playback produces an Activity entry; it does not prove the sports event ended.
 
 Use **Activity → Export diagnostics** during an incident, before restarting either service. The device-scoped JSON contains up to 1,000 Activity entries, 100 controller/executor jobs, 1,000 executor action records, retained search/matching/launch/status evidence, cancellation and stop receipts, manual handoff, controller worker status and a read-only Prime Player health snapshot. Job tokens, request IDs, service session IDs and attempt IDs correlate the records. Capturing this does not search, query native playback, stop playback or acquire input ownership.

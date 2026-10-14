@@ -9,7 +9,13 @@ from uuid import uuid4
 
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls
-from .client import COMPATIBILITY_MESSAGES, RECOVERING_ADAPTATION_STATES, adaptation_status, rpc_context
+from .client import (
+    COMPATIBILITY_MESSAGES,
+    RECOVERING_ADAPTATION_STATES,
+    adaptation_status,
+    recovery_message,
+    rpc_context,
+)
 from .matching import selection_state
 from .search import choose_search
 
@@ -267,6 +273,8 @@ class CatalogueChecks:
             if state == "access_unknown":
                 error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
                 reason = CATALOGUE_ERROR_MESSAGES.get(error.get("code"), reason)
+                if error.get("code") == "prime_runtime_recovering":
+                    reason = recovery_message(adaptation)
             broadcast_decision = (evidence.get("audit") or {}).get("broadcast_selection") or {}
             if state == "no_matching_feed" and broadcast_decision.get("match_status") == "no_match":
                 reason = "No English or unlabeled Prime broadcast on the permitted route; watch plan retained"

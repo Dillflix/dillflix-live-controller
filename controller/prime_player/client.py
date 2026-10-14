@@ -26,6 +26,17 @@ COMPATIBILITY_MESSAGES = {
     "prime_incompatible": "Prime Player compatibility unavailable; inspect player diagnostics",
 }
 RECOVERING_ADAPTATION_STATES = frozenset({"observing", "discovering", "validating", "backoff"})
+RECOVERY_MESSAGES = {
+    "acquisition": "Prime runtime resource download failed; automatic retry scheduled; watch plan retained",
+    "packaging": "Prime runtime resource packaging could not be validated; automatic retry scheduled; watch plan retained",
+    "loaded_image": "Prime loaded-library verification failed; automatic recovery scheduled; watch plan retained",
+}
+
+
+def recovery_message(adaptation):
+    return RECOVERY_MESSAGES.get(
+        adaptation.get("failure_category"), COMPATIBILITY_MESSAGES["prime_runtime_recovering"]
+    )
 
 
 def adaptation_status(health):
@@ -41,6 +52,9 @@ def adaptation_status(health):
     revision = value.get("revision")
     return {
         "state": value["state"],
+        "failure_category": value.get("failure_category") if value.get("failure_category") in (
+            *RECOVERY_MESSAGES, "api_contract", "engine_contract"
+        ) else None,
         "retry_after_seconds": max(5, min(300, delay)),
         "revision": revision[:200] if isinstance(revision, str) else revision if type(revision) is int else None,
         "reason": value.get("reason", "")[:500] if isinstance(value.get("reason", ""), str) else "",
@@ -190,7 +204,7 @@ class PrimePlayerClient:
                 adaptation = adaptation_status(health)
                 if adaptation and adaptation["state"] in RECOVERING_ADAPTATION_STATES:
                     raise ExecutorError(
-                        "prime_runtime_recovering", COMPATIBILITY_MESSAGES["prime_runtime_recovering"]
+                        "prime_runtime_recovering", recovery_message(adaptation)
                     )
                 quarantine = compatibility.get("quarantine", {})
                 if (
