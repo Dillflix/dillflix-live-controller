@@ -187,7 +187,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                     d.setdefault("prime_access", {}).pop(target, None)
                     budget = self.settings.navigation_timeout
                     if self.executor and hasattr(self.executor, "navigation_budget"):
-                        budget = self.executor.navigation_budget(item["viewing_options"], budget)
+                        budget = self.executor.navigation_budget(item["viewing_options"], budget, item["snapshot"])
                     if self.settings.mode == "demo" and item["snapshot"].get("_simulation", {}).get(
                         "stall_navigation"
                     ):

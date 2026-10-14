@@ -132,7 +132,7 @@ class CatalogueChecks:
 
     def prepare_selection(self, db, device, item):
         """Called under the staging transaction; never issues an RPC here."""
-        rule = self.network_policy.rule(item["viewing_options"])
+        rule = self.network_policy.rule(item["viewing_options"], item["snapshot"])
         if rule and device.get("prime_network_scope", {}).get("policy_revision") != self.network_policy.revision:
             device["prime_network_scope"] = {"context_id": None, "policy_revision": self.network_policy.revision}
             device["prime_access"] = {}
@@ -280,9 +280,13 @@ class CatalogueChecks:
             now = datetime.now(UTC)
             state = evidence.get("state", "access_unknown") if valid else "discarded"
             error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
-            rule = self.network_policy.rule(probe["request"]["allowed_viewing_options"])
+            rule = self.network_policy.rule(probe["request"]["allowed_viewing_options"], probe["request"]["content_snapshot"])
             language_rejection = ((evidence.get("audit") or {}).get("broadcast_selection") or {}).get("match_status") == "no_match"
-            if valid and rule and not language_rejection and (state in rule["fallback_on"] or error.get("code") == "prime_network_recovering"):
+            fallback = "feeds_language" if language_rejection else state
+            if valid and rule and (
+                (not error and fallback in rule["fallback_on"])
+                or error.get("code") == "prime_network_recovering"
+            ):
                 state = "network_acquisition_required"
             adaptation = device.get("prime_runtime_adaptation") or {}
             retry_seconds = (

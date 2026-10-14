@@ -1,6 +1,7 @@
 """Durable bounded network acquisition, using the normal feed chooser."""
 import asyncio
 import time
+import sqlite3
 from uuid import uuid4
 
 from ..executor.models import ExecutorError
@@ -24,10 +25,18 @@ NETWORK_ERRORS = {
 class NetworkAcquisition:
     @property
     def network_policy(self):
-        return NetworkPolicy(self.config.prime_network_policy)
+        # The executor currently serves living-room. Read without a nested write
+        # transaction: catalogue callers may already hold BEGIN IMMEDIATE.
+        db = sqlite3.connect(self.db.path)
+        db.row_factory = sqlite3.Row
+        try:
+            value = self.db.device(db)["preferences"].get("vpn_policy")
+        finally:
+            db.close()
+        return NetworkPolicy(value if value is not None else self.config.prime_network_policy)
 
-    def navigation_budget(self, options, default):
-        return max(default, self.network_policy.timeout) if self.network_policy.rule(options) else default
+    def navigation_budget(self, options, default, snapshot=None):
+        return max(default, self.network_policy.timeout) if self.network_policy.rule(options, snapshot) else default
 
     def _network_allowed(self, token, acquisition):
         with self.db.transaction() as db:
@@ -95,7 +104,7 @@ class NetworkAcquisition:
             await asyncio.sleep(2)
 
     async def acquire_network_catalogue(self, token, request):
-        rule = self.network_policy.rule(request["allowed_viewing_options"])
+        rule = self.network_policy.rule(request["allowed_viewing_options"], request["content_snapshot"])
         if not rule:
             return None
         workflow = self.store.report(token).get("prime_player") or {}
@@ -103,7 +112,7 @@ class NetworkAcquisition:
         if not acquisition:
             acquisition = {"policy_revision": self.network_policy.revision, "tried": [], "transitions": 0,
                            "deadline_at": min(parse_time(request["deadline_at"]).timestamp(), time.time() + self.network_policy.timeout),
-                           "operation": None}
+                           "operation": None, "policy_matches": rule.get("matched_policies", []), "attempts": []}
             self._save_network(token, acquisition)
         with self.db.transaction() as db:
             timezone = self.db.device(db, request["device_id"])["preferences"]["timezone"]
@@ -126,7 +135,7 @@ class NetworkAcquisition:
                 previous = acquisition.get("last_state")
                 choices = [t for t in rule["targets"] if t not in acquisition["tried"]]
                 if previous not in rule["fallback_on"] or not choices:
-                    self.complete_search(token, previous or "access_unknown", error=acquisition.get("last_error"))
+                    self.complete_search(token, "feeds_locked" if previous == "feeds_language" else previous or "access_unknown", error=acquisition.get("last_error"))
                     return False
                 await self.network_transition(token, acquisition, choices[0])
                 continue
@@ -171,13 +180,16 @@ class NetworkAcquisition:
             state = selection_state(selected, audit)
             evidence.update(results=results, selected=selected, audit=audit)
             self.save_workflow(token, selection=audit, catalogue=results)
+            reason = "feeds_language" if (audit.get("broadcast_selection") or {}).get("match_status") == "no_match" else state
+            acquisition.setdefault("attempts", []).append({"target_id": target, "context_id": context, "state": reason, "audit": audit})
             if state == "ready":
+                self._save_network(token, acquisition)
                 return evidence
             acquisition["tried"].append(target)
             acquisition.update(last_state=state, last_error=audit.get("error"))
-            # A language rejection is not evidence that a different region helps.
+            # Legacy route policies do not authorize language fallback; city policies do.
             if (audit.get("broadcast_selection") or {}).get("match_status") == "no_match":
-                acquisition["last_state"] = "feeds_locked"
+                acquisition["last_state"] = "feeds_language" if rule.get("matched_policies") is not None else "feeds_locked"
             self._save_network(token, acquisition)
 
     async def interrupt_network(self, token, workflow):

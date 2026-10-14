@@ -280,6 +280,9 @@ class PrimePlayerClient:
             "stop", session_id=session_id, attempt_id=attempt_id, ownership=ownership, budget=60
         )
 
+    async def vpn_locations(self):
+        return await self.rpc("vpn_locations", budget=5)
+
     async def vpn_status(self, operation_id=None):
         return await self.rpc("vpn_status", operation_id=operation_id, budget=5)
 

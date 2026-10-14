@@ -542,6 +542,9 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         if "discovery_leagues" not in update.preferences.model_fields_set:
             data["preferences"].pop("discovery_leagues")
 
+        if "vpn_policy" not in update.preferences.model_fields_set:
+            data["preferences"].pop("vpn_policy", None)
+
         def apply(db, device):
             if len({r["id"] for r in data["rules"]}) != len(data["rules"]):
                 raise HTTPException(422, "Rule IDs must be unique")
@@ -552,6 +555,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 team_ranks=data["team_ranks"],
                 preferences={
                     **data["preferences"],
+                    "vpn_policy": data["preferences"].get("vpn_policy", device["preferences"].get("vpn_policy")),
                     "discovery_leagues": data["preferences"].get(
                         "discovery_leagues", device["preferences"]["discovery_leagues"]
                     ),

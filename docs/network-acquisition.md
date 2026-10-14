@@ -10,24 +10,32 @@ player socket/state directory. Reprovisioning does not restore old network
 contexts or automatically enable this policy. Pause controller automation during
 installation and repeat player qualification after a wipe.
 
-Mount a JSON policy file read-only into the controller container and set `PRIME_NETWORK_POLICY_FILE` to its container path. Use original Teamarr viewing-option IDs observed in diagnostics:
+## Configure in Settings
 
-```json
-{
-  "enabled": true,
-  "acquisition_timeout": 600,
-  "max_transitions": 2,
-  "access_ttl": 300,
-  "routes": {
-    "route:nhl:prime_video": {
-      "targets": ["direct", "calgary"],
-      "fallback_on": ["feeds_unavailable"]
-    }
-  }
-}
-```
+Open Settings / VPN location policies. Refresh the player inventory, add Toronto
+and Montreal, and list permitted team cities for each. Enable fallback and save.
+Policy edits use device revisions, idempotent commands, undo, configuration
+export/import, and the persistent database. No Compose configuration is required.
+A saved UI policy overrides the legacy environment policy file, including when
+explicitly disabled. Installations without a UI policy retain legacy behaviour.
 
-Target IDs must name qualified player profiles, or `direct`. Every permitted Prime viewing option must have a policy; only targets and fallback reasons common to all those routes are allowed. The complete Teamarr snapshot and permitted viewing options remain unchanged. Configure `no_matching_feed` explicitly only if an absent catalogue entry should permit a location change. Subscription, language, model, runtime, unknown-readiness, and upcoming-event results do not authorize network rotation.
+Toronto might permit Toronto, Hamilton and Ottawa; Montreal might permit Montreal.
+Matching uses either team's structured city, normalizing accents, case and spaces.
+It never guesses from the title, venue or team name. Missing cities permit only
+current and direct. The current network is always tried first, even without a
+matching city policy. On failure, try matching VPN locations in UI order, then
+direct. Direct is always allowed. Already checked targets are skipped.
+
+Fallback allows absent, unavailable, unentitled, or confirmed language-rejected
+feeds. Upcoming feeds and unknown/parser/model/runtime errors do not trigger
+switches. Each location gets fresh search and broadcast selection: providers and
+entitlement are never copied from another network context. Acquisition diagnostics
+retain matched cities and per-location outcomes.
+
+Defaults allow a shared 30-minute deadline and at most four switches to accommodate
+multi-minute Prime startups. These are ceilings; unrelated locations are never
+visited. Successful playback stays on its current network. The player still
+enforces qualification, which is shown separately from playback success in Settings.
 
 The controller first performs the usual same-network catalogue preflight. A configured fallback result allows a new durable playback intent with the acquisition deadline. The workflow searches the current verified network, then tries configured alternatives within its transition limit. Every actual change retires and restarts Prime through the player's managed operation. Catalogue and playback results must belong to the new session and network context. A lost transition response is inspected using the same recorded operation ID and deadline. Controller restart preserves attempted targets and the deadline. A planned replacement session is accepted only with matching completed-operation evidence.
 

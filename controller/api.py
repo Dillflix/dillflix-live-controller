@@ -292,6 +292,16 @@ def create_app(settings=None, *, start_workers=True):
             ),
         )
 
+    @app.get("/api/v1/devices/{device_id}/vpn-locations")
+    async def vpn_locations(device_id: str):
+        service.overview(device_id)  # Validate the device and retain admin auth.
+        if not service.executor or not hasattr(service.executor, "player"):
+            return {"enabled": False, "locations": []}
+        try:
+            return await service.executor.player.vpn_locations()
+        except Exception as exc:
+            raise HTTPException(503, "Prime Player VPN locations are unavailable") from exc
+
     @app.get("/api/v1/devices/{device_id}/rules")
     def rules(device_id: str):
         d = service.overview(device_id)["device"]

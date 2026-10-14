@@ -49,7 +49,44 @@ class Rule(StrictModel):
     kind: Literal["event", "session", "broadcast"] | None = None
 
 
+class VPNLocationPolicy(StrictModel):
+    target_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+    team_cities: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("target_id")
+    @classmethod
+    def vpn_only(cls, value):
+        if value == "direct":
+            raise ValueError("Direct is always permitted; configure VPN locations only")
+        return value
+
+    @field_validator("team_cities")
+    @classmethod
+    def cities(cls, values):
+        from .network_policy import city_key
+        if any(not isinstance(v, str) or not v.strip() or len(v) > 100 for v in values):
+            raise ValueError("Use nonempty team cities of at most 100 characters")
+        if len({city_key(v) for v in values}) != len(values):
+            raise ValueError("Team cities must be unique")
+        return [v.strip() for v in values]
+
+
+class VPNPolicy(StrictModel):
+    enabled: bool = False
+    locations: list[VPNLocationPolicy] = Field(default_factory=list, max_length=4)
+    acquisition_timeout: int = Field(default=1800, ge=120, le=1800)
+    max_transitions: int = Field(default=4, ge=1, le=4)
+    access_ttl: int = Field(default=300, ge=60, le=3600)
+
+    @model_validator(mode="after")
+    def unique_locations(self):
+        if len({v.target_id for v in self.locations}) != len(self.locations):
+            raise ValueError("VPN locations must be unique")
+        return self
+
+
 class Preferences(StrictModel):
+    vpn_policy: VPNPolicy | None = None
     timezone: str = "America/Vancouver"
     minimum_viewing_seconds: int = Field(default=300, ge=0, le=3600)
     switch_cooldown_seconds: int = Field(default=30, ge=0, le=600)

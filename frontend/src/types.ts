@@ -68,7 +68,15 @@ export interface Rule {
   source: string | null;
   kind: "event" | "session" | "broadcast" | null;
 }
+export interface VPNPolicy {
+  enabled: boolean;
+  locations: { target_id: string; team_cities: string[] }[];
+  acquisition_timeout: number;
+  max_transitions: number;
+  access_ttl: number;
+}
 export interface Preferences {
+  vpn_policy?: VPNPolicy | null;
   discovery_leagues: string[];
   timezone: string;
   minimum_viewing_seconds: number;
