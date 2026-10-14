@@ -1344,6 +1344,19 @@ function App() {
                 )}
                 <section className="df-panel">
                   <h3>Playback monitoring</h3>
+                  {d.prime_network && (
+                    <div>
+                      <p>Prime network: {d.prime_network.state.replaceAll("_", " ")}
+                        {d.prime_network.target_id ? ` · ${d.prime_network.target_id}` : ""}
+                        {d.prime_network.requested_target ? ` · Requested: ${d.prime_network.requested_target}` : ""}
+                      </p>
+                      <p>{d.prime_network.phase?.replaceAll("_", " ")}
+                        {` · Last checked ${monitoringTime(d.prime_network.checked_at)}`}
+                      </p>
+                      <p>Automatic network fallback: {d.prime_network.policy_enabled ? "enabled by route policy" : "disabled; connection left unchanged"}</p>
+                      {d.prime_network.last_error && <p role="alert">{d.prime_network.last_error.replaceAll("_", " ")}</p>}
+                    </div>
+                  )}
                   <p>{d.reason}</p>
                   <p>
                     Controller: {d.playback_state} Â· Executor:{" "}

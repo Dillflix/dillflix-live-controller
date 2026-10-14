@@ -39,6 +39,9 @@ class NetworkPlayer(Player):
                 item["availability_status"] = "UNAVAILABLE"
         return value
 
+    def outcome(self):
+        return {**super().outcome(), "network_context_id": self.context}
+
     async def broadcasts(self, content_id, ownership):
         return {**await super().broadcasts(content_id, ownership), "network_context_id": self.context}
 

@@ -128,7 +128,9 @@ def ordered_plan(device):
 def choose(device, items, now, real_now):
     indexed = {e["content_id"]: e for e in items}
     current_id = (device.get("observed") or {}).get("content_id")
-    access = device.get("prime_access", {})
+    access = {cid: a for cid, a in device.get("prime_access", {}).items()
+              if a.get("scope") == device.get("prime_network_scope")
+              and (not a.get("expires_at") or real_now.timestamp() < a["expires_at"])}
     waiting = access.get(device.get("desired"), {})
     waiting_for_search = waiting.get("state") in {"waiting_for_feed", "access_unknown"}
     preferred_id = device.get("desired") if waiting_for_search else current_id

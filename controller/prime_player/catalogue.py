@@ -70,6 +70,16 @@ class CatalogueChecks:
             device = self.db.device(db)
             network = health.get("network", {})
             if network.get("enabled"):
+                operation = network.get("operation") or {}
+                context = network.get("context") or {}
+                device["prime_network"] = {
+                    "state": network.get("state", "unknown"), "target_id": context.get("target_id"),
+                    "phase": operation.get("phase"), "operation_id": operation.get("operation_id"),
+                    "requested_target": (operation.get("target") or {}).get("id"),
+                    "last_error": operation.get("error") or network.get("last_error"),
+                    "checked_at": datetime.now(UTC).isoformat(),
+                    "policy_enabled": self.network_policy.enabled,
+                }
                 scope = {"context_id": network.get("context_id"), "policy_revision": self.network_policy.revision}
                 if device.get("prime_network_scope") != scope:
                     device["prime_network_scope"] = scope
@@ -78,9 +88,11 @@ class CatalogueChecks:
                         device["observed"]["verified"] = False
                     self.db.save_device(db, device)
             elif device.pop("prime_network_scope", None):
+                device.pop("prime_network", None)
                 device["prime_access"] = {}
                 self.db.save_device(db, device)
             if not adaptation and not device.get("prime_runtime_adaptation"):
+                self.db.save_device(db, device)
                 return
             if adaptation:
                 device["prime_runtime_adaptation"] = {
@@ -132,14 +144,14 @@ class CatalogueChecks:
             if probe.get("state") in {"ready", "network_acquisition_required"} and now < probe.get("expires", 0):
                 probe["launch_intent"] = device["intent_version"] + 1
                 self.db.set_meta(db, key(device["id"]), probe)
-                return True
+                return {"state": probe["state"], "probe_id": probe["id"]}
             if probe.get("state") == "pending" and now < probe.get("expires", 0):
-                return False
+                return {"state": "pending"}
             if now < probe.get("retry_at", 0):
-                return False
+                return {"state": "pending"}
         active = getattr(self, "catalogue_task", None)
         if active and not active.done():
-            return False
+            return {"state": "pending"}
         probe = {
             "id": uuid4().hex,
             "signature": token,
@@ -166,7 +178,7 @@ class CatalogueChecks:
                 self.catalogue_task = asyncio.create_task(self.observe_catalogue(probe))
 
             self.loop.call_soon_threadsafe(schedule)
-        return False
+        return {"state": "pending"}
 
     async def observe_catalogue(self, probe):
         correlation = rpc_context.set({"catalogue_probe_id": probe["id"], "content_id": probe["content_id"]})

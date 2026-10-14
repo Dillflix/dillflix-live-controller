@@ -197,7 +197,7 @@ class PrimePlayerClient:
         if health.get("api_version", 0) < 4:
             raise ExecutorError("prime_api_incompatible", "Prime Player API 4 or newer is required", retryable=False)
         network = health.get("network", {})
-        if network.get("enabled") and network.get("state") != "ready" and any(n in {"search", "broadcasts", "play", "resolve"} for n in capabilities):
+        if network.get("enabled") and network.get("state") != "ready" and any(n in {"search", "broadcasts", "play", "resolve", "playback_status"} for n in capabilities):
             raise ExecutorError("prime_network_recovering", COMPATIBILITY_MESSAGES["prime_network_recovering"])
         implemented = health.get("capabilities", [])
         compatibility = health.get("compatibility", {})

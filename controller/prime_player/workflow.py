@@ -54,6 +54,13 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     device["prime_access"] = {}
                     self.db.save_device(db, device)
                 self.db.set_meta(db, "prime_catalogue_contract", 14)
+            for device_row in db.execute("SELECT id FROM devices").fetchall():
+                device = self.db.device(db, device_row[0])
+                scope = device.get("prime_network_scope")
+                if scope and (not self.network_policy.enabled or scope.get("policy_revision") != self.network_policy.revision):
+                    device["prime_access"] = {}
+                    device.pop("prime_network_scope", None)
+                    self.db.save_device(db, device)
             for row in db.execute(
                 "SELECT * FROM executor_jobs WHERE request IS NOT NULL AND cancel_requested=0"
             ).fetchall():
@@ -375,6 +382,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
 
     @staticmethod
     def validate_outcome(outcome, workflow):
+        if workflow.get("network_context_id") and outcome.get("network_context_id") != workflow["network_context_id"]:
+            raise ExecutorError("prime_network_context_changed", "Playback result belongs to another network context")
         if (
             outcome.get("session_id") != workflow["session_id"]
             or outcome.get("attempt_id") != workflow["attempt_id"]
@@ -405,6 +414,10 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             with self.db.transaction() as db:
                 self.store.allowed(db, token, navigation=True)
             workflow = self.store.report(token)["prime_player"]
+            if workflow.get("network_context_id"):
+                current = await self.check_session(workflow["session_id"], capabilities=("playback_status",))
+                if current.get("network", {}).get("context_id") != workflow["network_context_id"]:
+                    raise ExecutorError("prime_network_context_changed", "Playback network changed before verification")
             outcome = workflow.get("launch_outcome") or {}
             if outcome.get("state") != "playing":
                 await self.check_session(workflow["session_id"])
@@ -516,6 +529,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 raise ExecutorError(
                     "prime_status_mismatch", "Current status belongs to another session or attempt"
                 )
+            if workflow.get("network_context_id") and status.get("network_context_id") != workflow["network_context_id"]:
+                raise ExecutorError("prime_network_context_changed", "Status belongs to another network context")
             workflow["playback_status"] = status
             observed, fresh = None, False
             try:

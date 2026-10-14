@@ -144,7 +144,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             if target and not indexed[target]["playable"]:
                 needs_request = False
             if needs_request and target and self.executor:
-                if not self.executor.prepare_selection(db, d, indexed[target]):
+                preparation = self.executor.prepare_selection(db, d, indexed[target])
+                if preparation["state"] not in {"ready", "network_acquisition_required"}:
                     d["reason"] = "Checking Prime catalogue before switching playback"
                     d["next_candidate"] = decision
                     self.db.save_device(db, d)
@@ -395,6 +396,9 @@ class PlaybackCoordinator(PlaybackRecovery):
                     d["id"],
                 )
             elif report.get("state") in {"accepted", "navigating"}:
+                if report.get("phase", "").startswith("network_"):
+                    d["reason"] = report.get("progress_reason") or "Preparing the configured network for Prime"
+                    self.db.save_device(db, d)
                 if job["progress"] != report["state"]:
                     self.db.log(
                         db,

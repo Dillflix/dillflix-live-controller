@@ -115,6 +115,15 @@ export interface Device {
     presentation: string;
   } | null;
   playback_state: string;
+  prime_network?: {
+    state: string;
+    target_id?: string | null;
+    requested_target?: string | null;
+    phase?: string | null;
+    last_error?: string | null;
+    checked_at: string;
+    policy_enabled: boolean;
+  };
   executor_health?: {
     state: "starting" | "ok" | "offline";
     last_contact_at?: string | null;
