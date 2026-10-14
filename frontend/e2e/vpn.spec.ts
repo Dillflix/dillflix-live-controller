@@ -84,5 +84,12 @@ test("city VPN policies persist, reorder and undo without changing the watch pla
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  await page.screenshot({ path: "test-results/vpn-phone.png", fullPage: true });
+  await expect(panel).toHaveCSS("border-radius", "12px");
+  await expect(panel.getByLabel("Permitted team cities 1")).toHaveCSS(
+    "min-height",
+    "100px",
+  );
+  await panel.screenshot({ path: "test-results/vpn-phone.png" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await panel.screenshot({ path: "test-results/vpn-desktop.png" });
 });

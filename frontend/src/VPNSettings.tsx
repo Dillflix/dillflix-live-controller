@@ -50,7 +50,10 @@ export function VPNSettings({
       ),
     });
   return (
-    <section className="panel" aria-label="VPN location policies">
+    <section
+      className="df-panel df-spacer df-vpn"
+      aria-label="VPN location policies"
+    >
       <h2>VPN location policies</h2>
       <p>
         Always try the current connection first. If no suitable feed is found,
@@ -58,7 +61,7 @@ export function VPNSettings({
         always permitted. Each switch interrupts playback and may take three
         minutes or longer.
       </p>
-      <label>
+      <label className="df-vpn-toggle">
         <input
           type="checkbox"
           checked={draft.enabled}
@@ -72,13 +75,13 @@ export function VPNSettings({
         again after each switch.
       </p>
       {error && <p role="alert">{error}</p>}
-      <button type="button" onClick={refresh}>
+      <button className="df-button" type="button" onClick={refresh}>
         Refresh VPN locations
       </button>
       {draft.locations.map((row, index) => {
         const location = locations.find((v) => v.id === row.target_id);
         return (
-          <fieldset key={index}>
+          <fieldset className="df-vpn-policy" key={index}>
             <legend>Location policy {index + 1}</legend>
             <label>
               VPN location{" "}
@@ -123,6 +126,7 @@ export function VPNSettings({
               />
             </label>
             <button
+              className="df-button"
               type="button"
               disabled={index === 0}
               onClick={() => {
@@ -134,6 +138,7 @@ export function VPNSettings({
               Move earlier
             </button>
             <button
+              className="df-button"
               type="button"
               onClick={() =>
                 setDraft({
@@ -148,6 +153,7 @@ export function VPNSettings({
         );
       })}
       <button
+        className="df-button"
         type="button"
         disabled={
           draft.locations.length >= 4 ||
@@ -177,6 +183,7 @@ export function VPNSettings({
         feeds and technical errors do not trigger location fallback.
       </p>
       <button
+        className="df-button df-button-primary"
         type="button"
         onClick={() =>
           save({

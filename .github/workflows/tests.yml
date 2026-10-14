@@ -31,3 +31,9 @@ jobs:
         working-directory: frontend
       - run: npm run test:browser
         working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vpn-settings-screenshots
+          path: frontend/test-results/vpn-*.png
+          if-no-files-found: ignore
