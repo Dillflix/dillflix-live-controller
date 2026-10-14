@@ -10,6 +10,16 @@ from ..planner import parse_time
 from .matching import selection_state
 from .search import choose_search
 
+NETWORK_ERRORS = {
+    "network_permission_required": "VPN setup requires Android and OpenVPN API consent",
+    "network_profile_missing": "The configured OpenVPN profile is missing from the device",
+    "network_auth_failed": "OpenVPN authentication failed; check provisioned service credentials",
+    "network_profile_unqualified": "The configured VPN profile requires device qualification",
+    "network_target_unknown": "The configured network target is absent from Prime Player",
+    "network_transition_budget": "Network transition rate limit reached; allow the device to settle",
+    "network_deadline_expired": "Network acquisition deadline expired",
+}
+
 
 class NetworkAcquisition:
     @property
@@ -77,7 +87,10 @@ class NetworkAcquisition:
                 self._save_network(token, acquisition)
                 return latest
             elif status["state"] in {"failed", "cancelled"}:
-                raise ExecutorError("prime_network_transition_failed", "Prime network transition failed; inspect its operation status")
+                message = NETWORK_ERRORS.get(status.get("error"), "Prime network transition failed; inspect its operation status")
+                if status.get("failed_phase") == "starting_prime":
+                    message = "Network connected, but Prime initialization did not complete"
+                raise ExecutorError("prime_network_transition_failed", message)
             self.store.phase(token, "network_" + status.get("phase", "pending"))
             await asyncio.sleep(2)
 
