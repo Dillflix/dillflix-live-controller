@@ -136,6 +136,8 @@ class PrimePlayerClient:
                         "StaleResultError": "prime_stale_result",
                         "CompatibilityError": "prime_incompatible",
                     }.get(kind, "prime_operation_unknown")
+                    if kind == "NetworkError":
+                        code = "prime_network_operation_failed"
                     # Server messages can contain arbitrary application content.
                     raise ExecutorError(code, f"Prime Player {method} returned {kind}")
                 if response.status_code != 200 or not isinstance(body.get("result"), dict):

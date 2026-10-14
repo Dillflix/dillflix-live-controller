@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import replace
 
 import pytest
@@ -36,7 +35,7 @@ class NetworkPlayer(Player):
         value = await super().search(query, timeout, ownership)
         value["network_context_id"] = self.context
         if self.target == "direct":
-            for item in value["items"]:
+            for item in value["containers"][0]["items"]:
                 item["availability_status"] = "UNAVAILABLE"
         return value
 

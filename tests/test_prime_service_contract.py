@@ -5,11 +5,15 @@ boundary is controlled; the service, ownership engine and HTTP transport are rea
 """
 
 import asyncio
+import os
 import threading
 
 import pytest
 
-pytest.importorskip("dillflix_prime_player")
+if os.getenv("PRIME_CONTRACT_REQUIRED") == "1":
+    import dillflix_prime_player.network_device
+else:
+    pytest.importorskip("dillflix_prime_player")
 from dillflix_prime_player.backend import FridaBackend
 from dillflix_prime_player.controller import Controller as PrimeController
 from dillflix_prime_player.service import LocalService
