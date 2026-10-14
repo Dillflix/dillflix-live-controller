@@ -54,6 +54,11 @@ class NetworkDevice:
                 self.handoff_id = uuid.uuid4().hex
             self.runtime.manual_hold, self.runtime.owner_id = False, None
             self.runtime._save_state()
+        elif self.journal.value["manual_hold"]:
+            # Disabling the feature cannot silently revoke a saved manual hold.
+            self.runtime.manual_hold = True
+            self.runtime.owner_id = self.journal.value["owner_id"]
+            self.runtime._save_state()
 
     @property
     def manual(self):
@@ -202,6 +207,8 @@ class NetworkDevice:
 
     def _finish(self, op, state, error=None):
         with self.lock:
+            if state != "ready":
+                op["failed_phase"] = op["phase"]
             op.update(state=state, phase=state, error=error, finished_at=self.clock())
             self.active = None
             self.journal.save()
@@ -292,10 +299,17 @@ class NetworkDevice:
                 if op.get("adopt_only"):
                     raise NetworkError("network_context_unavailable")
                 self._save_phase(op, "reconciling_network", dispatch="uncertain")
-                self.bridge.request("transition", operation_id=op["operation_id"], owner=self.service_id,
-                                    profile_uuid=op["target"]["profile_uuid"], deadline_at=op["deadline_at"])
+                try:
+                    self.bridge.request("transition", operation_id=op["operation_id"], owner=self.service_id,
+                                        profile_uuid=op["target"]["profile_uuid"], deadline_at=op["deadline_at"])
+                except NetworkError as exc:
+                    self._save_phase(op, "reconciling_network", dispatch_error=str(exc))
+                    raise
                 return
             result = self.bridge.request("operation", operation_id=op["operation_id"])
+            if result.get("state") == "not_found" and op.get("dispatch_error"):
+                self._save_phase(op, "reconciling_network", dispatch="settled")
+                raise NetworkError(op["dispatch_error"])
             if result.get("state") == "failed":
                 self._save_phase(op, "reconciling_network", dispatch="settled")
                 raise NetworkError(result.get("error", "network_connection_failed"))
@@ -396,7 +410,11 @@ class NetworkDevice:
 
     def suspend(self, value, owner_id=None, previous=None):
         if not self.config.enabled:
-            return self.runtime.suspend(value, owner_id=owner_id, previous=previous)
+            result = self.runtime.suspend(value, owner_id=owner_id, previous=previous)
+            if result.get("acknowledged"):
+                self.journal.value.update(manual_hold=value, owner_id=owner_id if value else None)
+                self.journal.save()
+            return result
         if type(value) is not bool:
             raise ValueError("suspended must be boolean")
         with self.handoff_lock:

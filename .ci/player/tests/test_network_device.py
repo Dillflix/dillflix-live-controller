@@ -121,6 +121,14 @@ def test_same_boot_bridge_replacement_requires_new_prime_context(device):
     assert device.runtime.starts == starts + 1
 
 
+def test_disabling_networking_keeps_durable_manual_hold(device):
+    d = device
+    d.suspend(True, owner_id="operator", previous=d.health()["ownership"])
+    runtime = Runtime()
+    NetworkDevice(runtime, d.journal.path.parent.parent, config=NetworkConfig())
+    assert runtime.manual_hold and runtime.owner_id == "operator"
+
+
 def test_transition_restarts_prime_once_and_qualifies_only_after_return_to_direct(device):
     d = device
     assert not d.vpn_locations()["locations"][0]["qualified"]

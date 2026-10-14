@@ -2,16 +2,26 @@
 import asyncio
 import threading
 import time
+from unittest.mock import Mock
 
 import pytest
 
 from dillflix_prime_player.client import PrimePlayer
 from dillflix_prime_player.service import LocalService
-from test_network_device import Bridge, NetworkConfig, NetworkDevice, Runtime
+from dillflix_prime_player.recovery import RuntimeSupervisor
+from test_network_device import Bridge, NetworkConfig, NetworkDevice
+from test_recovery import BASE, Backend
 
 
 def test_transition_and_manual_input_through_real_socket(tmp_path):
-    runtime = Runtime()
+    backends = []
+    def factory(profile):
+        backend = Backend(profile, len(backends) + 1)
+        backends.append(backend)
+        return backend
+    store = Mock()
+    store.load_active.return_value = None
+    runtime = RuntimeSupervisor(BASE, tmp_path, factory, store=store, serial="fixture")
     inputs = []
     config = NetworkConfig({"enabled": True, "token_file": str(tmp_path / "token"), "profiles": [
         {"id": "calgary", "profile_uuid": "a", "country": "CA", "province": "AB", "city": "Calgary",
@@ -33,6 +43,8 @@ def test_transition_and_manual_input_through_real_socket(tmp_path):
             device.tick()
         current = await client._request("health")
         assert current["session_id"] != old["session_id"]
+        assert backends[0].closed and len(backends) == 2
+        assert runtime.restart_times == []  # Planned changes are not crash retries.
         assert current["ownership"]["service_instance_id"] == old["ownership"]["service_instance_id"]
         assert (await client.vpn_status(operation_id="socket-test"))["state"] == "ready"
         manual = await client._request("suspend", value=True, owner_id="remote", previous=current["ownership"])
