@@ -350,6 +350,9 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             referenced = {r["team_id"] for r in config["rules"] if r["team_id"]}
             referenced.update(key for keys in config["team_ranks"].values() for key in keys)
             warnings = []
+            vpn = config["preferences"].get("vpn_policy")
+            if vpn and vpn.get("enabled"):
+                warnings.append("This configuration enables VPN fallback and permits playback-interrupting location changes.")
             if request.document.source_mode != self.settings.mode:
                 warnings.append(
                     "This file was exported from a different mode. Demo and real team identities differ."
@@ -542,6 +545,9 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         if "discovery_leagues" not in update.preferences.model_fields_set:
             data["preferences"].pop("discovery_leagues")
 
+        if "vpn_policy" not in update.preferences.model_fields_set:
+            data["preferences"].pop("vpn_policy", None)
+
         def apply(db, device):
             if len({r["id"] for r in data["rules"]}) != len(data["rules"]):
                 raise HTTPException(422, "Rule IDs must be unique")
@@ -552,6 +558,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 team_ranks=data["team_ranks"],
                 preferences={
                     **data["preferences"],
+                    "vpn_policy": data["preferences"].get("vpn_policy", device["preferences"].get("vpn_policy")),
                     "discovery_leagues": data["preferences"].get(
                         "discovery_leagues", device["preferences"]["discovery_leagues"]
                     ),

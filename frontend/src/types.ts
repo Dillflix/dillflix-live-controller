@@ -68,7 +68,15 @@ export interface Rule {
   source: string | null;
   kind: "event" | "session" | "broadcast" | null;
 }
+export interface VPNPolicy {
+  enabled: boolean;
+  locations: { target_id: string; team_cities: string[] }[];
+  acquisition_timeout: number;
+  max_transitions: number;
+  access_ttl: number;
+}
 export interface Preferences {
+  vpn_policy?: VPNPolicy | null;
   discovery_leagues: string[];
   timezone: string;
   minimum_viewing_seconds: number;
@@ -115,6 +123,15 @@ export interface Device {
     presentation: string;
   } | null;
   playback_state: string;
+  prime_network?: {
+    state: string;
+    target_id?: string | null;
+    requested_target?: string | null;
+    phase?: string | null;
+    last_error?: string | null;
+    checked_at: string;
+    policy_enabled: boolean;
+  };
   executor_health?: {
     state: "starting" | "ok" | "offline";
     last_contact_at?: string | null;

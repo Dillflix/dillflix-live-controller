@@ -144,7 +144,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             if target and not indexed[target]["playable"]:
                 needs_request = False
             if needs_request and target and self.executor:
-                if not self.executor.prepare_selection(db, d, indexed[target]):
+                preparation = self.executor.prepare_selection(db, d, indexed[target])
+                if preparation["state"] not in {"ready", "network_acquisition_required"}:
                     d["reason"] = "Checking Prime catalogue before switching playback"
                     d["next_candidate"] = decision
                     self.db.save_device(db, d)
@@ -185,6 +186,8 @@ class PlaybackCoordinator(PlaybackRecovery):
                     d["retry_playback"] = None
                     d.setdefault("prime_access", {}).pop(target, None)
                     budget = self.settings.navigation_timeout
+                    if self.executor and hasattr(self.executor, "navigation_budget"):
+                        budget = self.executor.navigation_budget(item["viewing_options"], budget, item["snapshot"])
                     if self.settings.mode == "demo" and item["snapshot"].get("_simulation", {}).get(
                         "stall_navigation"
                     ):
@@ -367,6 +370,8 @@ class PlaybackCoordinator(PlaybackRecovery):
                     reason = str(report["reason"])[:1000] + "; search will retry in 60 seconds"
                 d.setdefault("prime_access", {})[job["content_id"]] = {
                     "state": readiness,
+                    "scope": d.get("prime_network_scope"),
+                    "expires_at": (time.time() + self.executor.network_policy.ttl) if self.executor and d.get("prime_network_scope") else None,
                     "reason": reason,
                     "observed_at": finished.isoformat(),
                     "retry_after": (finished + timedelta(seconds=60)).isoformat()
@@ -391,6 +396,9 @@ class PlaybackCoordinator(PlaybackRecovery):
                     d["id"],
                 )
             elif report.get("state") in {"accepted", "navigating"}:
+                if report.get("phase", "").startswith("network_"):
+                    d["reason"] = report.get("progress_reason") or "Preparing the configured network for Prime"
+                    self.db.save_device(db, d)
                 if job["progress"] != report["state"]:
                     self.db.log(
                         db,

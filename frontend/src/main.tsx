@@ -37,6 +37,7 @@ import {
 import { api, ApiError, commandId } from "./api";
 import { TeamRanking } from "./TeamRanking";
 import { ConfigurationTools } from "./ConfigurationTools";
+import { VPNSettings } from "./VPNSettings";
 import { PlexSettings } from "./PlexSettings";
 import { DiagnosticsTools } from "./DiagnosticsTools";
 import { ScreenPanel } from "./ScreenPanel";
@@ -1344,6 +1345,35 @@ function App() {
                 )}
                 <section className="df-panel">
                   <h3>Playback monitoring</h3>
+                  {d.prime_network && (
+                    <div>
+                      <p>
+                        Prime network:{" "}
+                        {d.prime_network.state.replaceAll("_", " ")}
+                        {d.prime_network.target_id
+                          ? ` · ${d.prime_network.target_id}`
+                          : ""}
+                        {d.prime_network.requested_target
+                          ? ` · Requested: ${d.prime_network.requested_target}`
+                          : ""}
+                      </p>
+                      <p>
+                        {d.prime_network.phase?.replaceAll("_", " ")}
+                        {` · Last checked ${monitoringTime(d.prime_network.checked_at)}`}
+                      </p>
+                      <p>
+                        Automatic network fallback:{" "}
+                        {d.prime_network.policy_enabled
+                          ? "enabled by route policy"
+                          : "disabled; connection left unchanged"}
+                      </p>
+                      {d.prime_network.last_error && (
+                        <p role="alert">
+                          {d.prime_network.last_error.replaceAll("_", " ")}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <p>{d.reason}</p>
                   <p>
                     Controller: {d.playback_state} · Executor:{" "}
@@ -1617,7 +1647,15 @@ function App() {
                     </select>
                   </div>
                 </section>
-                <PlexSettings deviceId={d.id} refreshKey={data.meta.server_time} />
+                <VPNSettings
+                  deviceId={d.id}
+                  value={d.preferences.vpn_policy}
+                  save={(vpn_policy) => preference({ vpn_policy })}
+                />
+                <PlexSettings
+                  deviceId={d.id}
+                  refreshKey={data.meta.server_time}
+                />
                 <ConfigurationTools
                   devicePath={devicePath}
                   busy={busy}
@@ -2237,6 +2275,23 @@ function App() {
                         .join(" → ")}
                     </p>
                   ))}
+                <p>
+                  VPN fallback:{" "}
+                  {modal.preview.configuration.preferences.vpn_policy?.enabled
+                    ? "enabled"
+                    : "disabled or legacy deployment policy"}
+                  .
+                  {modal.preview.configuration.preferences.vpn_policy?.locations.map(
+                    (row) => (
+                      <span key={row.target_id}>
+                        <br />
+                        {row.target_id}:{" "}
+                        {row.team_cities.join(", ") ||
+                          "No permitted team cities"}
+                      </span>
+                    ),
+                  )}
+                </p>
                 <p>
                   Leagues to discover:{" "}
                   {modal.preview.configuration.preferences.discovery_leagues

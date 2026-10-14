@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
+from ..network_policy import NetworkPolicy, read_policy
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class ExecutorConfig:
     cancel_timeout: float = 80
     monitor_interval: float = 5
     retention_days: int = 7
+    prime_network_policy: dict = field(default_factory=dict)
     prime_socket: str = ""
     prime_match_model: str = ""
     prime_search_timeout: float = 45
@@ -25,6 +27,7 @@ class ExecutorConfig:
     model_options: dict = field(default_factory=lambda: {"temperature": 0, "top_p": 1})
 
     def validate(self):
+        NetworkPolicy(self.prime_network_policy)
         if self.mode not in {"simulator", "prime-player"}:
             raise ValueError(
                 "PLAYBACK_ADAPTER must be simulator or prime-player; the prime-video executor has been removed"
@@ -87,6 +90,7 @@ class ExecutorConfig:
             model_timeout=float(os.getenv("EXECUTOR_MODEL_TIMEOUT_SECONDS", "45")),
             cancel_timeout=float(os.getenv("EXECUTOR_CANCEL_TIMEOUT_SECONDS", "80")),
             monitor_interval=float(os.getenv("EXECUTOR_MONITOR_INTERVAL_SECONDS", "5")),
+            prime_network_policy=read_policy(os.getenv("PRIME_NETWORK_POLICY_FILE", "")),
             prime_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
             prime_match_model=os.getenv("PRIME_PLAYER_MATCH_MODEL", ""),
             prime_search_timeout=float(os.getenv("PRIME_PLAYER_SEARCH_TIMEOUT_SECONDS", "45")),

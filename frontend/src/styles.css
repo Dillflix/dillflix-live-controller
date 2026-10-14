@@ -1672,3 +1672,62 @@ select:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+#df-app .df-vpn {
+  min-width: 0;
+}
+#df-app .df-vpn p {
+  color: var(--df-muted);
+  font-size: 0.85rem;
+  margin: 8px 0 16px;
+}
+#df-app .df-vpn-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0 12px;
+  font-weight: 550;
+}
+#df-app .df-vpn input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--df-accent);
+}
+#df-app .df-vpn-policy {
+  min-width: 0;
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--df-line);
+  border-radius: 10px;
+}
+#df-app .df-vpn-policy legend {
+  padding: 0 8px;
+  font-weight: 600;
+}
+#df-app .df-vpn-policy label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 550;
+  margin-bottom: 12px;
+}
+#df-app .df-vpn-policy select,
+#df-app .df-vpn-policy textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--df-line);
+  border-radius: 8px;
+  background: var(--df-surface);
+  color: var(--df-ink);
+  font: inherit;
+}
+#df-app .df-vpn-policy textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+#df-app .df-vpn-policy .df-button {
+  margin: 4px 8px 4px 0;
+}

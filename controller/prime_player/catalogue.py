@@ -46,6 +46,7 @@ def signature(device, item):
                 item["content_id"],
                 item["snapshot"],
                 item["viewing_options"],
+                device.get("prime_network_scope"),
             ],
             sort_keys=True,
         ).encode()
@@ -55,6 +56,9 @@ def signature(device, item):
 class CatalogueChecks:
     @staticmethod
     def require_catalogue_generation(health, results):
+        context = health.get("network", {}).get("context_id")
+        if health.get("network", {}).get("enabled") and (not context or results.get("network_context_id") != context):
+            raise ExecutorError("prime_stale_result", "Catalogue belongs to a replaced network context")
         generation = health.get("compatibility", {}).get("generation")
         if generation is not None and results.get("generation") != generation:
             raise ExecutorError("prime_stale_result", "Prime runtime changed after catalogue selection")
@@ -64,7 +68,31 @@ class CatalogueChecks:
         adaptation = adaptation_status(health)
         with self.db.transaction() as db:
             device = self.db.device(db)
+            network = health.get("network", {})
+            if network.get("enabled"):
+                operation = network.get("operation") or {}
+                context = network.get("context") or {}
+                device["prime_network"] = {
+                    "state": network.get("state", "unknown"), "target_id": context.get("target_id"),
+                    "phase": operation.get("phase"), "operation_id": operation.get("operation_id"),
+                    "requested_target": (operation.get("target") or {}).get("id"),
+                    "last_error": operation.get("error") or network.get("last_error"),
+                    "checked_at": datetime.now(UTC).isoformat(),
+                    "policy_enabled": self.network_policy.enabled,
+                }
+                scope = {"context_id": network.get("context_id"), "policy_revision": self.network_policy.revision}
+                if device.get("prime_network_scope") != scope:
+                    device["prime_network_scope"] = scope
+                    device["prime_access"] = {}
+                    if device.get("observed"):
+                        device["observed"]["verified"] = False
+                    self.db.save_device(db, device)
+            elif device.pop("prime_network_scope", None):
+                device.pop("prime_network", None)
+                device["prime_access"] = {}
+                self.db.save_device(db, device)
             if not adaptation and not device.get("prime_runtime_adaptation"):
+                self.db.save_device(db, device)
                 return
             if adaptation:
                 device["prime_runtime_adaptation"] = {
@@ -104,21 +132,26 @@ class CatalogueChecks:
 
     def prepare_selection(self, db, device, item):
         """Called under the staging transaction; never issues an RPC here."""
+        rule = self.network_policy.rule(item["viewing_options"], item["snapshot"])
+        if rule and device.get("prime_network_scope", {}).get("policy_revision") != self.network_policy.revision:
+            device["prime_network_scope"] = {"context_id": None, "policy_revision": self.network_policy.revision}
+            device["prime_access"] = {}
+            self.db.save_device(db, device)
         token = signature(device, item)
         probe = self.db.meta(db, key(device["id"]), {})
         now = time.time()
         if probe.get("signature") == token:
-            if probe.get("state") == "ready" and now < probe.get("expires", 0):
+            if probe.get("state") in {"ready", "network_acquisition_required"} and now < probe.get("expires", 0):
                 probe["launch_intent"] = device["intent_version"] + 1
                 self.db.set_meta(db, key(device["id"]), probe)
-                return True
+                return {"state": probe["state"], "probe_id": probe["id"]}
             if probe.get("state") == "pending" and now < probe.get("expires", 0):
-                return False
+                return {"state": "pending"}
             if now < probe.get("retry_at", 0):
-                return False
+                return {"state": "pending"}
         active = getattr(self, "catalogue_task", None)
         if active and not active.done():
-            return False
+            return {"state": "pending"}
         probe = {
             "id": uuid4().hex,
             "signature": token,
@@ -145,7 +178,7 @@ class CatalogueChecks:
                 self.catalogue_task = asyncio.create_task(self.observe_catalogue(probe))
 
             self.loop.call_soon_threadsafe(schedule)
-        return False
+        return {"state": "pending"}
 
     async def observe_catalogue(self, probe):
         correlation = rpc_context.set({"catalogue_probe_id": probe["id"], "content_id": probe["content_id"]})
@@ -247,6 +280,14 @@ class CatalogueChecks:
             now = datetime.now(UTC)
             state = evidence.get("state", "access_unknown") if valid else "discarded"
             error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
+            rule = self.network_policy.rule(probe["request"]["allowed_viewing_options"], probe["request"]["content_snapshot"])
+            language_rejection = ((evidence.get("audit") or {}).get("broadcast_selection") or {}).get("match_status") == "no_match"
+            fallback = "feeds_language" if language_rejection else state
+            if valid and rule and (
+                (not error and fallback in rule["fallback_on"])
+                or error.get("code") == "prime_network_recovering"
+            ):
+                state = "network_acquisition_required"
             adaptation = device.get("prime_runtime_adaptation") or {}
             retry_seconds = (
                 adaptation.get("retry_after_seconds", 15)
@@ -262,6 +303,7 @@ class CatalogueChecks:
             if not valid or (evidence.get("error") or {}).get("code") == "prime_device_recovery":
                 return
             reasons = {
+                "network_acquisition_required": "Acquiring the feed on a configured network; playback will be interrupted",
                 "ready": "Prime catalogue reports an entitled live feed",
                 "waiting_for_feed": "Prime feed is upcoming; catalogue check retries in 60 seconds",
                 "access_unknown": "Prime entitlement or event state is unknown; catalogue check retries in 60 seconds",
@@ -280,6 +322,8 @@ class CatalogueChecks:
                 reason = "No English or unlabeled Prime broadcast on the permitted route; watch plan retained"
             device.setdefault("prime_access", {})[probe["content_id"]] = {
                 "state": state,
+                "scope": device.get("prime_network_scope"),
+                "expires_at": (time.time() + self.network_policy.ttl) if device.get("prime_network_scope") else None,
                 "reason": reason,
                 "observed_at": now.isoformat(),
                 "retry_after": (now + timedelta(seconds=retry_seconds)).isoformat()
@@ -309,7 +353,7 @@ class CatalogueChecks:
                 device["id"],
             )
 
-    def prepared_catalogue(self, request, session, *, generation=None):
+    def prepared_catalogue(self, request, session, *, generation=None, network_context_id=None):
         with self.db.transaction() as db:
             probe = self.db.meta(db, key(request["device_id"]), {})
         if (
@@ -317,6 +361,7 @@ class CatalogueChecks:
             and probe.get("launch_intent") == request["intent_version"]
             and probe.get("content_id") == request["content_id"]
             and probe.get("session_id") == session
+            and probe.get("results", {}).get("network_context_id") == network_context_id
             and (generation is None or probe.get("results", {}).get("generation") == generation)
             and time.time() < probe.get("expires", 0)
             and probe.get("request", {}).get("content_snapshot") == request["content_snapshot"]

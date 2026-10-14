@@ -22,9 +22,10 @@ from .catalogue import CatalogueChecks
 from .client import PrimePlayerClient, correlated
 from .matching import EventMatcher, selection_state
 from .search import choose_search
+from .network import NetworkAcquisition
 
 
-class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
+class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker):
     def __init__(self, database, settings, *, player=None, matcher=None):
         super().__init__(database, settings)
         self.model_captures = ModelCaptureStore(database.path)
@@ -53,6 +54,13 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                     device["prime_access"] = {}
                     self.db.save_device(db, device)
                 self.db.set_meta(db, "prime_catalogue_contract", 14)
+            for device_row in db.execute("SELECT id FROM devices").fetchall():
+                device = self.db.device(db, device_row[0])
+                scope = device.get("prime_network_scope")
+                if scope and (not self.network_policy.enabled or scope.get("policy_revision") != self.network_policy.revision):
+                    device["prime_access"] = {}
+                    device.pop("prime_network_scope", None)
+                    self.db.save_device(db, device)
             for row in db.execute(
                 "SELECT * FROM executor_jobs WHERE request IS NOT NULL AND cancel_requested=0"
             ).fetchall():
@@ -69,7 +77,7 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                     "no_matching_feed",
                 }:
                     continue
-                if row["touched_device"] and not workflow.get("attempt_id"):
+                if row["touched_device"] and not workflow.get("attempt_id") and not workflow.get("network_acquisition"):
                     # An interrupted search has no playback attempt to reconcile.
                     # Quiesce it before any new search; do not repeat on startup.
                     report["operation"].update(
@@ -256,6 +264,9 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             self.store.fail(token, ExecutorError("prime_workflow_failed", "Prime playback workflow failed"))
 
     async def select_and_launch(self, token, request):
+        acquired = await self.acquire_network_catalogue(token, request)
+        if acquired is False:
+            return False
         health = await self.check_session(
             capabilities=("search", "play", "playback_status", "cancel", "stop")
         )
@@ -271,11 +282,13 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             self.store.allowed(db, token, navigation=True)
             timezone = self.db.device(db, request["device_id"])["preferences"]["timezone"]
         self.save_workflow(
-            token, session_id=session, source="prime_player", selection=None, ownership=ownership
+            token, session_id=session, source="prime_player", selection=None, ownership=ownership,
+            network_context_id=health.get("network", {}).get("context_id")
         )
         self.store.phase(token, "searching")
-        prepared = self.prepared_catalogue(
-            request, session, generation=health.get("compatibility", {}).get("generation")
+        prepared = acquired or self.prepared_catalogue(
+            request, session, generation=health.get("compatibility", {}).get("generation"),
+            network_context_id=health.get("network", {}).get("context_id"),
         )
         if prepared:
             results, selected, audit = prepared["results"], prepared["selected"], prepared["audit"]
@@ -369,6 +382,8 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
 
     @staticmethod
     def validate_outcome(outcome, workflow):
+        if workflow.get("network_context_id") and outcome.get("network_context_id") != workflow["network_context_id"]:
+            raise ExecutorError("prime_network_context_changed", "Playback result belongs to another network context")
         if (
             outcome.get("session_id") != workflow["session_id"]
             or outcome.get("attempt_id") != workflow["attempt_id"]
@@ -399,6 +414,10 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             with self.db.transaction() as db:
                 self.store.allowed(db, token, navigation=True)
             workflow = self.store.report(token)["prime_player"]
+            if workflow.get("network_context_id"):
+                current = await self.check_session(workflow["session_id"], capabilities=("playback_status",))
+                if current.get("network", {}).get("context_id") != workflow["network_context_id"]:
+                    raise ExecutorError("prime_network_context_changed", "Playback network changed before verification")
             outcome = workflow.get("launch_outcome") or {}
             if outcome.get("state") != "playing":
                 await self.check_session(workflow["session_id"])
@@ -510,6 +529,8 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                 raise ExecutorError(
                     "prime_status_mismatch", "Current status belongs to another session or attempt"
                 )
+            if workflow.get("network_context_id") and status.get("network_context_id") != workflow["network_context_id"]:
+                raise ExecutorError("prime_network_context_changed", "Status belongs to another network context")
             workflow["playback_status"] = status
             observed, fresh = None, False
             try:
@@ -749,6 +770,9 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         """Fence remote work without waiting on the local mutation lock."""
         report = self.store.report(token)
         workflow = report.get("prime_player") or {}
+        if await self.interrupt_network(token, workflow):
+            health = await self.check_session(control=True)
+            return self.player.ownership(health)
         health = await self.check_session(control=True, capabilities=("cancel",))
         receipt = self.player.control_ownership(health)
         if workflow.get("session_id") != health["session_id"]:
