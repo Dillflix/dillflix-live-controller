@@ -45,6 +45,12 @@ class NetworkPlayer(Player):
     async def broadcasts(self, content_id, ownership):
         return {**await super().broadcasts(content_id, ownership), "network_context_id": self.context}
 
+    async def vpn_locations(self):
+        return {"enabled": True, "locations": [
+            {"id": target, "qualified": True, "routing_confirmed": True}
+            for target in ("toronto", "montreal", "calgary")
+        ]}
+
     async def vpn_status(self, operation_id=None):
         return self.operations.get(operation_id, {"state": "not_found"})
 
@@ -244,5 +250,29 @@ async def test_city_fallback_is_selective_and_never_revisits(tmp_path, monkeypat
         await w.acquire_network_catalogue(report["token"], request)
         assert visited == [initial] + expected
         assert [v["target_id"] for v in w.player.transitions] == expected
+    finally:
+        await cleanup(c)
+
+
+async def test_unqualified_city_does_not_prevent_direct_fallback(tmp_path, monkeypatch):
+    c, w = network_rig(tmp_path)
+    try:
+        with c.db.transaction() as db:
+            device = c.db.device(db)
+            device["preferences"]["vpn_policy"] = CITY_POLICY
+            c.db.save_device(db, device)
+        w.player.target, w.player.context = "toronto", "network-toronto"
+        async def inventory():
+            return {"locations": [{"id": "montreal", "qualified": False, "routing_confirmed": True}]}
+        w.player.vpn_locations = inventory
+        request = payload()
+        request["content_snapshot"]["event"]["home_team_details"]["city"] = "Montreal"
+        report, _ = w.store.submit(request)
+        async def choose(*args):
+            return {}, {"readiness": "ready" if w.player.target == "direct" else "feeds_locked"}, {}
+        monkeypatch.setattr("controller.prime_player.network.choose_search", choose)
+        await w.acquire_network_catalogue(report["token"], request)
+        assert [v["target_id"] for v in w.player.transitions] == ["direct"]
+        assert w.store.report(report["token"])["prime_player"]["network_acquisition"]["unavailable_targets"] == ["montreal"]
     finally:
         await cleanup(c)

@@ -134,6 +134,15 @@ class NetworkAcquisition:
             if target in acquisition["tried"]:
                 previous = acquisition.get("last_state")
                 choices = [t for t in rule["targets"] if t not in acquisition["tried"]]
+                if "matched_policies" in rule and previous in rule["fallback_on"]:
+                    inventory = await self.player.vpn_locations()
+                    self._network_allowed(token, acquisition)
+                    available = {p["id"] for p in inventory.get("locations", [])
+                                 if p.get("qualified") is True and p.get("routing_confirmed") is True}
+                    skipped = [t for t in choices if t != "direct" and t not in available]
+                    acquisition["unavailable_targets"] = skipped
+                    choices = [t for t in choices if t == "direct" or t in available]
+                    self._save_network(token, acquisition)
                 if previous not in rule["fallback_on"] or not choices:
                     self.complete_search(token, "feeds_locked" if previous == "feeds_language" else previous or "access_unknown", error=acquisition.get("last_error"))
                     return False
