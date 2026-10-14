@@ -139,7 +139,9 @@ def choose(device, items, now, real_now):
         if not item["active"] and item["content_id"] not in committed | {current_id}:
             continue
         evidence = access.get(item["content_id"], {})
-        if evidence.get("options") == item["viewing_options"] and evidence.get("state") in {
+        if (evidence.get("scope") == device.get("prime_network_scope")
+                and (not evidence.get("expires_at") or real_now.timestamp() < evidence["expires_at"])
+                and evidence.get("options") == item["viewing_options"]) and evidence.get("state") in {
             "feeds_unavailable",
             "feeds_locked",
             "no_matching_feed",

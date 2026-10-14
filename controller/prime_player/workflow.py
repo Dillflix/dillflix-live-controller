@@ -22,9 +22,10 @@ from .catalogue import CatalogueChecks
 from .client import PrimePlayerClient, correlated
 from .matching import EventMatcher, selection_state
 from .search import choose_search
+from .network import NetworkAcquisition
 
 
-class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
+class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker):
     def __init__(self, database, settings, *, player=None, matcher=None):
         super().__init__(database, settings)
         self.model_captures = ModelCaptureStore(database.path)
@@ -69,7 +70,7 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
                     "no_matching_feed",
                 }:
                     continue
-                if row["touched_device"] and not workflow.get("attempt_id"):
+                if row["touched_device"] and not workflow.get("attempt_id") and not workflow.get("network_acquisition"):
                     # An interrupted search has no playback attempt to reconcile.
                     # Quiesce it before any new search; do not repeat on startup.
                     report["operation"].update(
@@ -256,6 +257,9 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             self.store.fail(token, ExecutorError("prime_workflow_failed", "Prime playback workflow failed"))
 
     async def select_and_launch(self, token, request):
+        acquired = await self.acquire_network_catalogue(token, request)
+        if acquired is False:
+            return False
         health = await self.check_session(
             capabilities=("search", "play", "playback_status", "cancel", "stop")
         )
@@ -271,11 +275,13 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
             self.store.allowed(db, token, navigation=True)
             timezone = self.db.device(db, request["device_id"])["preferences"]["timezone"]
         self.save_workflow(
-            token, session_id=session, source="prime_player", selection=None, ownership=ownership
+            token, session_id=session, source="prime_player", selection=None, ownership=ownership,
+            network_context_id=health.get("network", {}).get("context_id")
         )
         self.store.phase(token, "searching")
-        prepared = self.prepared_catalogue(
-            request, session, generation=health.get("compatibility", {}).get("generation")
+        prepared = acquired or self.prepared_catalogue(
+            request, session, generation=health.get("compatibility", {}).get("generation"),
+            network_context_id=health.get("network", {}).get("context_id"),
         )
         if prepared:
             results, selected, audit = prepared["results"], prepared["selected"], prepared["audit"]
@@ -749,6 +755,9 @@ class PrimePlaybackWorkflow(CatalogueChecks, PlaybackWorker):
         """Fence remote work without waiting on the local mutation lock."""
         report = self.store.report(token)
         workflow = report.get("prime_player") or {}
+        if await self.interrupt_network(token, workflow):
+            health = await self.check_session(control=True)
+            return self.player.ownership(health)
         health = await self.check_session(control=True, capabilities=("cancel",))
         receipt = self.player.control_ownership(health)
         if workflow.get("session_id") != health["session_id"]:

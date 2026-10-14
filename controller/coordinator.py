@@ -185,6 +185,8 @@ class PlaybackCoordinator(PlaybackRecovery):
                     d["retry_playback"] = None
                     d.setdefault("prime_access", {}).pop(target, None)
                     budget = self.settings.navigation_timeout
+                    if self.executor and hasattr(self.executor, "navigation_budget"):
+                        budget = self.executor.navigation_budget(item["viewing_options"], budget)
                     if self.settings.mode == "demo" and item["snapshot"].get("_simulation", {}).get(
                         "stall_navigation"
                     ):
@@ -367,6 +369,8 @@ class PlaybackCoordinator(PlaybackRecovery):
                     reason = str(report["reason"])[:1000] + "; search will retry in 60 seconds"
                 d.setdefault("prime_access", {})[job["content_id"]] = {
                     "state": readiness,
+                    "scope": d.get("prime_network_scope"),
+                    "expires_at": (time.time() + self.executor.network_policy.ttl) if self.executor and d.get("prime_network_scope") else None,
                     "reason": reason,
                     "observed_at": finished.isoformat(),
                     "retry_after": (finished + timedelta(seconds=60)).isoformat()

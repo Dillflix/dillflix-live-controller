@@ -20,6 +20,8 @@ from ..executor.models import ExecutorError
 rpc_context = ContextVar("prime_rpc_context", default={})
 
 COMPATIBILITY_MESSAGES = {
+    "prime_network_recovering": "Prime network transition is pending; watch plan retained",
+    "prime_network_disabled": "Managed networking must be enabled and qualified in Prime Player",
     "prime_runtime_recovering": "Prime runtime update is being handled automatically; watch plan retained",
     "prime_runtime_unsupported": "Prime runtime unsupported; player adapter update required",
     "prime_api_incompatible": "Prime Player API unsupported; player service update required",
@@ -91,6 +93,10 @@ class PrimePlayerClient:
         await self.http.aclose()
 
     async def rpc(self, method, *, budget=60, **params):
+        if method in {"search", "broadcasts", "resolve", "play", "discover", "pages"}:
+            context = (params.get("ownership") or {}).get("network_context_id")
+            if context:
+                params["network_context_id"] = context
         call_id = uuid.uuid4().hex
         started = time.monotonic()
         log = logging.getLogger("controller.prime_rpc")
@@ -188,6 +194,9 @@ class PrimePlayerClient:
     def require(health, *capabilities):
         if health.get("api_version", 0) < 4:
             raise ExecutorError("prime_api_incompatible", "Prime Player API 4 or newer is required", retryable=False)
+        network = health.get("network", {})
+        if network.get("enabled") and network.get("state") != "ready" and any(n in {"search", "broadcasts", "play", "resolve"} for n in capabilities):
+            raise ExecutorError("prime_network_recovering", COMPATIBILITY_MESSAGES["prime_network_recovering"])
         implemented = health.get("capabilities", [])
         compatibility = health.get("compatibility", {})
         available = compatibility.get("capabilities", {})
@@ -268,3 +277,12 @@ class PrimePlayerClient:
         return await self.rpc(
             "stop", session_id=session_id, attempt_id=attempt_id, ownership=ownership, budget=60
         )
+
+    async def vpn_status(self, operation_id=None):
+        return await self.rpc("vpn_status", operation_id=operation_id, budget=5)
+
+    async def vpn_connect(self, operation, ownership):
+        return await self.rpc("vpn_connect", **operation, ownership=ownership, budget=10)
+
+    async def vpn_cancel(self, operation_id, ownership):
+        return await self.rpc("vpn_cancel", operation_id=operation_id, ownership=ownership, budget=10)
