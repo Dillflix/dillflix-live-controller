@@ -1,0 +1,379 @@
+{
+  "schema": "prime-ignite-profile/1",
+  "status": "device_validated_live_catalogue_alpha",
+  "package": "com.amazon.firebat",
+  "apkVersionCode": 321009610,
+  "apkSha256": "46adf9b80625dd3681001487e0d756bf6f3b110cfc599c41b7190b5d12402bce",
+  "runtimeVersion": "lrc-1.0.116634.0",
+  "engine": {
+    "name": "libignite.so",
+    "buildId": "da7bc38ad2bca142",
+    "sha256": "227f4fcc36ca3894f553bc0e8ae0977e7732c114a4082280055c91d9327d9b17",
+    "architecture": "ARM32 Thumb",
+    "functions": {
+      "JS_Eval": 12113044,
+      "JS_EvalFunction": 12112758,
+      "JS_ToCStringLen2": 12044984,
+      "JS_FreeCString": 12045540,
+      "__JS_FreeValue": 12047752,
+      "JS_GetException": 12048122,
+      "JS_CallInternal": 12073024
+    },
+    "checks": [
+      {
+        "name": "GNU build-id note",
+        "offset": 492,
+        "hex": "040000000800000003000000474e5500da7bc38ad2bca142"
+      },
+      {
+        "name": "JS_Eval",
+        "offset": 12113044,
+        "hex": "f0b503af4df804bd86b0d0f800416cb1"
+      },
+      {
+        "name": "JS_EvalFunction",
+        "offset": 12112758,
+        "hex": "80b56f4684b0d0e9301c4ff0000ecdf8"
+      },
+      {
+        "name": "JS_ToCStringLen2",
+        "offset": 12044984,
+        "hex": "f0b503af2de9000f85b0064693468a46"
+      },
+      {
+        "name": "JS_FreeCString",
+        "offset": 12045540,
+        "hex": "002908bf704751f8102d013a0a6005dc"
+      },
+      {
+        "name": "__JS_FreeValue",
+        "offset": 12047752,
+        "hex": "0069fff757bfd4d4f0b503af2de9000b"
+      },
+      {
+        "name": "JS_GetException",
+        "offset": 12048122,
+        "hex": "02694ff0000c0223d2e92001c2e920c3"
+      },
+      {
+        "name": "JS_CallInternal",
+        "offset": 12073024,
+        "hex": "f0b503af2de9000fd3b00146dff8e40e"
+      }
+    ]
+  },
+  "appResource": {
+    "name": "split.react.quickjs-2021-03-27.bin.br",
+    "integritySha256": "ddcb039159f5483239ae40d4ae9c6c1b179c8d327d0b2407701a8b41e676afcc"
+  },
+  "testRuntime": {
+    "resourceName": "libamzn_av_living_room_rust_client_test_utils-armv7thumb-ignite-6.0.0.so.zst",
+    "buildId": "ba2bf7df0932b61cb217df87e04770d84b4da855",
+    "compressedSha256": "e3924ff7f0567c413a0c03437b6051f7dde6e23d15c4c6eda2b01c3d51a4d8d7",
+    "decodedSha256": "d7ef3994c3bcb37c9f16d7daef6c1cf0418b591f429fbbddc19e77e117ef6a59",
+    "checks": [
+      {
+        "name": "GNU build-id note",
+        "offset": 404,
+        "hex": "040000001400000003000000474e5500ba2bf7df0932b61cb217df87e04770d84b4da855"
+      }
+    ],
+    "executableAnchors": [
+      {
+        "offset": 9790564,
+        "hex": "0df5056605f5fc713046b8470df5056207cab0f1ff3018bf0846c8e9000205a8634900f583507944fdf7d6fa8df838040df5466008aa59469ef14efe3046c3f7"
+      },
+      {
+        "offset": 12468484,
+        "hex": "0f237a442846dff19bf1224a29460f980e237a443cf228f510980e9901600d9941600c9981600b99c1600df5617dbde8f08f00bf0000f044221f98003ea89100"
+      },
+      {
+        "offset": 15146420,
+        "hex": "3bf604f1680005f1680101f0defd04f1740005f1740101f007fe04f1100005f11001fff79bfd04f1300005f130017bf077fb009884f88280a4f8806084f88590"
+      }
+    ]
+  },
+  "adapter": {
+    "id": "ignite-arm32-lrc116634-v1",
+    "modules": {
+      "focus": 55649,
+      "page": 47755,
+      "navigation": 42298,
+      "bridge": 67008,
+      "context": 2914,
+      "manager": 41805,
+      "plugin_command": 30630,
+      "rust_playback": 48622,
+      "input": 26133,
+      "native_input": 9046,
+      "platform": 43053,
+      "rpc": 91414,
+      "page_types": 78701,
+      "event_loop": 44268,
+      "store": 4029,
+      "metadata": 56405,
+      "history": 69339,
+      "router": 49573,
+      "content": 68976,
+      "resolver": 5274,
+      "transform": 71336,
+      "deeplink": 16269,
+      "playback_result": 40230,
+      "playback_metadata": 33299,
+      "metadata_client": 92665,
+      "metadata_model": 72008,
+      "remote_client": 56947,
+      "availability": 10245,
+      "identity": 48588,
+      "playback_policy": 69130,
+      "search_model": 11143,
+      "auth": 62935,
+      "find_schemes": 44732,
+      "find_timezone": 56499,
+      "find_device": 10984,
+      "find_features": 5712,
+      "find_branding": 89418,
+      "find_header_params": 5609,
+      "find_headers": 77209,
+      "find_url": 31682,
+      "find_edge": 19024,
+      "find_http": 30563,
+      "find_method": 18251,
+      "find_capabilities": 1059,
+      "find_capability_names": 35443,
+      "find_flags": 16807,
+      "find_flag_names": 25770,
+      "find_broadcast_schemes": 44732,
+      "find_broadcast_headers": 5609,
+      "find_presentation": 72978
+    },
+    "contracts": {
+      "focus": [
+        "IK.getFocusedTestID"
+      ],
+      "page": [
+        "Z.getCurrentPage"
+      ],
+      "navigation": [
+        "ul.switchPage",
+        "ul.switchToPreviousPage"
+      ],
+      "context": [
+        "v.getCurrentState"
+      ],
+      "plugin_command": [
+        "default"
+      ],
+      "rust_playback": [
+        "g1"
+      ],
+      "event_loop": [
+        "eventQueue.waitWithTimeout"
+      ],
+      "store": [
+        "default.getState"
+      ],
+      "resolver": [
+        "ZW"
+      ],
+      "transform": [
+        "YY"
+      ],
+      "playback_result": [
+        "G"
+      ],
+      "auth": [
+        "ZP.isUserSignedIn"
+      ],
+      "find_schemes": [
+        "Fd",
+        "fe",
+        "Vu"
+      ],
+      "find_timezone": [
+        "R"
+      ],
+      "find_device": [
+        "LK.getInstance"
+      ],
+      "find_features": [
+        "z"
+      ],
+      "find_branding": [
+        "_k"
+      ],
+      "find_header_params": [
+        "sI"
+      ],
+      "find_headers": [
+        "G"
+      ],
+      "find_url": [
+        "Z"
+      ],
+      "find_edge": [
+        "P"
+      ],
+      "find_http": [
+        "Z.deviceProxyClient"
+      ],
+      "find_method": [],
+      "find_capabilities": [
+        "s.getInstance"
+      ],
+      "find_capability_names": [],
+      "find_flags": [
+        "b.getInstance"
+      ],
+      "find_flag_names": [],
+      "find_broadcast_schemes": [
+        "BY"
+      ],
+      "find_broadcast_headers": [
+        "ZE"
+      ],
+      "find_presentation": [
+        "A"
+      ]
+    },
+    "groups": {
+      "core": [
+        "focus",
+        "page",
+        "navigation",
+        "context",
+        "event_loop"
+      ],
+      "search": [
+        "store",
+        "page_types"
+      ],
+      "resolver": [
+        "resolver",
+        "playback_result",
+        "auth"
+      ],
+      "navigation": [
+        "page_types"
+      ],
+      "native": [
+        "bridge",
+        "manager",
+        "plugin_command",
+        "rust_playback"
+      ],
+      "catalog_search": [
+        "find_schemes",
+        "find_timezone",
+        "find_device",
+        "find_features",
+        "find_branding",
+        "find_header_params",
+        "find_headers",
+        "find_url",
+        "find_edge",
+        "find_http",
+        "find_method",
+        "find_capabilities",
+        "find_capability_names",
+        "find_flags",
+        "find_flag_names"
+      ],
+      "broadcasts": [
+        "find_broadcast_schemes",
+        "find_broadcast_headers",
+        "find_presentation",
+        "find_timezone",
+        "find_device",
+        "find_features",
+        "find_branding",
+        "find_headers",
+        "find_url",
+        "find_edge",
+        "find_http",
+        "find_method"
+      ]
+    },
+    "behaviorResources": {
+      "split.react.quickjs-2021-03-27.bin.br": "ddcb039159f5483239ae40d4ae9c6c1b179c8d327d0b2407701a8b41e676afcc",
+      "rust.shared.chunk.react.quickjs-2021-03-27.bin.br": "268c9cc37bf944b8784a6b3886ed6fd435e3bc0817eff321cb3bbc251aaeddb7",
+      "rust.AppStartChunk.chunk.react.quickjs-2021-03-27.bin.br": "f1006474aa95aa20f68e66569502ecebff72c0c86e5c1567082f3faa253c7295",
+      "rust.PlaybackChunk.deferDownload.chunk.react.quickjs-2021-03-27.bin.br": "91e8c49a0f23f40a4db83fc5d6e988142504e2d4c6b262a22f0314978987d655",
+      "libamzn_av_living_room_rust_client-armv7thumb-ignite-6.0.0.so.zst": "be4ab32c2dc2e27ed8357f704662f4150bc48164855d3669b425da37dcc0a867",
+      "rust.StorefrontChunk.deferDownload.chunk.react.quickjs-2021-03-27.bin.br": "cc51881501fc72a2537b222584d04210e8c72c6a940f8fef8ca875b745ccecc4"
+    },
+    "behaviorEvidence": {
+      "play": "116634 capture 20261006T235708Z: fresh live_watch_now resolution, matching native title, Playing, sustained advancing position; user confirmed visible video.",
+      "catalog_search": "116634 captures 20261006T233556Z, 20261006T234659Z, 20261006T235708Z: Home search and search during verified playback; same title, epoch and advancing position retained.",
+      "broadcasts": "116634 captures 20261006T233556Z and 20261006T235708Z: complete Sportsnet liveDetailsPageBTF responses, four regional broadcast variants; 20261006T234659Z: recommendation-only response for unavailable event.",
+      "navigation": "116634 capture 20261006T235708Z: live launch arrival and scoped stop invocation returning to matching RUST_DETAILS. Native stopped state unconfirmed; Paused after unload. Other navigation routes not requalified.",
+      "search": "Renderer search and multi-page discover not separately device-requalified on 116634; static role/export review retained. Controller catalogue search uses catalog_search."
+    },
+    "nativeResponseSchemas": [
+      "inspectPage: structured tree",
+      "getTitleId: string identifier",
+      "getCurrentPosition: finite non-negative number"
+    ],
+    "candidatePromotion": "reviewed adapter release only; static shape never authorizes behavior",
+    "behaviorRequirements": {
+      "navigation": [
+        "split.react.quickjs-2021-03-27.bin.br",
+        "rust.shared.chunk.react.quickjs-2021-03-27.bin.br",
+        "rust.AppStartChunk.chunk.react.quickjs-2021-03-27.bin.br"
+      ],
+      "play": [
+        "split.react.quickjs-2021-03-27.bin.br",
+        "rust.shared.chunk.react.quickjs-2021-03-27.bin.br",
+        "rust.AppStartChunk.chunk.react.quickjs-2021-03-27.bin.br",
+        "rust.PlaybackChunk.deferDownload.chunk.react.quickjs-2021-03-27.bin.br",
+        "libamzn_av_living_room_rust_client-armv7thumb-ignite-6.0.0.so.zst"
+      ],
+      "search": [
+        "split.react.quickjs-2021-03-27.bin.br",
+        "rust.shared.chunk.react.quickjs-2021-03-27.bin.br",
+        "rust.AppStartChunk.chunk.react.quickjs-2021-03-27.bin.br",
+        "libamzn_av_living_room_rust_client-armv7thumb-ignite-6.0.0.so.zst"
+      ],
+      "catalog_search": [
+        "split.react.quickjs-2021-03-27.bin.br",
+        "rust.shared.chunk.react.quickjs-2021-03-27.bin.br",
+        "rust.AppStartChunk.chunk.react.quickjs-2021-03-27.bin.br"
+      ],
+      "broadcasts": [
+        "split.react.quickjs-2021-03-27.bin.br",
+        "rust.shared.chunk.react.quickjs-2021-03-27.bin.br",
+        "rust.AppStartChunk.chunk.react.quickjs-2021-03-27.bin.br",
+        "rust.StorefrontChunk.deferDownload.chunk.react.quickjs-2021-03-27.bin.br"
+      ]
+    },
+    "nativeClientResources": {
+      "libamzn_av_living_room_rust_client-armv7thumb-ignite-6.0.0.so.zst": "be4ab32c2dc2e27ed8357f704662f4150bc48164855d3669b425da37dcc0a867"
+    },
+    "valueContracts": {
+      "bridge": [
+        "CrossAppEventChannel"
+      ],
+      "manager": [
+        "WasmCommunicationManager"
+      ],
+      "find_schemes": [
+        "YF"
+      ],
+      "find_features": [
+        "X"
+      ],
+      "find_method": [
+        "Z"
+      ],
+      "find_capability_names": [
+        "W"
+      ],
+      "find_flag_names": [
+        "L"
+      ],
+      "find_broadcast_schemes": [
+        "YF"
+      ]
+    }
+  }
+}

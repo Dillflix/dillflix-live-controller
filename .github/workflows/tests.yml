@@ -21,7 +21,11 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -e '.[test]'
+      - run: python -m pip install ./.ci/player
+      - run: python -m pytest -q .ci/player/tests/test_network_service.py
       - run: python -m pytest -q -o faulthandler_timeout=30
+        env:
+          PRIME_CONTRACT_REQUIRED: '1' 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
