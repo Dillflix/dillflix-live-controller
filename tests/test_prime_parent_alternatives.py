@@ -261,7 +261,7 @@ async def test_timeout_retains_partial_scan_without_excluding_event(tmp_path, mo
         await cleanup(controller)
 
 
-@pytest.mark.parametrize("state", ["feeds_locked", "no_matching_feed"])
+@pytest.mark.parametrize("state", ["feeds_locked", "no_matching_feed", "feeds_unavailable"])
 async def test_upgrade_clears_old_search_exclusions_but_retains_plan(tmp_path, state):
     controller, workflow = rig(tmp_path)
     try:
@@ -270,14 +270,14 @@ async def test_upgrade_clears_old_search_exclusions_but_retains_plan(tmp_path, s
             device["prime_access"] = {"fixture-game": {"state": state, "retry_after": None}}
             device["plan"] = [{"content_id": "fixture-game"}]
             controller.db.save_device(db, device)
-            controller.db.set_meta(db, "prime_catalogue_contract", 13)
+            controller.db.set_meta(db, "prime_catalogue_contract", 14)
             plan = copy.deepcopy(device["plan"])
         workflow.recover()
         with controller.db.transaction() as db:
             device = controller.db.device(db)
             assert device["prime_access"] == {}
             assert device["plan"] == plan
-            assert controller.db.meta(db, "prime_catalogue_contract") == 14
+            assert controller.db.meta(db, "prime_catalogue_contract") == 15
             device["prime_access"] = {"fixture-game": {"state": state, "retry_after": None}}
             controller.db.save_device(db, device)
         workflow.recover()

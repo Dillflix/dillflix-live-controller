@@ -75,7 +75,7 @@ async def test_conflicting_occurrences_do_not_silently_use_first_lock_state():
     [
         ("waiting_for_feed", {"event_state": "UPCOMING"}),
         ("feeds_locked", {"entitlement_status": "UNENTITLED"}),
-        ("feeds_unavailable", {"entitlement_messaging": UNAVAILABLE_BADGE}),
+        ("feeds_unavailable", {"entitlement_messaging": UNAVAILABLE_BADGE, "event_state": "UPCOMING"}),
         ("access_unknown", {"entitlement_status": "UNKNOWN"}),
     ],
 )
