@@ -40,7 +40,11 @@ class NetworkPlayer(Player):
         return value
 
     def outcome(self):
-        return {**super().outcome(), "network_context_id": self.context}
+        value = {**super().outcome(), "network_context_id": self.context}
+        if self.target == "direct":
+            value.update(state="failed", resolved_id=None, reason="Resolver declined live playback",
+                         evidence={"launch": {"disposition": "not_invoked"}})
+        return value
 
     async def broadcasts(self, content_id, ownership):
         return {**await super().broadcasts(content_id, ownership), "network_context_id": self.context}

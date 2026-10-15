@@ -346,10 +346,9 @@ async def test_all_suitable_broadcasts_unavailable_preserves_completeness(has_mo
     if has_more:
         container["paginationLink"] = {"next": True}
     selected, audit = await choose(value)
-    if has_more:
-        assert selected is None and audit["match_status"] == "uncertain"
-    else:
-        assert selected["readiness"] == "feeds_unavailable"
+    assert selected["readiness"] == "ready"
+    assert selected["unavailable_trial"] is True
+    assert selected["availability_status"] == "UNAVAILABLE"
 
 
 async def test_unavailable_parent_still_inspects_independently_available_child():

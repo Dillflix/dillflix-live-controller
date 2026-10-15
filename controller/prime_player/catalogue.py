@@ -281,8 +281,7 @@ class CatalogueChecks:
             state = evidence.get("state", "access_unknown") if valid else "discarded"
             error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
             rule = self.network_policy.rule(probe["request"]["allowed_viewing_options"], probe["request"]["content_snapshot"])
-            language_rejection = ((evidence.get("audit") or {}).get("broadcast_selection") or {}).get("match_status") == "no_match"
-            fallback = "feeds_language" if language_rejection else state
+            fallback = state
             if valid and rule and (
                 (not error and fallback in rule["fallback_on"])
                 or error.get("code") == "prime_network_recovering"

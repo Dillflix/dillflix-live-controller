@@ -197,6 +197,13 @@ def availability_status(item):
     return None
 
 
+def unavailable_live_trial(item):
+    """A catalogue restriction is advisory only for explicitly entitled live feeds."""
+    return (item.get("entitlement_status") == "ENTITLED"
+            and item.get("event_state") == "LIVE"
+            and availability_status(item) == "UNAVAILABLE")
+
+
 def tile_state(item):
     """Catalogue evidence only; UI actions and estimated times confer no readiness."""
     if item.get("event_state") == "ENDED":

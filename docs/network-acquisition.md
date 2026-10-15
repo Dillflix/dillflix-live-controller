@@ -46,3 +46,13 @@ Enabling fallback authorizes playback interruption. Keep this feature disabled d
 ## Coordinated contract tests
 
 On Linux with both feature branches checked out, install the player without device extras into the controller test environment and run `PRIME_CONTRACT_REQUIRED=1 python -m pytest -q`. That flag fails collection if the coordinated player is absent; the real Unix service, ownership, and HTTP client are exercised with a controlled runtime boundary. Private cross-repository checkout requires a separately configured read credential in CI. During branch development a dedicated `ci/network-integration` branch carries an exact source snapshot solely for that combined run; it is not a production dependency or a merge target.
+
+## Unavailable but entitled live feeds
+
+A positively matched LIVE + ENTITLED feed marked UNAVAILABLE may be selected for
+one fresh playback trial after language and route checks. Equivalent available
+feeds are preferred. Catalogue readiness permits an attempt; only the player's
+verified live outcome establishes playback. A definitive refusal or settled
+failure records the attempt and continues the permitted location plan. Uncertain
+outcomes do not authorize another launch or a VPN switch. Failed trial evidence
+and visited locations survive controller restart. No fallback marks the event ended.
