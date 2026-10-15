@@ -110,3 +110,28 @@ async def test_unknown_trial_does_not_authorize_network_fallback(tmp_path):
         assert any(v[0] == "attempt" for v in w.player.calls)
     finally:
         await cleanup(c)
+
+
+async def test_failed_trials_exhaust_locations_once_and_report_unavailable(tmp_path):
+    c, w = network_rig(tmp_path)
+    original_search, original_outcome = w.player.search, w.player.outcome
+    async def search(*args):
+        value = await original_search(*args)
+        value["containers"][0]["items"][0]["availability_status"] = "UNAVAILABLE"
+        return value
+    def refused():
+        value = original_outcome()
+        value.update(state="failed", resolved_id=None,
+                     evidence={"launch": {"disposition": "not_invoked"}})
+        return value
+    w.player.search, w.player.outcome = search, refused
+    try:
+        report, _ = w.store.submit(payload())
+        await w.navigate(row(w, report["token"]))
+        final = w.store.report(report["token"])
+        assert final["operation"]["state"] == "feeds_unavailable"
+        assert final["prime_player"]["network_acquisition"]["tried"] == ["direct", "calgary"]
+        assert len(final["prime_player"]["unavailable_trials"]) == 2
+        assert len([v for v in w.player.calls if v[0] == "play"]) == 2
+    finally:
+        await cleanup(c)
