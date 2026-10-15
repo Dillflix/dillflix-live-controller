@@ -182,7 +182,7 @@ async def test_confirmed_launch_refusal_is_unknown_not_upcoming_or_denial(tmp_pa
         await cleanup(controller)
 
 
-async def test_unavailable_catalogue_preserves_plan_without_play_or_upcoming_retry(tmp_path, monkeypatch):
+async def test_unavailable_live_catalogue_allows_trial_without_preflight_play(tmp_path, monkeypatch):
     from test_prime_matching import UNAVAILABLE_BADGE
 
     controller, workflow = rig(tmp_path)
@@ -198,11 +198,10 @@ async def test_unavailable_catalogue_preserves_plan_without_play_or_upcoming_ret
         _, probe = saved(controller)
         await workflow.observe_catalogue(probe)
         device, evidence = saved(controller)
-        assert evidence["state"] == "feeds_unavailable"
+        assert evidence["state"] == "ready"
+        assert evidence["selected"]["unavailable_trial"] is True
         assert evidence["selected"]["entitlement_status"] == "ENTITLED"
         assert evidence["selected"]["event_state"] == "LIVE"
-        access = device["prime_access"][item["content_id"]]
-        assert "unavailable" in access["reason"] and access["retry_after"] is None
         assert device["intent_version"] == intent
         assert any(p["content_id"] == item["content_id"] for p in device["plan"])
         assert not any(c[0] in {"play", "stop", "cancel"} for c in workflow.player.calls)

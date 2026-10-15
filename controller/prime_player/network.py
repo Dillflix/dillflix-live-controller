@@ -144,7 +144,7 @@ class NetworkAcquisition:
                     choices = [t for t in choices if t == "direct" or t in available]
                     self._save_network(token, acquisition)
                 if previous not in rule["fallback_on"] or not choices:
-                    self.complete_search(token, "feeds_locked" if previous == "feeds_language" else previous or "access_unknown", error=acquisition.get("last_error"))
+                    self.complete_search(token, previous or "access_unknown", error=acquisition.get("last_error"))
                     return False
                 await self.network_transition(token, acquisition, choices[0])
                 continue
@@ -190,16 +190,13 @@ class NetworkAcquisition:
             state = selection_state(selected, audit)
             evidence.update(results=results, selected=selected, audit=audit)
             self.save_workflow(token, selection=audit, catalogue=results)
-            reason = "feeds_language" if (audit.get("broadcast_selection") or {}).get("match_status") == "no_match" else state
+            reason = state
             acquisition.setdefault("attempts", []).append({"target_id": target, "context_id": context, "state": reason, "audit": audit})
             if state == "ready":
                 self._save_network(token, acquisition)
                 return evidence
             acquisition["tried"].append(target)
             acquisition.update(last_state=state, last_error=audit.get("error"))
-            # Legacy route policies do not authorize language fallback; city policies do.
-            if (audit.get("broadcast_selection") or {}).get("match_status") == "no_match":
-                acquisition["last_state"] = "feeds_language" if rule.get("matched_policies") is not None else "feeds_locked"
             self._save_network(token, acquisition)
 
     async def interrupt_network(self, token, workflow):

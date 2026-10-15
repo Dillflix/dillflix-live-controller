@@ -346,10 +346,9 @@ async def test_all_suitable_broadcasts_unavailable_preserves_completeness(has_mo
     if has_more:
         container["paginationLink"] = {"next": True}
     selected, audit = await choose(value)
-    if has_more:
-        assert selected is None and audit["match_status"] == "uncertain"
-    else:
-        assert selected["readiness"] == "feeds_unavailable"
+    assert selected["readiness"] == "ready"
+    assert selected["unavailable_trial"] is True
+    assert selected["availability_status"] == "UNAVAILABLE"
 
 
 async def test_unavailable_parent_still_inspects_independently_available_child():
@@ -374,3 +373,12 @@ async def test_unavailable_parent_still_inspects_independently_available_child()
     assert fetched == [PARENT]
     assert selected["content_id"] == ENGLISH and selected["readiness"] == "ready"
     assert selected["availability_status"] is None
+
+
+async def test_unavailable_trial_does_not_bypass_french_language_exclusion():
+    from test_prime_matching import UNAVAILABLE_BADGE
+    value = response(0)
+    value["resource"]["containerList"][0]["items"][0]["entitlementMessaging"].update(UNAVAILABLE_BADGE)
+    selected, audit = await choose(value)
+    assert selected is None
+    assert audit["match_status"] == "no_match"

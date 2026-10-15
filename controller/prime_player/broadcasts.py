@@ -178,7 +178,7 @@ async def choose_broadcast(request, results, timezone, matcher, fetch, progress)
         if refined.get("error"):
             attempt["error"] = refined["error"]
         progress({**refined, "parent_selections": list(attempts)})
-        if state == "ready":
+        if state == "ready" and not selected.get("unavailable_trial"):
             return selected, {**refined, "parent_selections": attempts}
         uncertain |= state == "access_unknown"
         outcomes.append((selected, refined))
@@ -204,6 +204,6 @@ async def choose_broadcast(request, results, timezone, matcher, fetch, progress)
     if not outcomes:
         return None, report()
     # Upcoming/unknown access must never be hidden by a locked alternative.
-    order = ["waiting_for_feed", "access_unknown", "feeds_unavailable", "feeds_locked", "no_matching_feed"]
+    order = ["ready", "waiting_for_feed", "access_unknown", "feeds_unavailable", "feeds_locked", "no_matching_feed"]
     selected, final = min(outcomes, key=lambda outcome: order.index(selection_state(*outcome)))
     return selected, {**final, "parent_selections": attempts}
