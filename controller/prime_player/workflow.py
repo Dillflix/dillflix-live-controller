@@ -420,6 +420,9 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 current = await self.check_session(workflow["session_id"], capabilities=("playback_status",))
                 if current.get("network", {}).get("context_id") != workflow["network_context_id"]:
                     raise ExecutorError("prime_network_context_changed", "Playback network changed before verification")
+            cleanup = workflow.get("unavailable_trial_cleanup")
+            if cleanup:
+                return await self.finish_unavailable_trial(token, workflow, cleanup["outcome"])
             outcome = workflow.get("launch_outcome") or {}
             if outcome.get("state") != "playing":
                 await self.check_session(workflow["session_id"])
@@ -461,20 +464,25 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
 
     async def finish_unavailable_trial(self, token, workflow, outcome):
         """Settle a definitive failure before advancing the persisted network plan."""
-        if outcome.get("evidence", {}).get("launch", {}).get("disposition") != "not_invoked":
+        cleanup = workflow.get("unavailable_trial_cleanup") or {"outcome": outcome}
+        self.save_workflow(token, unavailable_trial_cleanup=cleanup)
+        if (outcome.get("evidence", {}).get("launch", {}).get("disposition") != "not_invoked"
+                and not cleanup.get("stopped")):
             health = await self.check_session(workflow["session_id"], capabilities=("stop",))
             stopped = await self.mutation(token, "PRIME_STOP_FAILED_TRIAL", lambda: self.player.stop_attempt(
                 workflow["session_id"], workflow["attempt_id"], self.player.ownership(health, automatic=True)))
             if (stopped.get("stopped") is not True or stopped.get("session_id") != workflow["session_id"]
                     or stopped.get("attempt_id") != workflow["attempt_id"]):
                 raise ExecutorError("prime_trial_cleanup_unconfirmed", "Failed playback trial has not settled")
+            cleanup["stopped"] = stopped
+            self.save_workflow(token, unavailable_trial_cleanup=cleanup)
         acquisition = workflow.get("network_acquisition")
         history = list(workflow.get("unavailable_trials") or [])
         if not any(item["attempt_id"] == outcome["attempt_id"] for item in history):
             history.append({"attempt_id": outcome["attempt_id"], "network_context_id": workflow.get("network_context_id"),
                             "selected": workflow["selected"], "outcome": outcome})
         if not acquisition:
-            self.save_workflow(token, unavailable_trials=history)
+            self.save_workflow(token, unavailable_trials=history, unavailable_trial_cleanup=None)
             self.complete_search(token, "feeds_unavailable", workflow["selected"])
             return False
         self._network_allowed(token, acquisition)
@@ -488,7 +496,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         acquisition.update(last_state="feeds_unavailable", last_error=None)
         # One durable update prevents a restart from replaying this failed trial.
         self.save_workflow(token, unavailable_trials=history, network_acquisition=acquisition,
-                           attempt_id=None, launch_outcome=None, launch_error=None)
+                           attempt_id=None, launch_outcome=None, launch_error=None, unavailable_trial_cleanup=None)
         return True
 
     def record_launch(self, token, outcome):

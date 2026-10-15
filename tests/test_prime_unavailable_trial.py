@@ -91,3 +91,22 @@ async def test_unsettled_failed_trial_cannot_switch_network(tmp_path):
         assert w.store.report(report["token"])["operation"]["error"]["code"] == "prime_trial_cleanup_unconfirmed"
     finally:
         await cleanup(c)
+
+
+async def test_unknown_trial_does_not_authorize_network_fallback(tmp_path):
+    c, w = network_rig(tmp_path)
+    original = w.player.outcome
+    def unknown():
+        value = original()
+        value.update(state="unknown", evidence={})
+        return value
+    w.player.outcome = unknown
+    w.player.lost_response = True
+    try:
+        report, _ = w.store.submit(payload())
+        await w.navigate(row(w, report["token"]))
+        assert not w.player.transitions
+        assert len([v for v in w.player.calls if v[0] == "play"]) == 1
+        assert any(v[0] == "attempt" for v in w.player.calls)
+    finally:
+        await cleanup(c)
