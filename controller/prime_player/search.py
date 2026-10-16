@@ -84,4 +84,5 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
         results, selected, audit = denied_outcome
         combined = {**audit, "search_attempts": list(attempts), "search_queries_exhausted": True}
         progress(combined)
+    combined = {**combined, "search_queries_exhausted": len(attempts) == len(queries)}
     return results, selected, combined

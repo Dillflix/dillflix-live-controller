@@ -1,4 +1,5 @@
 import { leagueName } from "./leagues";
+import { EntitlementFilter, matchesEntitlement } from "./EntitlementFilter";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
@@ -112,6 +113,7 @@ function PublicApp() {
   const [tab, setTab] = useState("live");
   const [sport, setSport] = useState("all");
   const [query, setQuery] = useState("");
+  const [entitlementFilter, setEntitlementFilter] = useState("entitled");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [connected, setConnected] = useState(false);
@@ -205,6 +207,7 @@ function PublicApp() {
       (tab === "live"
         ? e.state === "live" || e.playable
         : e.state !== "live" && !e.playable) &&
+      matchesEntitlement(e.entitlement, entitlementFilter) &&
       (sport === "all" || e.league === sport) &&
       `${e.title} ${e.teams.map((t) => t.full_name).join(" ")}`
         .toLowerCase()
@@ -303,7 +306,8 @@ function PublicApp() {
               Upcoming
             </button>
           </div>
-          <label className="df-search">
+          <EntitlementFilter value={entitlementFilter} onChange={setEntitlementFilter} />
+                  <label className="df-search">
             <span className="df-screenreader">Find a team or event</span>
             <input
               type="search"
@@ -456,12 +460,13 @@ function PublicApp() {
         ) : (
           <div className="df-empty">
             <h3>No events match</h3>
-            <p>Try another sport, or check the upcoming schedule.</p>
+            <p>Try another entitlement status or sport, or check the upcoming schedule.</p>
             <button
               className="df-button"
               onClick={() => {
                 setQuery("");
                 setSport("all");
+    setEntitlementFilter("all");
               }}
             >
               Clear filters

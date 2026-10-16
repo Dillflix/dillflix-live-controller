@@ -1,4 +1,5 @@
 import { leagueName } from "./leagues";
+import { EntitlementFilter, matchesEntitlement } from "./EntitlementFilter";
 import React, {
   useCallback,
   useEffect,
@@ -375,6 +376,7 @@ function App() {
     [tab, setTab] = useState("live"),
     [sport, setSport] = useState("all"),
     [query, setQuery] = useState("");
+  const [entitlementFilter, setEntitlementFilter] = useState("entitled");
   const [modal, setModal] = useState<Modal>(null),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
@@ -811,6 +813,7 @@ function App() {
       new Date(e.start_time) <= new Date(data.meta.now));
   const visible = data.events.filter(
     (e) =>
+      matchesEntitlement(e.entitlement, entitlementFilter) &&
       (sport === "all" || e.league === sport) &&
       (!query ||
         (e.title + " " + e.teams.map((t) => t.full_name).join(" "))
@@ -823,6 +826,7 @@ function App() {
     setView("events");
     setTab("upcoming");
     setSport("all");
+    setEntitlementFilter("all");
     setQuery("");
   };
   const preference = (p: Partial<Preferences>) =>
@@ -1083,6 +1087,7 @@ function App() {
                       Upcoming
                     </button>
                   </div>
+                  <EntitlementFilter value={entitlementFilter} onChange={setEntitlementFilter} />
                   <label className="df-search">
                     <span className="df-screenreader">
                       Find a team or event
@@ -1117,10 +1122,11 @@ function App() {
                 ) : (
                   <div className="df-empty">
                     <h3>No events match</h3>
-                    <p>Try another sport, or check the upcoming schedule.</p>
+                    <p>Try another entitlement status or sport, or check the upcoming schedule.</p>
                     <Button
                       onClick={() => {
                         setSport("all");
+    setEntitlementFilter("all");
                         setQuery("");
                       }}
                     >

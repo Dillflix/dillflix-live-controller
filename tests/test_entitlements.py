@@ -955,3 +955,71 @@ def test_admin_only_recheck_and_public_action_gate(tmp_path):
         public = client.get("/api/public/v1/overview", headers=USER).json()
         assert public["events"][0]["entitlement"]["blocked"]
         assert "evidence" not in public["events"][0]["entitlement"]
+
+
+@pytest.mark.parametrize("hours,expected", [(24, 12), (6, 6), (0.25, 1), (-1, 12)])
+def test_no_listing_retry_spacing(hours, expected):
+    from controller.entitlements import no_listing_retry
+    assert no_listing_retry(100000, 100000 + hours * 3600) == 100000 + expected * 3600
+
+
+async def test_successful_no_match_has_long_retry_and_manual_override(tmp_path):
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    entries[0]["start_time"] = (datetime.now(UTC) + timedelta(hours=24)).isoformat()
+    with controller.db.transaction() as db:
+        controller.replace_catalog(db, entries, "teamarr")
+    original = workflow.player.search
+    async def empty(*args):
+        return {**await original(*args), **results()}
+    workflow.player.search = empty
+    try:
+        await controller.check_entitlement_once()
+        row = record(controller)
+        assert row["status"] == "unknown" and row["state"] == "retry"
+        assert 43190 < row["next_check"] - time.time() <= 43200
+        assert json.loads(row["evidence"])["reason"] == "No Prime listing found"
+        view = controller.overview()["events"][0]["entitlement"]
+        assert view["result"] == "no_listing"
+        assert controller.overview()["entitlement_queue"]["failed_jobs"] == 0
+        count = len(workflow.player.calls)
+        await controller.check_entitlement_once()
+        assert len(workflow.player.calls) == count
+        controller.entitlement_command("living-room", manual(controller))
+        assert record(controller)["next_check"] == 0
+        async def failing(*args):
+            raise TimeoutError()
+        workflow.player.search = failing
+        await controller.check_entitlement_once()
+        assert 290 < record(controller)["next_check"] - time.time() <= 300
+    finally:
+        await cleanup(controller)
+
+
+def test_partial_or_ambiguous_search_is_not_no_listing():
+    from controller.entitlements import no_listing
+    audit = {"match_status": "no_match", "search_queries_exhausted": True,
+             "search_attempts": [{"state": "no_matching_feed"}]}
+    assert no_listing({"audit": audit})
+    assert not no_listing({"audit": audit, "error": {"code": "timeout"}})
+    assert not no_listing({"audit": {**audit, "search_queries_exhausted": False}})
+    assert not no_listing({"audit": {**audit, "search_attempts": [{"state": "access_unknown"}]}})
+
+
+async def test_legacy_no_match_is_rescheduled_without_search(tmp_path):
+    from controller.prime_player.labels import search_queries
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    entries[0]["start_time"] = (datetime.now(UTC) + timedelta(hours=24)).isoformat()
+    evidence = {"audit": {"match_status": "no_match", "search_attempts": [
+        {"query": q, "state": "no_matching_feed"} for q in search_queries(entries[0])]}}
+    with controller.db.transaction() as db:
+        controller.replace_catalog(db, entries, "teamarr")
+        db.execute("UPDATE event_entitlements SET state='retry',checked_at=?,evidence=?,next_check=0",
+                   (datetime.now(UTC).isoformat(), json.dumps(evidence)))
+    try:
+        await controller.check_entitlement_once()
+        assert not workflow.player.calls
+        assert record(controller)["next_check"] > time.time() + 43190
+    finally:
+        await cleanup(controller)
