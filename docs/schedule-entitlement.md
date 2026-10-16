@@ -23,8 +23,12 @@ revision checks and command receipts. A manual check never launches playback.
 It can also check a retained watch-plan event outside the current import window;
 that exception does not resume automatic scans outside the window.
 
-Both apps explain entitlement and disable Play now/Add to plan for confirmed denial;
-the command API enforces the same rule. Unknown stays usable with an explicit warning.
+Both apps show a single entitlement/job status in the existing event footer:
+Entitled, Unentitled, Unconfirmed, Queued or Checking, with an accessible icon and
+tooltip. Play now/Add to plan appear only after entitlement is confirmed. Admins
+get a Check button instead while unconfirmed or unentitled; public users can view
+details, while manual checks remain admin-only. The command API rejects confirmed
+denial. Unknown remains distinct from denial for existing automation and commitments.
 Existing commitments remain visible and removable, but denied events are not selected
 automatically or shown as winners in schedule previews. Current playback is not stopped
 by this background observation. Changed event identity/routes invalidate the observation
@@ -32,6 +36,22 @@ for gating without automatically resweeping; an admin can recheck. Existing live
 acquisition still performs its own fresh readiness checks.
 
 ## Work scheduling and playback
+
+Version 0.18.1 fixes a starvation bug: a routine playback monitor becoming due
+during search could previously discard the returned data before matching, sending
+the job from Checking back to Queued indefinitely without a result or failure count.
+Matching now continues alongside routine monitoring. Before a fallback search, the
+worker yields to monitoring within the check's shared two-minute deadline while
+preserving its fetched data and matching progress. Launches, recovery and manual
+control still defer the job.
+
+Admin **Activity → Entitlement checks** shows the queue, worker phase and waiting
+reason, last start/check times, retry counts and deadlines, errors, and last deferral.
+Use the filters to see queued, checking, retrying, failed, completed or stopped jobs;
+search by event title and check/recheck individual events there. A queued event with
+no completed result is labelled **Entitlement not checked yet**. Failed checks remain
+visible while awaiting their backoff, and stale worker progress is shown explicitly.
+Stable playback does not block the queue for the event's duration.
 
 Automatic dispatch is limited to one event check per minute across the queue. The
 worker waits behind due playback monitoring, launches, cancellation, recovery, manual

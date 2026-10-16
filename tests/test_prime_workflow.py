@@ -323,15 +323,19 @@ def test_status_budget_and_evidence_lifetime_follow_deployment_settings(monkeypa
     from controller.executor.config import ExecutorConfig
 
     monkeypatch.delenv("PRIME_PLAYER_STATUS_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("EXECUTOR_MONITOR_INTERVAL_SECONDS", raising=False)
     monkeypatch.setenv("PLAYBACK_ADAPTER", "prime-player")
     monkeypatch.setenv("PRIME_PLAYER_SOCKET", "/test/player.sock")
     config = ExecutorConfig.from_env()
     assert config.prime_status_timeout == 60
+    assert config.monitor_interval == 30
     assert Settings(executor=config).playback_evidence_ttl == 300
     assert Settings().playback_evidence_ttl == 15
     monkeypatch.setenv("PRIME_PLAYER_STATUS_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("EXECUTOR_MONITOR_INTERVAL_SECONDS", "5")
     config = ExecutorConfig.from_env()
     assert config.prime_status_timeout == 30
+    assert config.monitor_interval == 5  # Explicit deployment overrides survive upgrades.
     assert Settings(executor=config).playback_evidence_ttl == 300
 
 

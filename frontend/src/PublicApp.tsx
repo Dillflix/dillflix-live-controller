@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
 import { commandId } from "./api";
-import { EntitlementStatus, type Entitlement } from "./EntitlementStatus";
+import { EntitlementStatus, EntitlementIndicator, entitlementConfirmed, type Entitlement } from "./EntitlementStatus";
 import "./styles.css";
 
 interface PublicEvent {
@@ -413,18 +413,20 @@ function PublicApp() {
                       </span>
                     </div>
                   </div>
-                  <EntitlementStatus value={e.entitlement} timezone={data.timezone} />
                   <div className="df-event-footer df-public-event-footer">
-                    <span className="df-footnote">
+                    <div className="df-event-status">
+                    <EntitlementIndicator value={e.entitlement} timezone={data.timezone} />
+                    {(!e.entitlement || current || e.planned) && <span className="df-footnote">
                       {e.planned ? <ShieldCheck size={15} /> : <Tv size={15} />}
                       {current
                         ? "Now playing"
                         : e.planned
                           ? "In watch plan"
                           : `${e.viewing_option_count} viewing ${e.viewing_option_count === 1 ? "option" : "options"}`}
-                    </span>
+                    </span>}
+                    </div>
                     <div className="df-row df-public-actions">
-                      {current && (
+                      {(current || !entitlementConfirmed(e.entitlement)) && (
                         <button
                           className="df-button"
                           onClick={() => setDetailsId(e.content_id)}
@@ -432,7 +434,7 @@ function PublicApp() {
                           Details
                         </button>
                       )}
-                      {!e.planned && !current && (
+                      {!e.planned && !current && entitlementConfirmed(e.entitlement) && (
                         <button
                           className="df-button"
                           disabled={disabled || !data.permissions.add_to_plan || !!e.entitlement?.blocked}
@@ -442,7 +444,7 @@ function PublicApp() {
                           Add to plan
                         </button>
                       )}
-                      {e.playable && !current && (
+                      {e.playable && !current && entitlementConfirmed(e.entitlement) && (
                         <button
                           className="df-button df-button-primary"
                           disabled={disabled || !data.permissions.play_now || !!e.entitlement?.blocked}

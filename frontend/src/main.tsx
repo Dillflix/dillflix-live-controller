@@ -35,7 +35,8 @@ import {
   X,
 } from "lucide-react";
 import { api, ApiError, commandId } from "./api";
-import { EntitlementStatus } from "./EntitlementStatus";
+import { EntitlementStatus, EntitlementIndicator, entitlementConfirmed } from "./EntitlementStatus";
+import { EntitlementQueue } from "./EntitlementQueue";
 import { TeamRanking } from "./TeamRanking";
 import { ConfigurationTools } from "./ConfigurationTools";
 import { VPNSettings } from "./VPNSettings";
@@ -506,7 +507,7 @@ function App() {
       `${event.title} marked finished. Use Undo last edit to reverse this.`,
       true,
     );
-  const checkEntitlement = (event: Content) => void mutate(
+  const checkEntitlement = (event: { content_id: string }) => void mutate(
     () => api(devicePath + "/entitlement-checks", {
       command_id: commandId(), expected_revision: d.revision, content_id: event.content_id,
     }),
@@ -730,10 +731,10 @@ function App() {
             </span>
           </div>
         </div>
-        <EntitlementStatus value={e.entitlement} timezone={d.preferences.timezone}
-          onCheck={() => checkEntitlement(e)} busy={busy} />
         <div className="df-event-footer">
-          <span className="df-footnote">
+          <div className="df-event-status">
+          <EntitlementIndicator value={e.entitlement} timezone={d.preferences.timezone} />
+          {(!e.entitlement || current || e.watch_entry_id) && <span className="df-footnote">
             {e.watch_entry_id ? <ShieldCheck size={15} /> : <Tv size={15} />}{" "}
             {current
               ? observedSimulated
@@ -744,7 +745,8 @@ function App() {
                 : e.viewing_options.length
                   ? `${e.viewing_options.length} viewing ${e.viewing_options.length === 1 ? "option" : "options"}`
                   : "Route needed"}
-          </span>
+          </span>}
+          </div>
           <div className="df-row" style={{ gap: 6 }}>
             <Button
               quiet
@@ -753,7 +755,10 @@ function App() {
             >
               <Info size={16} />
             </Button>
-            <Button
+            {!entitlementConfirmed(e.entitlement) ? <Button
+              disabled={busy || e.entitlement?.state === "checking" || !e.entitlement?.can_check}
+              onClick={() => checkEntitlement(e)}
+            >Check</Button> : <Button
               primary={e.playable && !current}
               disabled={
                 busy ||
@@ -784,7 +789,7 @@ function App() {
                   Add to plan
                 </>
               )}
-            </Button>
+            </Button>}
           </div>
         </div>
       </article>
@@ -1353,6 +1358,8 @@ function App() {
                   "Activity",
                   "Selections, switches, manual choices, and recovery.",
                 )}
+                <EntitlementQueue value={data.entitlement_queue} timezone={d.preferences.timezone}
+                  busy={busy} onCheck={checkEntitlement} />
                 <section className="df-panel">
                   <h3>Playback monitoring</h3>
                   {d.prime_network && (
@@ -1396,14 +1403,14 @@ function App() {
                       : "None received"}
                   </p>
                   <p>
-                    Last executor contact:{" "}
+                    Last controller status read:{" "}
                     {d.executor_health?.last_contact_at
                       ? monitoringTime(d.executor_health.last_contact_at)
                       : "None reported"}
                   </p>
                   <p>
-                    Routine successful checks update these timestamps without
-                    adding activity entries.
+                    This reads the executor's stored report, without a device request.
+                    {data.meta.playback_monitor_interval_seconds != null && ` Playback monitoring waits ${data.meta.playback_monitor_interval_seconds} seconds after each check; launch verification runs immediately.`}
                   </p>
                   {data.playback_job && (
                     <p>
@@ -2028,8 +2035,12 @@ function App() {
                 entries may take precedence during overlap.
               </div>
               <EntitlementStatus value={modalEvent.entitlement} timezone={d.preferences.timezone}
-                onCheck={() => checkEntitlement(modalEvent)} busy={busy} details />
+                details />
               <div className="df-dialog-actions">
+                {!entitlementConfirmed(modalEvent.entitlement) && <Button
+                  disabled={busy || modalEvent.entitlement?.state === "checking" || !modalEvent.entitlement?.can_check}
+                  onClick={() => checkEntitlement(modalEvent)}
+                >Check</Button>}
                 {!["ended", "cancelled"].includes(
                   modalEvent.lifecycle.state,
                 ) && (
@@ -2047,7 +2058,7 @@ function App() {
                   >
                     Remove from plan
                   </Button>
-                ) : (
+                ) : entitlementConfirmed(modalEvent.entitlement) && (
                   <Button
                     onClick={() => void add(modalEvent)}
                     disabled={
@@ -2061,7 +2072,7 @@ function App() {
                     Add to plan
                   </Button>
                 )}
-                {modalEvent.playable && (
+                {modalEvent.playable && entitlementConfirmed(modalEvent.entitlement) && (
                   <Button
                     primary
                     disabled={busy || !!d.manual_control || !!modalEvent.entitlement?.blocked}
@@ -2094,7 +2105,7 @@ function App() {
                 </dd>
                 {d.executor_health?.last_contact_at && (
                   <>
-                    <dt>Last contact</dt>
+                    <dt>Last controller status read</dt>
                     <dd>{time(d.executor_health.last_contact_at)}</dd>
                   </>
                 )}

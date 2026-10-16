@@ -54,7 +54,7 @@ test("Activity shows fresh monitoring evidence independently of old activity ent
     /Last playback evidence: .*2:31:54 .* · verified/,
   );
   await expect(monitoring).toContainText(
-    /Last executor contact: .*2:32:09 /,
+    /Last controller status read: .*2:32:09 /,
   );
   await expect(monitoring).not.toContainText("deadline");
   await expect(page.locator(".df-activity")).toHaveCount(1);
@@ -76,7 +76,7 @@ test("Activity shows fresh monitoring evidence independently of old activity ent
     /Last playback evidence: .*2:31:54 .* · unverified/,
   );
   await expect(monitoring).toContainText(
-    /Last executor contact: .*2:33:09 /,
+    /Last controller status read: .*2:33:09 /,
   );
 
   data.playback_job.state = "pending";

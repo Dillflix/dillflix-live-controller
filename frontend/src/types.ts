@@ -195,6 +195,7 @@ export interface Overview {
     last_attempt?: string;
   };
   events: Content[];
+  entitlement_queue?: import("./EntitlementQueue").EntitlementQueueView | null;
   plan_preview: Preview;
   activity: {
     sequence: number;
@@ -214,6 +215,7 @@ export interface Overview {
     league_choices: Record<string, string>;
     mode: "demo" | "teamarr";
     playback_adapter: string;
+    playback_monitor_interval_seconds?: number | null;
     status_simulated: boolean;
     now: string;
     server_time: string;

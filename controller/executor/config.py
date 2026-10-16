@@ -16,7 +16,7 @@ class ExecutorConfig:
     structured_output: str = "json_schema"
     model_timeout: float = 45
     cancel_timeout: float = 80
-    monitor_interval: float = 5
+    monitor_interval: float = 30
     retention_days: int = 7
     prime_network_policy: dict = field(default_factory=dict)
     prime_socket: str = ""
@@ -89,7 +89,7 @@ class ExecutorConfig:
             structured_output=os.getenv("EXECUTOR_STRUCTURED_OUTPUT", "json_schema"),
             model_timeout=float(os.getenv("EXECUTOR_MODEL_TIMEOUT_SECONDS", "45")),
             cancel_timeout=float(os.getenv("EXECUTOR_CANCEL_TIMEOUT_SECONDS", "80")),
-            monitor_interval=float(os.getenv("EXECUTOR_MONITOR_INTERVAL_SECONDS", "5")),
+            monitor_interval=float(os.getenv("EXECUTOR_MONITOR_INTERVAL_SECONDS", "30")),
             prime_network_policy=read_policy(os.getenv("PRIME_NETWORK_POLICY_FILE", "")),
             prime_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
             prime_match_model=os.getenv("PRIME_PLAYER_MATCH_MODEL", ""),
