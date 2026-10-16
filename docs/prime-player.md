@@ -292,16 +292,21 @@ completion and Teamarr lifecycle handling retain that responsibility.
 
 Catalogue checks and direct playback requests share the same bounded search
 helper. The existing paired `name` query stays first. If it finds no suitable
-match, the controller tries paired `full_name`, paired `short_name`, and the
-original event title, skipping duplicate queries. Every query uses supplied
+match, the controller tries paired `full_name` and paired `short_name`, skipping
+duplicate queries. Events without paired team labels use their title. Every query uses supplied
 metadata; team names are never inferred from display text. There are at most
-four searches under the existing overall deadline, with the same event identity,
+three searches under the existing overall deadline, with the same event identity,
 language and access validation on each result. A usable match stops the scan.
 A positively identified upcoming, locked or unavailable feed keeps its existing
 handling without repeating its search under alternate names. Transport or model
 errors stop the scan; unresolved matches and interrupted scans remain unknown.
 Diagnostics retain each query's coverage, match audit and outcome in
 `search_attempts`, including pending work when a check is interrupted.
+
+Background subscription checking keeps looking for an entitled alternative after
+an unentitled match, through all remaining queries. It reuses identity decisions
+for unchanged candidates; subscription/readiness flags remain current observations.
+See [schedule entitlement](schedule-entitlement.md).
 
 On upgrade to this search contract, old access exclusions are cleared once so
 previous single-query misses can be checked again. Plans and completion records

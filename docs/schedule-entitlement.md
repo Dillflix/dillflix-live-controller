@@ -14,11 +14,30 @@ Routine monitoring does not repeatedly refresh completed entitlement records.
 
 Entitlement is separate from event lifecycle, regional availability and live-launch
 readiness. An ENTITLED/UPCOMING or ENTITLED/UNAVAILABLE result is entitled. No match,
-missing data, ambiguous alternatives, incomplete negative coverage and errors are
+missing data, ambiguous alternatives and errors are
 unknown. An entitled matching feed wins over another provider's subscription denial;
 negative evidence must cover each permitted matching Prime route. Non-Prime routes
 are never disabled by a Prime-only observation. Full subscription coverage beyond
 the inspected catalogue response cannot be inferred.
+
+Version 0.18.3 searches for an entitled alternative through every distinct team
+query: the original paired names, full names, then short names (at most three).
+The final event-title fallback for team events is removed; broadcasts/sessions
+without paired team labels still use their title. An entitled match finishes
+immediately. Finding an unentitled feed does not stop later queries. Only a finished
+scan with identified unentitled routes and no unresolved alternatives can settle
+as Unentitled. Empty later responses do not erase an identified feed; errors and
+timeouts never turn a partial scan into denial. Non-exhaustive search coverage
+(`complete: false`) alone does not invalidate a confirmed event identity. These
+observations describe the inspected feeds, not the whole Prime catalogue.
+
+Within each background check, unchanged candidate identities and explicit
+identity rejections are reused across queries. An identical unresolved pool can
+also reuse its uncertain decision without becoming a rejection. New or changed
+evidence goes through the existing matcher. Reuse is scoped to the target, route,
+timezone, service session, generation and network context. Provider/identity text
+changes invalidate reuse; current access flags always come from the new response.
+This memory ends with the check, so later retries/manual checks read fresh evidence.
 
 Unknown checks retry at 5, 10, 20, 40, 80, 160, then 300 minutes (five-hour cap).
 The retry count and deadline are durable. Completed entitlement results have no

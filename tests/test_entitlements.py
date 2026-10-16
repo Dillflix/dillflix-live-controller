@@ -57,7 +57,7 @@ async def test_entitled_is_independent_of_time_and_restriction(tmp_path, state):
         await cleanup(controller)
 
 
-async def test_entitled_provider_wins_and_incomplete_denial_stays_unknown(tmp_path):
+async def test_entitled_provider_wins_and_identified_denial_needs_no_exhaustive_search(tmp_path):
     controller, workflow = rig(tmp_path)
     try:
         denied = tile(entitlement_status="UNENTITLED", event_state="UPCOMING")
@@ -65,7 +65,7 @@ async def test_entitled_provider_wins_and_incomplete_denial_stays_unknown(tmp_pa
         selected, _ = await choose_entitlement(workflow.matcher, payload(), results(denied, entitled), "UTC")
         assert selected["content_id"] == entitled["content_id"]
         selected, _ = await choose_entitlement(workflow.matcher, payload(), results(denied), "UTC")
-        assert selected is None
+        assert selected["entitlement_status"] == "UNENTITLED"
         selected, _ = await choose_entitlement(workflow.matcher, payload(), {**results(denied), "complete": True}, "UTC")
         assert selected["entitlement_status"] == "UNENTITLED"
     finally:
@@ -665,12 +665,16 @@ async def test_denial_gates_actions_and_unknown_does_not(tmp_path):
     original = workflow.player.search
 
     async def denied(*args):
-        return {**await original(*args), **results(tile(entitlement_status="UNENTITLED")), "complete": True}
+        return {**await original(*args), **results(tile(entitlement_status="UNENTITLED"))}
 
     workflow.player.search = denied
     try:
         await controller.check_entitlement_once()
         assert record(controller)["status"] == "unentitled"
+        assert record(controller)["state"] == "complete" and record(controller)["next_check"] is None
+        assert workflow.player.calls == [("search", "Jets Lions"), ("search", "New York Jets Detroit Lions")]
+        await controller.check_entitlement_once()
+        assert len(workflow.player.calls) == 2
         for action in ("add", "play_now"):
             command = Command(command_id=uuid4().hex, expected_revision=0,
                               action={"type": action, "content_id": "fixture-game"})
@@ -689,6 +693,82 @@ async def test_denial_gates_actions_and_unknown_does_not(tmp_path):
         assert not view["events"][0]["entitlement"]["blocked"]
         controller.plan_command("living-room", Command(command_id=uuid4().hex, expected_revision=0,
                                 action={"type": "add", "content_id": "fixture-game"}))
+    finally:
+        await cleanup(controller)
+
+
+async def test_background_denied_first_feed_can_find_entitled_alternative(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original = workflow.player.search
+
+    async def alternatives(*args):
+        response = await original(*args)
+        found = len(workflow.player.calls) == 2
+        return {**response, **results(tile(cid=GTI + "-other" if found else GTI,
+                                          entitlement_status="ENTITLED" if found else "UNENTITLED"))}
+
+    workflow.player.search = alternatives
+    try:
+        await controller.check_entitlement_once()
+        row = record(controller)
+        assert row["status"] == "entitled" and row["state"] == "complete"
+        assert row["next_check"] is None
+        audit = json.loads(row["evidence"])["audit"]
+        assert [a["state"] for a in audit["search_attempts"]] == ["feeds_locked", "ready"]
+        assert audit["feeds"][0]["content_id"] == GTI + "-other"
+        assert [c[0] for c in workflow.player.calls] == ["search", "search"]
+    finally:
+        await cleanup(controller)
+
+
+async def test_background_error_after_denied_feed_remains_unknown(tmp_path):
+    from controller.executor.models import ExecutorError
+
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original = workflow.player.search
+
+    async def interrupted(*args):
+        response = await original(*args)
+        if len(workflow.player.calls) == 2:
+            raise ExecutorError("prime_search_timeout", "Search timed out")
+        return {**response, **results(tile(entitlement_status="UNENTITLED"))}
+
+    workflow.player.search = interrupted
+    try:
+        await controller.check_entitlement_once()
+        row = record(controller)
+        assert row["status"] == "unknown" and row["state"] == "retry"
+        assert row["failures"] == 1 and row["next_check"] > time.time() + 290
+        evidence = json.loads(row["evidence"])
+        assert evidence["error"]["code"] == "prime_search_timeout"
+        assert evidence["audit"]["search_attempts"][0]["state"] == "feeds_locked"
+    finally:
+        await cleanup(controller)
+
+
+async def test_background_reuses_identity_within_check_but_not_across_retries(tmp_path):
+    from test_entitlement_matching import IdentityModel, labelled
+
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original = workflow.player.search
+    model = IdentityModel()
+    workflow.matcher.model = model
+
+    async def unknown(*args):
+        return {**await original(*args), **results(labelled(entitlement_status=None))}
+
+    workflow.player.search = unknown
+    try:
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "unknown" and len(model.calls) == 1
+        assert [c[0] for c in workflow.player.calls] == ["search", "search"]
+        due(controller)
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "unknown" and len(model.calls) == 2
+        assert len(workflow.player.calls) == 4
     finally:
         await cleanup(controller)
 

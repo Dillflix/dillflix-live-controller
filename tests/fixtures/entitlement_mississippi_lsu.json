@@ -1,0 +1,676 @@
+{
+  "source": "Matching inputs from diagnostics captured 2026-10-16T04:40:12Z; no account/device data.",
+  "matched_content_id": "amzn1.dv.gti.4da8dfef-d393-4b4f-b09f-0c3d38cce83d",
+  "request": {
+    "content_snapshot": {
+      "id": "event:espn:college-football:401856720",
+      "title": "Mississippi State Bulldogs at LSU Tigers",
+      "competition": "college-football",
+      "start_time": "2026-10-17T16:00:00+00:00",
+      "event": {
+        "away_team_details": {
+          "name": "Bulldogs",
+          "full_name": "Mississippi State Bulldogs",
+          "short_name": "Mississippi St"
+        },
+        "home_team_details": {
+          "name": "Tigers",
+          "full_name": "LSU Tigers",
+          "short_name": "LSU"
+        }
+      }
+    },
+    "allowed_viewing_options": [
+      {
+        "id": "route:college-football:prime_video",
+        "app": "prime_video",
+        "presentation": "live",
+        "decision": "eligible"
+      }
+    ]
+  },
+  "queries": [
+    "Bulldogs Tigers",
+    "Mississippi State Bulldogs LSU Tigers",
+    "Mississippi St LSU"
+  ],
+  "responses": [
+    {
+      "containers": [
+        {
+          "items": [
+            {
+              "content_id": "amzn1.dv.gti.4da8dfef-d393-4b4f-b09f-0c3d38cce83d",
+              "title": "#16 Mississippi State vs. #22 LSU",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T16:00:00.000+00:00",
+              "ends_at": "2026-10-17T20:00:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "UNENTITLED",
+              "synopsis": "NCAA Football: Watch #16 Mississippi State Bulldogs vs. #22 LSU Tigers live from Baton Rouge.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "Upgrade",
+                  "icon": "OFFER_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Upgrade",
+                      "icon": "OFFER_ICON"
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Upgrade your TSN subscription for $29.99/month",
+                  "icon": "OFFER_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Upgrade your TSN subscription for $29.99/month",
+                      "icon": "OFFER_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "complete": false,
+      "coverage": "find_initial_response"
+    },
+    {
+      "containers": [
+        {
+          "items": [
+            {
+              "content_id": "amzn1.dv.gti.d3e85941-589b-4ff1-90f4-a0851d47ed61",
+              "title": "Arizona State vs. #10 Texas Tech",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T19:25:00.000+00:00",
+              "ends_at": "2026-10-18T00:09:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "ENTITLED",
+              "synopsis": "NCAA Football: Watch Arizona State Sun Devils vs. #10 Texas Tech Red Raiders live from Lubbock.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Included with your DAZN subscription",
+                  "icon": "ENTITLED_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Included with your DAZN subscription",
+                      "icon": "ENTITLED_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "content_id": "amzn1.dv.gti.123ac024-0d96-4f0a-b10f-0e0a8d2597f4",
+              "title": "Wisconsin vs. #12 UCLA",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T23:25:00.000+00:00",
+              "ends_at": "2026-10-18T03:09:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "ENTITLED",
+              "synopsis": "NCAA Football: Watch Wisconsin Badgers vs. #12 UCLA Bruins live from Pasadena.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Included with your DAZN subscription",
+                  "icon": "ENTITLED_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Included with your DAZN subscription",
+                      "icon": "ENTITLED_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "content_id": "amzn1.dv.gti.ed039a6b-f012-4246-ac57-64234fad5970",
+              "title": "TCU vs. Baylor",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T22:55:00.000+00:00",
+              "ends_at": "2026-10-18T03:39:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "ENTITLED",
+              "synopsis": "NCAA Football: Watch TCU Horned Frogs vs. Baylor Bears live from Waco.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Included with your DAZN subscription",
+                  "icon": "ENTITLED_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Included with your DAZN subscription",
+                      "icon": "ENTITLED_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "content_id": "amzn1.dv.gti.875b4370-47cd-4be8-af66-87ea732621f7",
+              "title": "#4 Ohio State vs. #5 Indiana",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T15:55:00.000+00:00",
+              "ends_at": "2026-10-17T20:39:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "ENTITLED",
+              "synopsis": "NCAA Football: Watch #4 Ohio State Buckeyes vs. #5 Indiana Hoosiers live from Bloomington.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Included with your DAZN subscription",
+                  "icon": "ENTITLED_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Included with your DAZN subscription",
+                      "icon": "ENTITLED_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "content_id": "amzn1.dv.gti.4da8dfef-d393-4b4f-b09f-0c3d38cce83d",
+              "title": "#16 Mississippi State vs. #22 LSU",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T16:00:00.000+00:00",
+              "ends_at": "2026-10-17T20:00:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "UNENTITLED",
+              "synopsis": "NCAA Football: Watch #16 Mississippi State Bulldogs vs. #22 LSU Tigers live from Baton Rouge.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "Upgrade",
+                  "icon": "OFFER_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Upgrade",
+                      "icon": "OFFER_ICON"
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Upgrade your TSN subscription for $29.99/month",
+                  "icon": "OFFER_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Upgrade your TSN subscription for $29.99/month",
+                      "icon": "OFFER_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "complete": false,
+      "coverage": "find_initial_response"
+    },
+    {
+      "containers": [
+        {
+          "items": [
+            {
+              "content_id": "amzn1.dv.gti.16b43562-7a45-4da7-bded-e11a4c7bf60b",
+              "title": "Minnesota United vs. St. Louis CITY SC",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T20:30:00.000+00:00",
+              "ends_at": "2026-10-17T23:00:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "ENTITLED",
+              "synopsis": "Watch Minnesota host STL.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Included with your TSN subscription",
+                  "icon": "ENTITLED_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Included with your TSN subscription",
+                      "icon": "ENTITLED_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "content_id": "amzn1.dv.gti.4da8dfef-d393-4b4f-b09f-0c3d38cce83d",
+              "title": "#16 Mississippi State vs. #22 LSU",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T16:00:00.000+00:00",
+              "ends_at": "2026-10-17T20:00:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "UNENTITLED",
+              "synopsis": "NCAA Football: Watch #16 Mississippi State Bulldogs vs. #22 LSU Tigers live from Baton Rouge.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "Upgrade",
+                  "icon": "OFFER_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Upgrade",
+                      "icon": "OFFER_ICON"
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Upgrade your TSN subscription for $29.99/month",
+                  "icon": "OFFER_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Upgrade your TSN subscription for $29.99/month",
+                      "icon": "OFFER_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "content_id": "amzn1.dv.gti.04b15bed-daac-48c6-b208-55c31639b073",
+              "title": "#13 Missouri vs. #9 Ole Miss",
+              "content_type": "EVENT",
+              "starts_at": "2026-10-17T19:30:00.000+00:00",
+              "ends_at": "2026-10-17T23:30:00.000+00:00",
+              "event_state": "UPCOMING",
+              "entitlement_status": "UNENTITLED",
+              "synopsis": "NCAA Football: Watch #13 Missouri Tigers vs. #9 Ole Miss Rebels live from Oxford.",
+              "entitlement_messaging": {
+                "GLANCE_MESSAGE_SLOT": {
+                  "message": "Upgrade",
+                  "icon": "OFFER_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Upgrade",
+                      "icon": "OFFER_ICON"
+                    }
+                  ]
+                },
+                "ENTITLEMENT_MESSAGE_SLOT": {
+                  "message": "Upgrade your TSN subscription for $29.99/month",
+                  "icon": "OFFER_ICON",
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "Upgrade your TSN subscription for $29.99/month",
+                      "icon": "OFFER_ICON"
+                    }
+                  ]
+                },
+                "HIGH_VALUE_MESSAGE_SLOT_LITE": {
+                  "message": "",
+                  "icon": null,
+                  "level": null,
+                  "type": null,
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": ""
+                    }
+                  ]
+                },
+                "TITLE_METADATA_BADGE_SLOT": {
+                  "message": "UPCOMING",
+                  "icon": null,
+                  "level": "INFO_INACTIVE",
+                  "type": "BADGE",
+                  "messages": null,
+                  "metadata": null,
+                  "items": [
+                    {
+                      "message": "UPCOMING",
+                      "level": "INFO_INACTIVE",
+                      "type": "BADGE"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "complete": false,
+      "coverage": "find_initial_response"
+    }
+  ]
+}

@@ -7,7 +7,7 @@ from .matching import candidates
 async def choose_entitlement(matcher, request, results, timezone, *, before_match=None):
     items, rejected = candidates(results, request["content_snapshot"], timezone)
     options = [o for o in request["allowed_viewing_options"] if prime_option(o)]
-    passes, denied, uncertain = [], [], not options
+    passes, denied, uncertain, missing_route = [], [], not options, False
     # An entitled feed is sufficient. Every permitted route must have supported
     # negative evidence before we can deny the event, and ambiguity wins over denial.
     for option in options:
@@ -41,11 +41,15 @@ async def choose_entitlement(matcher, request, results, timezone, *, before_matc
             else:
                 denied.append(evidence)
                 route_denied = True
-        uncertain |= not route_denied
+        missing_route |= not route_denied
     audit = {"passes": passes, "feeds": denied, "rejected": rejected,
              "coverage": results.get("coverage"), "complete": results.get("complete")}
-    if denied and not uncertain and results.get("complete") is True:
+    # This is only this query's result. The background search must exhaust its
+    # remaining queries before accepting denial, to look for entitled alternatives.
+    if denied and not uncertain and not missing_route:
         return {**denied[0], "readiness": "feeds_locked"}, {**audit, "match_status": "matched"}
+    if not denied and not uncertain:
+        return None, {**audit, "match_status": "no_match", "reason": "No matching event in this response"}
     return None, {**audit, "match_status": "uncertain", "reason": (
         "Entitlement could not be established for all permitted matching feeds"
     )}

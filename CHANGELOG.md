@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.3 - Reuse entitlement matches across bounded searches
+
+- Keep looking for entitled feeds after an unentitled match. Reuse identity decisions for repeated candidates, evaluate new alternatives, and settle negative results only after the bounded scan finishes without unresolved alternatives.
+- Remove the final event-title fallback for team events: use at most three distinct paired-name queries. Broadcasts/sessions without team labels still use their title.
+- Preserve playback priority, once-only completed checks and unknown-result backoff. No player update or database migration is required.
+
 ## 0.18.2 - Entitlement evidence and queue throughput
 
 - Complete entitlement jobs from accepted foreground catalogue matches and fresh verified playback with explicit subscription evidence. Reconcile already-playing events without another search; reject changed event/routes and late background failures.

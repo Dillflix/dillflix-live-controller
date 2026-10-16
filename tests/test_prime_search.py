@@ -42,16 +42,14 @@ COLLEGE_QUERIES = [
     "Rainbow Warriors Sun Devils",
     "Hawai'i Rainbow Warriors Arizona State Sun Devils",
     "Hawai'i Arizona St",
-    "Hawai'i Rainbow Warriors at Arizona State Sun Devils",
 ]
 
 
-def test_existing_query_first_then_full_short_and_event_title():
+def test_existing_query_first_then_only_full_and_short_team_fallbacks():
     assert search_queries(college_request()["content_snapshot"]) == COLLEGE_QUERIES
     assert search_queries(payload()["content_snapshot"]) == [
         "Jets Lions",
         "New York Jets Detroit Lions",
-        "Jets vs. Lions",
     ]
     assert search_queries({"title": "NFL RedZone"}) == ["NFL RedZone"]
 
@@ -117,7 +115,7 @@ def irrelevant():
     return results(tile("Rainbow: In Performance", content_type="MOVIE"))
 
 
-@pytest.mark.parametrize("found_at", [0, 1, 2, 3])
+@pytest.mark.parametrize("found_at", [0, 1, 2])
 async def test_fallback_finds_event_and_stops_at_first_usable_match(found_at):
     (result, selected, audit), calls, history = await scan([irrelevant()] * found_at + [matched()])
     assert calls == COLLEGE_QUERIES[: found_at + 1]
@@ -131,10 +129,10 @@ async def test_fallback_finds_event_and_stops_at_first_usable_match(found_at):
 
 
 async def test_no_match_requires_exhausting_distinct_fallbacks():
-    (_, selected, audit), calls, _ = await scan([irrelevant()] * 4)
+    (_, selected, audit), calls, _ = await scan([irrelevant()] * 3)
     assert selected is None and audit["match_status"] == "no_match"
     assert calls == COLLEGE_QUERIES
-    assert len(audit["search_attempts"]) == 4
+    assert len(audit["search_attempts"]) == 3
     assert all(a["complete"] is False for a in audit["search_attempts"])
 
 

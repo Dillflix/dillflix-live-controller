@@ -74,6 +74,12 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
+Version 0.18.3 reuses event identity decisions across background entitlement
+queries. Finding an unentitled feed does not stop the remaining queries from
+looking for an entitled alternative. Team events now use at most three searches:
+the original query, full team names, then short team names. Title-only events
+still use their title. No database migration or Prime Player update is required.
+
 Version 0.18.2 reuses confirmed foreground entitlement, repairs the playing event's
 record on its next monitor, prioritizes live/planned events and overdue retries, and
 replaces one-check-per-minute pacing with serialized checks at least five seconds

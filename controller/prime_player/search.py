@@ -6,7 +6,8 @@ from .labels import search_queries
 from .matching import selection_state
 
 
-async def choose_search(request, timezone, matcher, search, fetch, progress, *, select=None):
+async def choose_search(request, timezone, matcher, search, fetch, progress, *, select=None,
+                        exhaust_denials=False):
     """Search alternative labels without relaxing identity, access or ownership.
 
     Callers fence every RPC and impose one overall deadline for the entire scan.
@@ -18,6 +19,7 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
         raise ExecutorError("prime_invalid_search", "Event has no usable search labels")
     attempts, identity = [], None
     uncertain = False
+    denied_outcome = None
     for query in queries:
         attempt = {"query": query, "state": "pending"}
         attempts.append(attempt)
@@ -62,6 +64,11 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
             return results, selected, combined
         if state in {"ready", "waiting_for_feed"}:
             return results, selected, combined
+        if state == "feeds_locked" and exhaust_denials:
+            # Background entitlement seeks any accessible feed. A denied match
+            # cannot stop the remaining queries from discovering another provider.
+            denied_outcome = (results, selected, audit)
+            continue
         if state in {"feeds_locked", "feeds_unavailable"}:
             # A positively identified event has an access outcome. Do not spend
             # more queries repeating that observation, or override earlier ambiguity.
@@ -73,4 +80,8 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
         combined = report(
             {**audit, "match_status": "uncertain", "reason": "Some search alternatives remain unresolved"}
         )
+    elif denied_outcome:
+        results, selected, audit = denied_outcome
+        combined = {**audit, "search_attempts": list(attempts), "search_queries_exhausted": True}
+        progress(combined)
     return results, selected, combined
