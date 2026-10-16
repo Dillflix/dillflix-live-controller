@@ -23,11 +23,23 @@ for (const publicView of [false, true]) {
           result: kind === "no_listing" ? "no_listing" : null, blocked: kind === "unentitled",
           can_check: true, checked_at: null, next_check_at: null, reason: null }
       }));
+      if (publicView) body.events.push({ ...template, content_id: "filter-unchecked", entitlement: null });
       await route.fulfill({ response, json: body });
     });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(publicView ? "/public/" : "/");
     const filter = page.getByLabel("Entitlement", { exact: true });
+    if (publicView) {
+      await expect(filter).toHaveCount(0);
+      await expect(page.locator('[data-testid^="event-filter-"]')).toHaveCount(1);
+      await expect(page.getByTestId("event-filter-entitled")).toBeVisible();
+      await expect(page.locator(".df-event-footer .df-entitlement-indicator")).toHaveCount(0);
+      await page.getByRole("searchbox").fill("no such event");
+      await page.getByRole("button", { name: "Clear filters" }).click();
+      await expect(page.locator('[data-testid^="event-filter-"]')).toHaveCount(1);
+      await page.screenshot({ path: "test-results/public-entitled-only.png" });
+      return;
+    }
     await expect(filter).toHaveValue("entitled");
     await expect(page.getByTestId("event-filter-entitled")).toBeVisible();
     await expect(page.getByTestId("event-filter-queued")).toHaveCount(0);

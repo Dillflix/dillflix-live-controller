@@ -257,13 +257,8 @@ test("public entitlement gates both actions and exposes no admin check control",
     }),
   );
   await page.goto("/public/");
-  await page.getByLabel("Entitlement", { exact: true }).selectOption("all");
-  const card = page.getByTestId("event-test-live");
-  await expect(card.getByRole("button", { name: "Add to plan" })).toHaveCount(
-    0,
-  );
-  await expect(card.getByRole("button", { name: "Play now" })).toHaveCount(0);
-  await expect(card.locator(".df-event-footer")).toContainText("Unentitled");
+  await expect(page.getByLabel("Entitlement", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("event-test-live")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: /check entitlement/i }),
   ).toHaveCount(0);

@@ -1,10 +1,9 @@
 import { leagueName } from "./leagues";
-import { EntitlementFilter, matchesEntitlement } from "./EntitlementFilter";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
 import { commandId } from "./api";
-import { EntitlementStatus, EntitlementIndicator, entitlementConfirmed, type Entitlement } from "./EntitlementStatus";
+import { EntitlementStatus, entitlementConfirmed, type Entitlement } from "./EntitlementStatus";
 import "./styles.css";
 
 interface PublicEvent {
@@ -113,7 +112,6 @@ function PublicApp() {
   const [tab, setTab] = useState("live");
   const [sport, setSport] = useState("all");
   const [query, setQuery] = useState("");
-  const [entitlementFilter, setEntitlementFilter] = useState("entitled");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [connected, setConnected] = useState(false);
@@ -200,14 +198,14 @@ function PublicApp() {
       day: "numeric",
       timeZone: data.timezone,
     }).format(new Date(value));
-  const visible = data.events.filter(
+  const entitledEvents = data.events.filter(e => e.entitlement?.status === "entitled");
+  const visible = entitledEvents.filter(
     (e) =>
       e.active &&
       !["ended", "cancelled"].includes(e.state) &&
       (tab === "live"
         ? e.state === "live" || e.playable
         : e.state !== "live" && !e.playable) &&
-      matchesEntitlement(e.entitlement, entitlementFilter) &&
       (sport === "all" || e.league === sport) &&
       `${e.title} ${e.teams.map((t) => t.full_name).join(" ")}`
         .toLowerCase()
@@ -297,7 +295,7 @@ function PublicApp() {
               onClick={() => setTab("live")}
             >
               Live{" "}
-              {data.events.filter((e) => e.active && e.state === "live").length}
+              {entitledEvents.filter((e) => e.active && e.state === "live").length}
             </button>
             <button
               aria-pressed={tab === "upcoming"}
@@ -306,7 +304,6 @@ function PublicApp() {
               Upcoming
             </button>
           </div>
-          <EntitlementFilter value={entitlementFilter} onChange={setEntitlementFilter} />
                   <label className="df-search">
             <span className="df-screenreader">Find a team or event</span>
             <input
@@ -321,7 +318,7 @@ function PublicApp() {
           {[
             "all",
             ...Array.from(
-              new Set(data.events.filter((e) => e.active).map((e) => e.league)),
+              new Set(entitledEvents.filter((e) => e.active).map((e) => e.league)),
             ).sort(),
           ].map((league) => (
             <button
@@ -412,15 +409,14 @@ function PublicApp() {
                   </div>
                   <div className="df-event-footer df-public-event-footer">
                     <div className="df-event-status">
-                    <EntitlementIndicator value={e.entitlement} timezone={data.timezone} />
-                    {(!e.entitlement || current || e.planned) && <span className="df-footnote">
+                    <span className="df-footnote">
                       {e.planned ? <ShieldCheck size={15} /> : <Tv size={15} />}
                       {current
                         ? "Now playing"
                         : e.planned
                           ? "In watch plan"
                           : `${e.viewing_option_count} viewing ${e.viewing_option_count === 1 ? "option" : "options"}`}
-                    </span>}
+                    </span>
                     </div>
                     <div className="df-row df-public-actions">
                       {(current || !entitlementConfirmed(e.entitlement)) && (
@@ -460,13 +456,12 @@ function PublicApp() {
         ) : (
           <div className="df-empty">
             <h3>No events match</h3>
-            <p>Try another entitlement status or sport, or check the upcoming schedule.</p>
+            <p>Try another sport or search, or check the upcoming schedule.</p>
             <button
               className="df-button"
               onClick={() => {
                 setQuery("");
                 setSport("all");
-    setEntitlementFilter("all");
               }}
             >
               Clear filters

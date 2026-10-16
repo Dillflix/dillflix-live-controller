@@ -43,6 +43,7 @@ function fixture() {
     playable: true,
     planned: false,
     viewing_option_count: 1,
+    entitlement: { status: "entitled", state: "complete", blocked: false },
     teams: [
       {
         key: "away",
