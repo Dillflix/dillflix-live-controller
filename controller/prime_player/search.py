@@ -6,7 +6,7 @@ from .labels import search_queries
 from .matching import selection_state
 
 
-async def choose_search(request, timezone, matcher, search, fetch, progress):
+async def choose_search(request, timezone, matcher, search, fetch, progress, *, select=None):
     """Search alternative labels without relaxing identity, access or ownership.
 
     Callers fence every RPC and impose one overall deadline for the entire scan.
@@ -40,7 +40,11 @@ async def choose_search(request, timezone, matcher, search, fetch, progress):
             async def broadcasts(content_id):
                 return await fetch(results, content_id)
 
-            selected, audit = await choose_broadcast(request, results, timezone, matcher, broadcasts, report)
+            selected, audit = (
+                await select(request, results, timezone)
+                if select else
+                await choose_broadcast(request, results, timezone, matcher, broadcasts, report)
+            )
         except Exception as exc:
             attempt["state"] = "access_unknown"
             attempt["error"] = (

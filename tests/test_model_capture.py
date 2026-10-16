@@ -198,7 +198,7 @@ def test_migration_from_schema_ten_preserves_existing_records(rig):
     upgraded = Database(settings.database)
     with upgraded.transaction() as db:
         assert [tuple(row) for row in db.execute("SELECT id,payload FROM devices")] == [tuple(row) for row in before]
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert db.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
         assert db.execute("SELECT COUNT(*) FROM chooser_captures").fetchone()[0] == 0
 
 

@@ -15,6 +15,7 @@ TABLES = (
     "edit_history",
     "team_directory",
     "content_status",
+    "event_entitlements",
     "simulated_jobs",
     "simulated_cancellations",
     "executor_jobs",
@@ -127,6 +128,9 @@ def prune(database, settings, owner):
             "DELETE FROM content_status WHERE content_id NOT IN (SELECT id FROM contents) "
             "AND content_id NOT IN (SELECT id FROM keep_contents)"
         )
+        # Keep the once-per-event marker, but not retired catalogue/model evidence.
+        db.execute("UPDATE event_entitlements SET evidence='{}',state='stopped',status='unknown',next_check=NULL "
+                   "WHERE content_id NOT IN (SELECT id FROM contents) AND (state!='stopped' OR evidence!='{}')")
         known = {r[0] for r in db.execute("SELECT id FROM contents")}
         for d in devices:
             d["failures"] = {key: value for key, value in d["failures"].items() if key in known}

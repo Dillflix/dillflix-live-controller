@@ -1731,3 +1731,19 @@ select:focus-visible {
 #df-app .df-vpn-policy .df-button {
   margin: 4px 8px 4px 0;
 }
+/* Subscription observations never imply that playback is currently available. */
+#df-app .df-entitlement {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--df-line);
+  font-size: 12px;
+  line-height: 1.5;
+}
+#df-app .df-entitlement p { margin: 0; }
+#df-app .df-entitlement small { display: block; color: var(--df-muted); }
+#df-app .df-entitlement.is-blocked { background: var(--df-tint); color: var(--df-accent); }
+#df-app .df-entitlement .df-button { font-size: 12px; }

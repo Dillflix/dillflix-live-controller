@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
 import { commandId } from "./api";
+import { EntitlementStatus, type Entitlement } from "./EntitlementStatus";
 import "./styles.css";
 
 interface PublicEvent {
+  entitlement?: Entitlement | null;
   content_id: string;
   title: string;
   league: string;
@@ -53,10 +55,12 @@ const leagueName = (code: string) => names[code] || code.toUpperCase();
 function EventDetails({
   event,
   when,
+  timezone,
   onClose,
 }: {
   event: PublicEvent;
   when: string;
+  timezone: string;
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -86,6 +90,7 @@ function EventDetails({
         {event.viewing_option_count === 1 ? "option" : "options"}
       </p>
       {event.planned && <p>In watch plan</p>}
+      <EntitlementStatus value={event.entitlement} timezone={timezone} details />
     </dialog>
   );
 }
@@ -408,6 +413,7 @@ function PublicApp() {
                       </span>
                     </div>
                   </div>
+                  <EntitlementStatus value={e.entitlement} timezone={data.timezone} />
                   <div className="df-event-footer df-public-event-footer">
                     <span className="df-footnote">
                       {e.planned ? <ShieldCheck size={15} /> : <Tv size={15} />}
@@ -429,7 +435,7 @@ function PublicApp() {
                       {!e.planned && !current && (
                         <button
                           className="df-button"
-                          disabled={disabled || !data.permissions.add_to_plan}
+                          disabled={disabled || !data.permissions.add_to_plan || !!e.entitlement?.blocked}
                           onClick={() => void request(e, "add")}
                         >
                           <Plus size={14} />
@@ -439,7 +445,7 @@ function PublicApp() {
                       {e.playable && !current && (
                         <button
                           className="df-button df-button-primary"
-                          disabled={disabled || !data.permissions.play_now}
+                          disabled={disabled || !data.permissions.play_now || !!e.entitlement?.blocked}
                           onClick={() => void request(e, "play_now")}
                         >
                           <Play size={14} />
@@ -474,6 +480,7 @@ function PublicApp() {
       {details && (
         <EventDetails
           event={details}
+          timezone={data.timezone}
           when={`${date(details.start_time)} · ${time(details.start_time)}${details.expected_end_time ? ` – ${time(details.expected_end_time)} est.` : ""}`}
           onClose={() => setDetailsId(null)}
         />

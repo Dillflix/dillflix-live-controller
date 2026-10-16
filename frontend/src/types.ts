@@ -17,6 +17,7 @@ export interface ViewingOption {
   [key: string]: unknown;
 }
 export interface Content {
+  entitlement?: import("./EntitlementStatus").Entitlement | null;
   content_id: string;
   kind: string;
   title: string;

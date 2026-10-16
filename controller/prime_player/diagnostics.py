@@ -134,6 +134,13 @@ def collect(path, device_id="living-room"):
                 "activity": activity,
                 "controller_jobs": controller_jobs,
                 "catalog_status": catalog,
+                "schedule_entitlements": [
+                    {**dict(r), "evidence": json.loads(r["evidence"])} for r in db.execute(
+                        "SELECT * FROM event_entitlements WHERE device_id=? "
+                        "AND content_id IN (SELECT id FROM contents) ORDER BY checked_at DESC LIMIT 500",
+                        (device_id,),
+                    )
+                ],
                 "catalogue_probe": json.loads(
                     (
                         db.execute(

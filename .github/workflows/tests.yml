@@ -35,5 +35,7 @@ jobs:
         if: always()
         with:
           name: vpn-settings-screenshots
-          path: frontend/test-results/vpn-*.png
+          path: |
+            frontend/test-results/vpn-*.png
+            frontend/test-results/entitlement-*.png
           if-no-files-found: ignore

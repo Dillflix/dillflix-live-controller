@@ -38,6 +38,12 @@ class PublicAccessUpdate(StrictModel):
     add_to_plan: bool
 
 
+class EntitlementCommand(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+    content_id: str = Field(min_length=1, max_length=1000)
+
+
 class Rule(StrictModel):
     id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=100)
