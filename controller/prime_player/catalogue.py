@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from ..entitlement_store import record_entitled
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls
 from .client import (
@@ -301,6 +302,12 @@ class CatalogueChecks:
             self.db.set_meta(db, key(device["id"]), evidence)
             if not valid or (evidence.get("error") or {}).get("code") == "prime_device_recovery":
                 return
+            if not error:
+                record_entitled(db, device["id"], probe["request"], evidence.get("selected"),
+                                source="foreground_catalogue", provenance={
+                                    "probe_id": probe["id"], "session_id": evidence.get("session_id"),
+                                    "network_context_id": (evidence.get("results") or {}).get("network_context_id"),
+                                })
             reasons = {
                 "network_acquisition_required": "Acquiring the feed on a configured network; playback will be interrupted",
                 "ready": "Prime catalogue reports an entitled live feed",

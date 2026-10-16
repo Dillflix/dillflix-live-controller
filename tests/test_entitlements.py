@@ -12,7 +12,8 @@ from playback_fixtures import payload
 from test_prime_matching import GTI, results, tile
 from test_prime_workflow import cleanup, launch, rig
 
-from controller.entitlements import identity, retry_delay
+from controller.entitlements import DISPATCH_INTERVAL, identity, retry_delay
+from controller.entitlement_store import record_entitled
 from controller.models import Command, EntitlementCommand
 from controller.prime_player.entitlement import choose_entitlement
 from controller.service import Controller
@@ -129,13 +130,16 @@ async def test_automatic_retry_backoff_and_global_dispatch_limit(tmp_path):
 
     workflow.player.search = failing
     try:
-        # Order is by event ID, deliberately independent of import order.
+        # Equal start times use the opaque ID only as a final tie-break.
         await controller.check_entitlement_once()
         with controller.db.transaction() as db:
             failed = dict(db.execute("SELECT * FROM event_entitlements WHERE state='retry'").fetchone())
         assert 299 < failed["next_check"] - time.time() <= 300
         await controller.check_entitlement_once()
         assert len(workflow.player.calls) == 1
+        with controller.db.transaction() as db:
+            delay = controller.db.meta(db, "entitlement_dispatch_after") - time.time()
+        assert 0 < delay <= DISPATCH_INTERVAL == 5
         assert [retry_delay(i) for i in range(1, 10)] == [300, 600, 1200, 2400, 4800, 9600, 18000, 18000, 18000]
         with controller.db.transaction() as db:
             controller.db.set_meta(db, "entitlement_dispatch_after", 0)
@@ -144,6 +148,215 @@ async def test_automatic_retry_backoff_and_global_dispatch_limit(tmp_path):
         assert record(controller, failed["content_id"])["failures"] == 1
     finally:
         await cleanup(controller)
+
+
+async def test_live_and_plan_checks_precede_future_events_and_due_retries_are_not_starved(tmp_path):
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller, count=6)
+    now = datetime.now(UTC)
+    for i, entry in enumerate(entries):
+        entry.update(status="scheduled", start_time=(now + timedelta(hours=i + 1)).isoformat())
+    entries[-1].update(status="live", start_time=now.isoformat())
+    with controller.db.transaction() as db:
+        controller.replace_catalog(db, entries, "teamarr")
+        device = controller.db.device(db)
+        device["plan"] = [controller.entry("event-4")]
+        controller.db.save_device(db, device)
+        db.execute("UPDATE event_entitlements SET state='retry',failures=1,next_check=? WHERE content_id='event-3'",
+                   (time.time() - 600,))
+
+    async def failing(*args):
+        raise TimeoutError()
+
+    workflow.player.search = failing
+    try:
+        for cid in ["event-5", "event-4", "event-3", "fixture-game", "event-1", "event-2"]:
+            with controller.db.transaction() as db:
+                controller.db.set_meta(db, "entitlement_dispatch_after", 0)
+            await controller.check_entitlement_once()
+            assert record(controller, cid)["state"] == "retry", cid
+            assert record(controller, cid)["started_at"] is not None
+        assert record(controller, "event-3")["failures"] == 2
+        assert record(controller, "event-3")["next_check"] > time.time() + 590
+    finally:
+        await cleanup(controller)
+
+
+async def test_manual_check_precedes_live_and_overdue_retries(tmp_path):
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller, count=3)
+    entries[0].update(status="scheduled", start_time=(datetime.now(UTC) + timedelta(days=2)).isoformat())
+    with controller.db.transaction() as db:
+        controller.replace_catalog(db, entries, "teamarr")
+        db.execute("UPDATE event_entitlements SET state='retry',next_check=? WHERE content_id='event-1'",
+                   (time.time() - 600,))
+    controller.entitlement_command("living-room", manual(controller))
+    try:
+        await controller.check_entitlement_once()
+        assert record(controller)["started_at"] is not None
+        assert record(controller, "event-1")["started_at"] is None
+        assert record(controller, "event-2")["started_at"] is None
+    finally:
+        await cleanup(controller)
+
+
+async def test_background_search_has_time_to_return_without_launching(tmp_path):
+    from controller.executor.models import ExecutorError
+
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    entries[0].update(kind="broadcast", title="Wuhan Open: Day 5", event=None, source="dazn_tennis")
+    with controller.db.transaction() as db:
+        controller.replace_catalog(db, entries, "teamarr")
+    original = workflow.player.search
+
+    async def search(query, timeout, ownership):
+        # Production requests timed out at five seconds before identity matching.
+        if timeout < 6:
+            raise ExecutorError("prime_search_timeout", "Catalogue did not return within its budget")
+        return {**await original(query, timeout, ownership),
+                **results(tile(title="Wuhan Open: Day 5", starts_at=entries[0]["start_time"]))}
+
+    workflow.player.search = search
+    try:
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        assert [c[0] for c in workflow.player.calls] == ["search"]
+    finally:
+        await cleanup(controller)
+
+
+async def test_foreground_upcoming_match_completes_background_job_without_playback(tmp_path):
+    from controller.prime_player.catalogue import key
+
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original = workflow.player.search
+
+    async def upcoming(*args):
+        return {**await original(*args), **results(tile(event_state="UPCOMING"))}
+
+    workflow.player.search = upcoming
+    try:
+        with controller.db.transaction() as db:
+            item = controller.items(db)[0]
+            workflow.prepare_selection(db, controller.db.device(db), item)
+            probe = controller.db.meta(db, key("living-room"))
+        await workflow.observe_catalogue(probe)
+        row = record(controller)
+        assert row["status"] == "entitled" and row["state"] == "complete"
+        assert json.loads(row["evidence"])["source"] == "foreground_catalogue"
+        await controller.check_entitlement_once()
+        assert [c[0] for c in workflow.player.calls] == ["search"]
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("playing", [True, False])
+async def test_existing_verified_playback_repairs_entitlement_without_another_search(tmp_path, playing):
+    from test_prime_workflow import row as job_row
+
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    body = payload()
+    body["content_snapshot"] = entries[0]
+    try:
+        report, _ = workflow.store.submit(body)
+        token = report["token"]
+        await workflow.navigate(job_row(workflow, token))
+        assert record(controller)["status"] == "entitled"
+        # Simulate the retained job from a pre-fix installation, then monitor.
+        with controller.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET state='queued',status='unknown',evidence='{}',next_check=0")
+        workflow.player.calls.clear()
+        workflow.player.state = "playing" if playing else "paused"
+        await workflow.monitor(job_row(workflow, token))
+        assert record(controller)["status"] == ("entitled" if playing else "unknown")
+        assert [c[0] for c in workflow.player.calls] == ["status"]
+        if playing:
+            before = record(controller)
+            assert json.loads(before["evidence"])["source"] == "verified_playback"
+            await workflow.monitor(job_row(workflow, token))
+            assert record(controller) == before  # No periodic entitlement refresh.
+            assert controller.overview()["events"][0]["entitlement"]["status"] == "entitled"
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("change", ["event", "route", "not_entitled", "other_route", "other_device"])
+async def test_foreground_evidence_must_match_current_event_route_and_device(tmp_path, change):
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    request = {"content_snapshot": entries[0], "allowed_viewing_options": entries[0]["viewing_options"]}
+    selected = {"content_id": GTI, "viewing_option_id": "prime-option", "entitlement_status": "ENTITLED"}
+    try:
+        with controller.db.transaction() as db:
+            changed = json.loads(json.dumps(entries))
+            if change == "event":
+                changed[0]["title"] = "Different event"
+            elif change == "route":
+                changed[0]["viewing_options"][0]["channel"] = "Another provider"
+            elif change == "not_entitled":
+                selected["entitlement_status"] = "UNENTITLED"
+            elif change == "other_route":
+                selected["viewing_option_id"] = "not-permitted"
+            else:
+                device = controller.db.device(db)
+                device["id"] = "other-device"
+                controller.db.save_device(db, device)
+            controller.replace_catalog(db, changed, "teamarr")
+            record_entitled(db, "other-device" if change == "other_device" else "living-room", request,
+                            selected, source="foreground_catalogue", provenance={})
+        with controller.db.transaction() as db:
+            row = db.execute("SELECT status FROM event_entitlements WHERE device_id='living-room'").fetchone()
+        assert row[0] == "unknown"
+    finally:
+        await cleanup(controller)
+
+
+async def test_late_background_failure_cannot_replace_foreground_positive(tmp_path):
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+
+    async def search(*args):
+        with controller.db.transaction() as db:
+            record_entitled(db, "living-room", {
+                "content_snapshot": entries[0], "allowed_viewing_options": entries[0]["viewing_options"],
+            }, {"content_id": GTI, "viewing_option_id": "prime-option", "entitlement_status": "ENTITLED"},
+                source="foreground_catalogue", provenance={})
+        raise TimeoutError()
+
+    workflow.player.search = search
+    try:
+        await controller.check_entitlement_once()
+        row = record(controller)
+        assert row["status"] == "entitled" and row["state"] == "complete"
+        assert row["check_id"] is None and row["next_check"] is None and row["failures"] == 0
+        assert "error" not in json.loads(row["evidence"])
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("message,code", [
+    ("catalogue search timed out; request may still be settling", "prime_search_timeout"),
+    ("Unexpected application text", "prime_operation_unknown"),
+])
+async def test_search_timeout_is_identified_without_exposing_arbitrary_server_text(message, code):
+    import httpx
+    from controller.executor.models import ExecutorError
+    from controller.prime_player.client import PrimePlayerClient
+
+    def respond(request):
+        return httpx.Response(409, json={"error": {"type": "UnavailableError", "message": message}})
+
+    player = PrimePlayerClient("unused", transport=httpx.MockTransport(respond))
+    try:
+        with pytest.raises(ExecutorError) as error:
+            await player.rpc("search", query="Wuhan Open: Day 5", timeout=15)
+        assert error.value.detail()["code"] == code
+        assert "Unexpected application text" not in str(error.value)
+    finally:
+        await player.close()
 
 
 @pytest.mark.parametrize("condition", ["manual_control", "input_handoff", "recovery", "player_recovery", "lock", "pending"])

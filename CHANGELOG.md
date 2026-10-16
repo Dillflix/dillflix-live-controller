@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.2 - Entitlement evidence and queue throughput
+
+- Complete entitlement jobs from accepted foreground catalogue matches and fresh verified playback with explicit subscription evidence. Reconcile already-playing events without another search; reject changed event/routes and late background failures.
+- Prioritize manual requests, live/watch-plan events, and overdue retries. Order upcoming work by start time. Replace the one-minute dispatch limit with serialized checks at least five seconds apart; preserve the five-minute-to-five-hour unknown retry backoff.
+- Allow 15 seconds for each background search and identify catalogue timeouts explicitly. Playback monitoring and urgent operations retain priority between bounded searches. No player update or database migration is required.
+
 ## Unreleased — public app
 
 - Support direct access without nginx or PlexSSO using guest public mode and explicit `CONTROLLER_ADMIN_AUTH_MODE=trusted-lan`. Show read-only Details for the currently playing public event.

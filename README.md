@@ -74,6 +74,12 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
+Version 0.18.2 reuses confirmed foreground entitlement, repairs the playing event's
+record on its next monitor, prioritizes live/planned events and overdue retries, and
+replaces one-check-per-minute pacing with serialized checks at least five seconds
+apart. Search now has a 15-second budget and reports catalogue timeouts explicitly.
+No database migration or Prime Player update is required.
+
 Version 0.18.1 fixes background entitlement checks repeatedly returning to Queued
 when playback monitoring becomes due, and adds the **Activity → Entitlement checks**
 queue with waiting reasons, errors and manual retries. See [schedule entitlement checks](docs/schedule-entitlement.md).
