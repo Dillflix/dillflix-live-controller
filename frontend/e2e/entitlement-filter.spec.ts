@@ -4,8 +4,16 @@ for (const publicView of [false, true]) {
   test(`${publicView ? "public" : "admin"} Events defaults to entitled and filters unresolved results`, async ({ page }) => {
     const path = publicView ? "/api/public/v1/overview" : "/api/v1/overview";
     await page.route(`**${path}`, async route => {
-      const response = await route.fetch();
-      const body = await response.json();
+      const response = publicView ? undefined : await route.fetch();
+      const body = publicView ? {
+        revision: 1, viewer: { name: "Viewer", guest: false }, timezone: "America/Vancouver",
+        permissions: { play_now: true, add_to_plan: true }, actions_message: "",
+        now_playing: { event: null, verified: false, simulated: true, switching: false },
+        events: [{ content_id: "template", title: "Example", league: "nfl", phase: "regular",
+          kind: "event", start_time: "2026-10-16T19:00:00Z", expected_end_time: null,
+          state: "live", active: true, scores: [], playable: true, planned: false,
+          viewing_option_count: 1, teams: [] }],
+      } : await response!.json();
       const template = body.events[0];
       body.events = ["entitled", "unentitled", "queued", "checking", "no_listing"].map((kind, i) => ({
         ...template, content_id: `filter-${kind}`, title: `Filter event ${i}`, active: true,
