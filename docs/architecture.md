@@ -327,3 +327,14 @@ The now-playing diagnostic endpoint exposes that same projection without player
 or Plex I/O. Matchup thumbnail derivation takes precedence, then a valid provider
 cover URL is used verbatim (including tennis coverage with no matchup). The
 integration calls the projection directly and never polls its HTTP endpoint.
+
+### Entitlement admission
+
+For real Prime routes, new scheduler selections and Add to plan/Play now commands
+require confirmed entitlement from matched event discovery. Unknown, queued,
+ambiguous, no-listing and failed checks remain background work under their existing
+retry schedules. Plan previews use the same admission rule. Existing commitments
+are retained while awaiting confirmation, and current playback is retained without
+permitting a new launch solely because it is current. Entitlement does not imply
+availability: entitled/unavailable feeds still use the bounded trial and network
+policy paths. Simulation and non-Prime routes do not require Prime evidence.

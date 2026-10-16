@@ -125,6 +125,16 @@ def ordered_plan(device):
     return sorted(device["plan"], key=lambda p: p.get("actor", {}).get("type", "admin") == "user")
 
 
+def entitlement_eligible(item):
+    """Positive discovery is required where real Prime entitlement applies.
+
+    None is reserved by entitlement_views for simulation/non-Prime routes.
+    Queue state and playback availability are not subscription decisions.
+    """
+    entitlement = item.get("entitlement")
+    return entitlement is None or entitlement.get("status") == "entitled"
+
+
 def choose(device, items, now, real_now):
     indexed = {e["content_id"]: e for e in items}
     current_id = (device.get("observed") or {}).get("content_id")
@@ -140,7 +150,7 @@ def choose(device, items, now, real_now):
     for item in items:
         if not item["active"] and item["content_id"] not in committed | {current_id}:
             continue
-        if (item.get("entitlement") or {}).get("blocked") and item["content_id"] != current_id:
+        if not entitlement_eligible(item) and item["content_id"] != current_id:
             continue
         evidence = access.get(item["content_id"], {})
         if (evidence.get("scope") == device.get("prime_network_scope")
@@ -318,7 +328,8 @@ def preview_plan(device, items, now):
         for p in ordered_plan(device)
         if p["content_id"] in indexed
         and indexed[p["content_id"]]["lifecycle"]["state"] not in {"ended", "cancelled"}
-        and not (indexed[p["content_id"]].get("entitlement") or {}).get("blocked")
+        and (entitlement_eligible(indexed[p["content_id"]])
+             or p["content_id"] == (device.get("observed") or {}).get("content_id"))
     ]
     conflicts, unknown = [], []
     bounds = {now, now + timedelta(hours=24)}
