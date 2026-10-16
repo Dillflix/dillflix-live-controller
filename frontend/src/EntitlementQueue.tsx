@@ -6,6 +6,7 @@ export interface EntitlementQueueView {
   reason: string | null;
   updated_at: string | null;
   dispatch_after: string | null;
+  service_probe_at?: string | null;
   counts: Record<Entitlement["state"], number>;
   failed_jobs: number;
   rows: {
@@ -84,7 +85,9 @@ export function EntitlementQueue({
         {value.updated_at && (
           <small>Last worker update {date(value.updated_at)}</small>
         )}
-        {value.dispatch_after && (
+        {value.service_probe_at ? (
+          <small>Next player availability check {date(value.service_probe_at)}</small>
+        ) : value.dispatch_after && (
           <small>
             Next automatic dispatch no earlier than {date(value.dispatch_after)}
           </small>

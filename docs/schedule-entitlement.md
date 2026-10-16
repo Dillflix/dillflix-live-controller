@@ -82,9 +82,9 @@ Stable playback does not block the queue for the event's duration.
 One event check runs at a time, with at least five seconds between automatic starts;
 there is no longer a one-minute dispatch limit. Manual requests come first, then live
 and watch-plan events, then other upcoming events. Within each automatic priority
-group, overdue retries precede first checks, and events are ordered by scheduled
-start rather than opaque ID. Retries keep their long backoff; they cannot be starved
-by the zero-valued initial deadline of hundreds of untouched jobs.
+group, version 0.18.4 alternates due retries with first checks when both exist;
+events within either group are ordered by scheduled start rather than opaque ID.
+Retries keep their long backoff, and neither group can monopolize dispatch.
 The worker waits behind due playback monitoring, launches, cancellation, recovery, manual
 control and foreground catalogue work. It uses only the existing non-navigating
 search API, shared query fallbacks and identity matcher; it never calls broadcasts,
@@ -101,6 +101,16 @@ behavior, not Fire TV performance under sustained load; device validation must c
 continued position advancement and monitor latency while a populated queue drains.
 Known catalogue timeouts appear as `prime_search_timeout`, rather than an unexplained
 `UnavailableError`. A timeout remains unknown and follows the existing retry backoff.
+
+Version 0.18.4 checks shared player availability before claiming an event. A sleeping
+device, disconnected runtime, missing capability or unreachable service pauses the
+whole queue. Activity shows the service problem and next availability probe, with
+30, 60, 120, 240, then 300 seconds between failed probes. These dependency failures
+do not increment individual event failures or consume their unknown-result backoff.
+When search recovers, old per-event service-outage retries become queued again;
+their historical failure counts remain recorded. Genuine matching retries retain
+the five-minute-to-five-hour schedule. Manual checks do not bypass a service outage.
+Diagnostics include the worker and shared-service waiting state.
 
 Schema 12 stores observations and jobs separately from playback readiness. Diagnostics
 include up to 500 current schedule records. Catalogue retention removes old evidence
