@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.0 - Expanded sports discovery
+
+- Add 25 competitions across soccer, basketball, hockey, rugby, Australian football and lacrosse using existing Teamarr providers, with readable names in both apps.
+- Allow up to 100 selected leagues; publish all 20-league feed batches atomically.
+- Schema 14 expands previous default selections once while preserving custom/empty selections and playback state.
+- Update the Dillflix Teamarr fork for default Prime routes, or merge the new codes into an explicit map. Prime entitlement remains required. See [configuration](docs/expanded-leagues.md).
+
 ## Unreleased - soccer league discovery
 
 - Add EFL Championship (`eng.2`), Bundesliga (`ger.1`) and 2. Bundesliga (`ger.2`) to discovery, league priorities and team selection, with readable names in both apps.

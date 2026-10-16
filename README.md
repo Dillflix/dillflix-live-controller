@@ -74,6 +74,14 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
+Version 0.19.0 adds 25 soccer, basketball, hockey, rugby, AFL and PLL competitions.
+Schema 14 expands previous default discovery selections to all 36 supported
+defaults; custom and empty selections are preserved. The selection limit is now
+100. Update the Dillflix Teamarr fork as well, and merge the new routes if using
+an explicit broadcast configuration. See the complete [league codes and upgrade
+steps](docs/expanded-leagues.md). Individual events still require confirmed
+Prime Video entitlement before public/admin Play now or Add to plan.
+
 Soccer discovery includes EFL Championship (`eng.2`), Bundesliga (`ger.1`) and
 2. Bundesliga (`ger.2`). Schema 13 adds these to existing selections that match
 the previous eight default leagues. Custom selections are preserved; enable the

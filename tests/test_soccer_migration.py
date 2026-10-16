@@ -1,6 +1,7 @@
 import json
 
 from controller.database import Database, encode
+from controller.leagues import DEFAULT_LEAGUES
 
 
 def test_soccer_upgrade_expands_only_old_defaults_once(tmp_path):
@@ -33,9 +34,11 @@ def test_soccer_upgrade_expands_only_old_defaults_once(tmp_path):
             expected = payloads[device_id]
             expanded = device_id in {"defaults", "reordered"}
             if expanded:
-                expected["preferences"]["discovery_leagues"] = selections[device_id] + ["eng.2", "ger.1", "ger.2"]
+                expected["preferences"]["discovery_leagues"] = selections[device_id] + [
+                    league for league in DEFAULT_LEAGUES if league not in old_defaults
+                ]
             assert json.loads(raw) == expected
-            assert revision == (8 if expanded else 7)
+            assert revision == (9 if expanded else 7)
         assert db.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
         # A later user opt-out must not be overwritten on the next startup.
         payloads["defaults"]["preferences"]["discovery_leagues"] = old_defaults
@@ -44,4 +47,4 @@ def test_soccer_upgrade_expands_only_old_defaults_once(tmp_path):
     with reopened.transaction() as db:
         raw, revision = db.execute("SELECT payload,revision FROM devices WHERE id='defaults'").fetchone()
         assert json.loads(raw)["preferences"]["discovery_leagues"] == old_defaults
-        assert revision == 8
+        assert revision == 9
