@@ -200,6 +200,110 @@ async def test_manual_check_precedes_live_and_overdue_retries(tmp_path):
         await cleanup(controller)
 
 
+async def test_due_retries_and_first_checks_alternate_without_starving_either(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller, count=6)
+    with controller.db.transaction() as db:
+        db.execute("UPDATE event_entitlements SET state='retry',failures=2,next_check=0 "
+                   "WHERE content_id IN ('event-1','event-2','event-3')")
+    order = []
+    async def missing(*args):
+        with controller.db.transaction() as db:
+            order.append(db.execute("SELECT failures FROM event_entitlements WHERE state='checking'").fetchone()[0] > 0)
+        raise TimeoutError()
+    workflow.player.search = missing
+    try:
+        for _ in range(6):
+            with controller.db.transaction() as db:
+                controller.db.set_meta(db, "entitlement_dispatch_after", 0)
+            await controller.check_entitlement_once()
+        assert order == [True, False, True, False, True, False]
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("failure", ["sleep", "backend", "transport"])
+async def test_shared_outage_pauses_all_jobs_then_resumes_without_per_event_failures(tmp_path, failure):
+    from controller.executor.models import ExecutorError
+    controller, workflow = rig(tmp_path)
+    seed(controller, count=20)
+    healthy = workflow.player.health
+    probes = 0
+    async def broken():
+        nonlocal probes
+        probes += 1
+        if failure == "transport":
+            raise ExecutorError("prime_transport_unknown", "Health request failed")
+        h = await healthy()
+        if failure == "sleep":
+            h["device_power"] = {"state": "asleep", "wakefulness": "Asleep", "display": "OFF"}
+        else:
+            h["runtime_failure"] = "backend_unavailable"
+            h["compatibility"]["adaptation"] = {"state": "ready"}
+            h["compatibility"]["capabilities"]["search"] = {"available": False, "reasons": ["backend_recovering"]}
+        return h
+    workflow.player.health = broken
+    try:
+        for _ in range(10):
+            await controller.check_entitlement_once()
+        assert probes == 1
+        assert workflow.player.calls == []
+        with controller.db.transaction() as db:
+            assert db.execute("SELECT COUNT(*) FROM event_entitlements WHERE state='queued' AND failures=0 AND started_at IS NULL").fetchone()[0] == 20
+        queue = controller.overview()["entitlement_queue"]
+        assert queue["phase"] == "waiting"
+        assert "Prime search unavailable" in queue["reason"]
+        assert queue["service_probe_at"] and queue["failed_jobs"] == 0
+        controller.entitlement_command("living-room", manual(controller))
+        await controller.check_entitlement_once()
+        assert probes == 1  # A click cannot hammer the shared outage.
+        workflow.player.health = healthy
+        with controller.db.transaction() as db:
+            state = controller.db.meta(db, "entitlement_service:living-room")
+            state["next_probe"] = 0
+            controller.db.set_meta(db, "entitlement_service:living-room", state)
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        assert record(controller)["failures"] == 0
+        assert controller.overview()["entitlement_queue"]["service_error"] is None
+    finally:
+        await cleanup(controller)
+
+
+async def test_outage_mid_check_defers_job_without_counting_unknown_or_denial(tmp_path):
+    from controller.executor.models import ExecutorError
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    async def disconnected(*args):
+        raise ExecutorError("prime_unavailable", "Runtime disconnected")
+    workflow.player.search = disconnected
+    try:
+        await controller.check_entitlement_once()
+        row = record(controller)
+        assert row["state"] == "queued"
+        assert row["failures"] == 0 and row["checked_at"] is None
+        assert controller.overview()["entitlement_queue"]["service_error"]["code"] == "prime_unavailable"
+    finally:
+        await cleanup(controller)
+
+
+async def test_recovered_service_requeues_legacy_outage_backoffs_but_not_matching_retries(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller, count=3)
+    with controller.db.transaction() as db:
+        db.execute("UPDATE event_entitlements SET state='retry',failures=4,next_check=?,evidence=? WHERE content_id='event-1'",
+                   (time.time() + 18000, json.dumps({"error": {"code": "prime_incompatible"}})))
+        db.execute("UPDATE event_entitlements SET state='retry',failures=4,next_check=? WHERE content_id='event-2'", (time.time() + 18000,))
+    try:
+        await controller.check_entitlement_once()
+        assert record(controller, "event-1")["next_check"] == 0
+        assert record(controller, "event-1")["state"] == "queued"
+        assert record(controller, "event-1")["failures"] == 4
+        assert record(controller, "event-2")["next_check"] > time.time() + 17900
+    finally:
+        await cleanup(controller)
+
+
 async def test_background_search_has_time_to_return_without_launching(tmp_path):
     from controller.executor.models import ExecutorError
 

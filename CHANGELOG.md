@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.4 - Pause entitlement work during player outages
+
+- Pause the whole queue on unavailable player/search capabilities or a sleeping device; show the cause and next shared probe without charging every event a failure. Requeue legacy outage backoffs after recovery.
+- Alternate due retries with first checks within each priority group. Preserve matching backoff and the three-query search limit. Include worker/dependency state in diagnostics.
+
 ## 0.18.3 - Reuse entitlement matches across bounded searches
 
 - Keep looking for entitled feeds after an unentitled match. Reuse identity decisions for repeated candidates, evaluate new alternatives, and settle negative results only after the bounded scan finishes without unresolved alternatives.

@@ -25,17 +25,22 @@ SEARCH_SECONDS = 15
 CHECK_SECONDS = 120
 DISPATCH_INTERVAL = 5
 DEFER_SECONDS = 60
+SERVICE_ERRORS = frozenset({
+    "prime_unavailable", "prime_incompatible", "prime_api_incompatible", "prime_runtime_recovering",
+    "prime_runtime_unsupported", "prime_network_recovering", "prime_ownership_unavailable",
+    "prime_device_mismatch", "prime_transport_unknown",
+})
 
 
 def retry_delay(failures):
     return min(5 * 60 * 2 ** min(max(failures - 1, 0), 6), 5 * 60 * 60)
 
 
-def queue_priority(row, item, device):
+def queue_priority(row, item, device, prefer_retry=True):
     """Urgent events first; zero-valued initial deadlines must not starve retries."""
     committed = {entry["content_id"] for entry in device["plan"]}
     urgent = item["lifecycle"]["state"] == "live" or item["content_id"] in committed
-    return (-row["manual"], not urgent, row["state"] != "retry",
+    return (-row["manual"], not urgent, (row["failures"] > 0) != prefer_retry,
             parse_time(item["start_time"]).timestamp(), row["next_check"], row["content_id"])
 
 
@@ -162,6 +167,46 @@ class EntitlementChecks:
             "updated_at": time.time(),
         })
 
+    def entitlement_service_failure(self, db, device_id, error):
+        key = "entitlement_service:" + device_id
+        previous = self.db.meta(db, key, {})
+        failures = previous.get("failures", 0) + 1
+        value = {"error": error.detail(), "failures": failures, "at": time.time(),
+                 "next_probe": time.time() + min(300, 30 * 2 ** min(failures - 1, 4))}
+        self.db.set_meta(db, key, value)
+        self.entitlement_progress(db, "waiting", reason="Prime search unavailable: " + str(error))
+
+    async def entitlement_service_ready(self, workflow, device_id):
+        """Probe one shared dependency before claiming any event job."""
+        with self.db.transaction() as db:
+            blocked = self.db.meta(db, "entitlement_service:" + device_id, {})
+            if blocked.get("next_probe", 0) > time.time():
+                return False
+        try:
+            async with workflow.input_lock:
+                health = await workflow.player.health()
+                if health.get("serial") != self.settings.screen_adb_serial:
+                    raise ExecutorError("prime_device_mismatch", "Prime Player device differs")
+                workflow.player.require(health, "search")
+                workflow.player.ownership(health, automatic=True)
+        except ExecutorError as exc:
+            with self.db.transaction() as db:
+                self.entitlement_service_failure(db, device_id, exc)
+            return False
+        with self.db.transaction() as db:
+            self.db.set_meta(db, "entitlement_service:" + device_id, {})
+            # Older deployments charged shared outages to individual events.
+            # Preserve that history, but don't leave them behind hours of backoff
+            # after the dependency has recovered.
+            repair = blocked or not self.db.meta(db, "entitlement_service_repaired:" + device_id, False)
+            for row in (db.execute("SELECT content_id,evidence FROM event_entitlements "
+                                   "WHERE device_id=? AND state='retry'", (device_id,)).fetchall() if repair else []):
+                if (json.loads(row["evidence"]).get("error") or {}).get("code") in SERVICE_ERRORS:
+                    db.execute("UPDATE event_entitlements SET state='queued',next_check=0 "
+                               "WHERE device_id=? AND content_id=?", (device_id, row["content_id"]))
+            self.db.set_meta(db, "entitlement_service_repaired:" + device_id, True)
+        return True
+
     def entitlement_queue(self, db, device, items):
         if not self.executor:
             return None
@@ -188,6 +233,7 @@ class EntitlementChecks:
                          "due": r["next_check"] is not None and r["next_check"] <= now,
                          "manual": bool(r["manual"])})
         worker = self.db.meta(db, "entitlement_worker", {})
+        service = self.db.meta(db, "entitlement_service:" + device["id"], {})
         reason = worker.get("reason")
         phase = worker.get("phase", "starting")
         due = [r for r in rows if r["eligible"] and r["due"] and r["entitlement"]["state"] in {"queued", "retry"}]
@@ -212,9 +258,14 @@ class EntitlementChecks:
                 phase, reason = "idle", "No checks are due"
             if worker.get("phase") == "error":
                 phase, reason = "error", worker.get("reason")
+        if service:
+            phase, reason = "waiting", "Prime search unavailable: " + service["error"]["message"]
         return {"phase": phase, "reason": reason, "counts": counts, "failed_jobs": failures,
+                "service_error": service.get("error"),
+                "service_probe_at": datetime.fromtimestamp(service["next_probe"], UTC).isoformat() if service else None,
                 "updated_at": datetime.fromtimestamp(worker["updated_at"], UTC).isoformat() if worker else None,
-                "dispatch_after": datetime.fromtimestamp(dispatch, UTC).isoformat() if dispatch > now else None,
+                "dispatch_after": datetime.fromtimestamp(service["next_probe"] if service else dispatch, UTC).isoformat()
+                if service or dispatch > now else None,
                 "rows": rows}
 
     async def check_entitlement_once(self):
@@ -241,8 +292,9 @@ class EntitlementChecks:
             if not due or not self.entitlement_idle(db, device):
                 return
             items = {i["content_id"]: i for i in self.items(db, device["id"])}
+            prefer_retry = not self.db.meta(db, "entitlement_last_retry:" + device["id"], False)
             due = sorted((r for r in due if r["content_id"] in items),
-                         key=lambda r: queue_priority(r, items[r["content_id"]], device))
+                         key=lambda r: queue_priority(r, items[r["content_id"]], device, prefer_retry))
             row = None
             for candidate in due:
                 item = items.get(candidate["content_id"])
@@ -258,12 +310,24 @@ class EntitlementChecks:
             if not row["manual"] and now < self.db.meta(db, "entitlement_dispatch_after", 0):
                 return
             item = items[row["content_id"]]
+        if not await self.entitlement_service_ready(workflow, device["id"]):
+            return
+        with self.db.transaction() as db:
+            current = db.execute("SELECT * FROM event_entitlements WHERE device_id=? AND content_id=?",
+                                 (device["id"], row["content_id"])).fetchone()
+            if (not current or current["state"] not in {"queued", "retry"}
+                    or current["check_id"] != row["check_id"]
+                    or not self.entitlement_idle(db, self.db.device(db, device["id"]))):
+                return
+            row = dict(current)
+            now = time.time()
             row.update(check_id=uuid4().hex, started_at=now)
             db.execute(
                 "UPDATE event_entitlements SET state='checking',check_id=?,started_at=?,next_check=NULL,manual=0 "
                 "WHERE device_id=? AND content_id=?", (row["check_id"], now, device["id"], row["content_id"]),
             )
             self.db.set_meta(db, "entitlement_dispatch_after", now + DISPATCH_INTERVAL)
+            self.db.set_meta(db, "entitlement_last_retry:" + device["id"], row["failures"] > 0)
             self.entitlement_progress(db, "searching", content_id=row["content_id"])
         evidence = {"identity": identity(item)}
         request = {"content_snapshot": item["snapshot"], "allowed_viewing_options": item["viewing_options"]}
@@ -348,6 +412,13 @@ class EntitlementChecks:
             pass
         except Deferred as exc:
             deferred = str(exc)
+        except ExecutorError as exc:
+            if exc.code in SERVICE_ERRORS:
+                deferred = "Prime search unavailable: " + str(exc)
+                with self.db.transaction() as db:
+                    self.entitlement_service_failure(db, device["id"], exc)
+            else:
+                evidence.update(reason="Entitlement check failed; retry scheduled", error=exc.detail())
         except asyncio.CancelledError:
             evidence["reason"] = "Check interrupted; retry scheduled"
             raise

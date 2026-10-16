@@ -207,6 +207,12 @@ class PrimePlayerClient:
         implemented = health.get("capabilities", [])
         compatibility = health.get("compatibility", {})
         available = compatibility.get("capabilities", {})
+        if health.get("device_power", {}).get("state") == "asleep":
+            raise ExecutorError("prime_runtime_recovering", "Fire TV is asleep; waiting for confirmed device wake")
+        if health.get("runtime_failure") == "backend_unavailable" or any(
+            "backend_recovering" in available.get(name, {}).get("reasons", []) for name in capabilities
+        ):
+            raise ExecutorError("prime_runtime_recovering", "Prime device runtime disconnected; waiting for recovery")
         for name in capabilities:
             if name not in implemented:
                 raise ExecutorError(
