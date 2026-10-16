@@ -500,6 +500,14 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                            attempt_id=None, launch_outcome=None, launch_error=None, unavailable_trial_cleanup=None)
         return True
 
+    def record_playback_entitlement(self, db, row, workflow):
+        record_entitled(db, row["device_id"], json.loads(row["request"]), workflow["selected"],
+                        source="verified_playback", provenance={
+                            "session_id": workflow["session_id"],
+                            "attempt_id": workflow["attempt_id"],
+                            "network_context_id": workflow.get("network_context_id"),
+                        })
+
     def record_launch(self, token, outcome):
         """Accept Prime Player's startup proof; current status belongs to monitoring."""
         now = datetime.now(UTC)
@@ -508,6 +516,9 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             report = json.loads(row["report"])
             workflow = report["prime_player"]
             self.validate_outcome(outcome, workflow)
+            if (outcome.get("state") == "playing" and
+                    outcome.get("evidence", {}).get("resolution", {}).get("playbackClass") == "live_watch_now"):
+                self.record_playback_entitlement(db, row, workflow)
             report["observation"] = {
                 "device_id": row["device_id"],
                 "request_id": row["request_id"],
@@ -619,12 +630,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             if verified:
                 if (not status.get("error") and device["intent_version"] == row["intent"]
                         and owner and owner[0] == token):
-                    record_entitled(db, row["device_id"], json.loads(row["request"]), workflow["selected"],
-                                    source="verified_playback", provenance={
-                                        "session_id": workflow["session_id"],
-                                        "attempt_id": workflow["attempt_id"],
-                                        "network_context_id": workflow.get("network_context_id"),
-                                    })
+                    self.record_playback_entitlement(db, row, workflow)
                 report["observation"] = {
                     "device_id": row["device_id"],
                     "request_id": row["request_id"],
