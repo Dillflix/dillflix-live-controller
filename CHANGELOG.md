@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased - soccer league discovery
+
+- Add EFL Championship (`eng.2`), Bundesliga (`ger.1`) and 2. Bundesliga (`ger.2`) to discovery, league priorities and team selection, with readable names in both apps.
+- Schema 13 expands existing default discovery selections once; custom and empty selections, plans, rules and automation mode are preserved. Update Teamarr too for default Prime Video routes; explicit Teamarr route mappings require the three entries.
+
 ## 0.18.4 - Pause entitlement work during player outages
 
 - Pause the whole queue on unavailable player/search capabilities or a sleeping device; show the cause and next shared probe without charging every event a failure. Requeue legacy outage backoffs after recovery.

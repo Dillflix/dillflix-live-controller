@@ -17,7 +17,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 12
+    SCHEMA_VERSION = 13
 
     def __init__(self, path):
         self.path = path
@@ -153,6 +153,21 @@ class Database:
                     check_id TEXT, started_at REAL, checked_at TEXT, manual INTEGER NOT NULL DEFAULT 0,
                     evidence TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(device_id,content_id))""")
                 db.execute("CREATE INDEX IF NOT EXISTS entitlement_due ON event_entitlements(device_id,state,next_check)")
+            if version < 13:
+                # Expand the previous default selection once, not custom or empty lists.
+                # Explicit Teamarr routing overrides remain owned by Teamarr.
+                previous_defaults = {
+                    "nfl", "college-football", "nhl", "mlb", "nba", "cfl", "uefa.champions", "f1",
+                }
+                for device_id, payload in db.execute("SELECT id,payload FROM devices").fetchall():
+                    device = json.loads(payload)
+                    selected = device.get("preferences", {}).get("discovery_leagues")
+                    if isinstance(selected, list) and set(selected) == previous_defaults:
+                        device["preferences"]["discovery_leagues"] = selected + ["eng.2", "ger.1", "ger.2"]
+                        db.execute(
+                            "UPDATE devices SET payload=?, revision=revision+1 WHERE id=?",
+                            (encode(device), device_id),
+                        )
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:

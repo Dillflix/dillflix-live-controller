@@ -74,6 +74,17 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
+Soccer discovery includes EFL Championship (`eng.2`), Bundesliga (`ger.1`) and
+2. Bundesliga (`ger.2`). Schema 13 adds these to existing selections that match
+the previous eight default leagues. Custom selections are preserved; enable the
+new leagues under Settings when desired. Both apps display their full names,
+and league priorities and preferred-team rankings use the existing provider IDs.
+Update Teamarr alongside the controller. If `TEAMARR_BROADCAST_CONFIG` contains
+an explicit `controller.league_apps` map, retain its existing entries and add
+`"eng.2": "prime_video"`, `"ger.1": "prime_video"`, and `"ger.2": "prime_video"`.
+Configured routes still require the corresponding channel subscription and
+successful live-feed discovery in Prime Video.
+
 Version 0.18.3 reuses event identity decisions across background entitlement
 queries. Finding an unentitled feed does not stop the remaining queries from
 looking for an entitled alternative. Team events now use at most three searches:
