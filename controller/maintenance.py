@@ -130,7 +130,7 @@ def prune(database, settings, owner):
         )
         # Keep the once-per-event marker, but not retired catalogue/model evidence.
         db.execute("UPDATE event_entitlements SET evidence='{}',state='stopped',status='unknown',next_check=NULL "
-                   "WHERE content_id NOT IN (SELECT id FROM contents) AND evidence!='{}'")
+                   "WHERE content_id NOT IN (SELECT id FROM contents) AND (state!='stopped' OR evidence!='{}')")
         known = {r[0] for r in db.execute("SELECT id FROM contents")}
         for d in devices:
             d["failures"] = {key: value for key, value in d["failures"].items() if key in known}

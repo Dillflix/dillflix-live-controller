@@ -1,7 +1,6 @@
 """Imported entitlement work is durable, bounded and never a playback request."""
 
 import asyncio
-import copy
 import json
 import time
 from uuid import uuid4
@@ -150,18 +149,19 @@ async def test_search_does_not_change_playback_and_monitor_has_priority(tmp_path
     seed(controller)
     try:
         token = await launch(workflow)
-        before = copy.deepcopy(workflow.store.report(token))
         with controller.db.transaction() as db:
             db.execute("UPDATE executor_jobs SET next_check=0 WHERE token=?", (token,))
         await controller.check_entitlement_once()
         assert record(controller)["state"] == "queued"
         with controller.db.transaction() as db:
             db.execute("UPDATE executor_jobs SET next_check=? WHERE token=?", (time.time() + 100, token))
+            before = dict(workflow.store.get_row(db, token))
         calls = len(workflow.player.calls)
         await controller.check_entitlement_once()
         assert record(controller)["status"] == "entitled"
         assert [c[0] for c in workflow.player.calls[calls:]] == ["search"]
-        assert workflow.store.report(token) == before
+        with controller.db.transaction() as db:
+            assert dict(workflow.store.get_row(db, token)) == before
     finally:
         await cleanup(controller)
 
@@ -199,6 +199,84 @@ async def test_repeated_manual_click_cannot_duplicate_active_request(tmp_path):
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        await cleanup(controller)
+
+
+async def test_manual_check_can_inspect_retained_event_outside_import_window(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    try:
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            device["plan"] = [controller.entry("fixture-game")]
+            controller.db.save_device(db, device)
+            controller.replace_catalog(db, [], "teamarr")
+        await controller.check_entitlement_once()
+        assert not workflow.player.calls
+        controller.entitlement_command("living-room", manual(controller))
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        assert [c[0] for c in workflow.player.calls] == ["search"]
+    finally:
+        await cleanup(controller)
+
+
+async def test_ownership_change_during_search_cannot_publish_entitlement(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original = workflow.player.search
+
+    async def changed(*args):
+        result = await original(*args)
+        workflow.player.epoch += 1
+        return result
+
+    workflow.player.search = changed
+    try:
+        await controller.check_entitlement_once()
+        observation = record(controller)
+        assert observation["status"] == "unknown"
+        assert json.loads(observation["evidence"])["error"]["code"] == "prime_stale_result"
+        assert observation["next_check"] > time.time() + 290
+    finally:
+        await cleanup(controller)
+
+
+async def test_foreground_work_arriving_after_search_prevents_fallback_query(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original = workflow.player.search
+
+    async def interrupted(*args):
+        result = await original(*args)
+        workflow.store.submit(payload())
+        return {**result, "containers": []}
+
+    workflow.player.search = interrupted
+    try:
+        await controller.check_entitlement_once()
+        assert [c[0] for c in workflow.player.calls] == ["search"]
+        assert record(controller)["state"] == "queued"
+        assert record(controller)["failures"] == 0
+    finally:
+        await cleanup(controller)
+
+
+async def test_pruned_unchecked_event_keeps_once_only_marker(tmp_path):
+    from controller.maintenance import prune
+
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    try:
+        with controller.db.transaction() as db:
+            db.execute("UPDATE contents SET active=0,seen_at='2000-01-01T00:00:00Z'")
+        prune(controller.db, controller.settings, controller.owner)
+        assert record(controller)["state"] == "stopped"
+        with controller.db.transaction() as db:
+            controller.replace_catalog(db, entries, "teamarr")
+        await controller.check_entitlement_once()
+        assert not workflow.player.calls
+    finally:
         await cleanup(controller)
 
 

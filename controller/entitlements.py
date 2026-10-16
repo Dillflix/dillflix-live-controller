@@ -142,8 +142,8 @@ class EntitlementChecks:
             ).fetchall():
                 self.finish_entitlement(db, row, "unknown", {"reason": "Check interrupted; retry scheduled"})
             due = db.execute(
-                "SELECT e.* FROM event_entitlements e JOIN contents c ON c.id=e.content_id AND c.active=1 "
-                "WHERE e.device_id=? AND e.state IN ('queued','retry') "
+                "SELECT e.* FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
+                "WHERE (c.active=1 OR e.manual=1) AND e.device_id=? AND e.state IN ('queued','retry') "
                 "AND e.next_check<=? ORDER BY e.manual DESC,e.next_check,e.content_id", (device["id"], now),
             ).fetchall()
             if not due or not self.entitlement_idle(db, device):
@@ -158,7 +158,7 @@ class EntitlementChecks:
                     db.execute("UPDATE event_entitlements SET state='stopped',next_check=NULL WHERE device_id=? AND content_id=?",
                                (device["id"], candidate["content_id"]))
                     continue
-                if item and item["active"] and item.get("entitlement"):
+                if item and (item["active"] or candidate["manual"]) and item.get("entitlement"):
                     row = dict(candidate)
                     break
             if not row or not self.entitlement_idle(db, device):
@@ -194,6 +194,8 @@ class EntitlementChecks:
                 after = await workflow.player.health()
                 if after["session_id"] != health["session_id"] or result.get("session_id") != after["session_id"]:
                     raise ExecutorError("prime_stale_result", "Prime session changed during entitlement check")
+                if workflow.player.ownership(after, automatic=True) != ownership:
+                    raise ExecutorError("prime_stale_result", "Prime ownership changed during entitlement check")
                 workflow.require_catalogue_generation(after, result)
                 evidence.update(session_id=result.get("session_id"), generation=result.get("generation"),
                                 network_context_id=result.get("network_context_id"), search_id=result.get("search_id"))

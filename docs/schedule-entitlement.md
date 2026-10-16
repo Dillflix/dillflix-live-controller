@@ -16,10 +16,12 @@ the inspected catalogue response cannot be inferred.
 Unknown checks retry at 5, 10, 20, 40, 80, 160, then 300 minutes (five-hour cap).
 The retry count and deadline are durable. Completed entitlement results have no
 periodic refresh. Confirmed completion/cancellation stops retries; events outside
-the imported active catalogue are not scanned. Admin Check/Recheck entitlement on
+the imported active catalogue are not scanned automatically. Admin Check/Recheck entitlement on
 cards and details queues a new check immediately, bypassing the backoff. Repeated
 clicks coalesce with active work. The endpoint uses normal admin authentication,
 revision checks and command receipts. A manual check never launches playback.
+It can also check a retained watch-plan event outside the current import window;
+that exception does not resume automatic scans outside the window.
 
 Both apps explain entitlement and disable Play now/Add to plan for confirmed denial;
 the command API enforces the same rule. Unknown stays usable with an explicit warning.
