@@ -17,7 +17,7 @@ from .model_diagnostics import capture_model_calls
 from .planner import parse_time
 from .prime_player.entitlement import choose_entitlement
 from .prime_player.identity_cache import EventMatchCache
-from .prime_player.labels import prime_option
+from .prime_player.labels import prime_option, search_queries
 from .prime_player.search import choose_search
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,22 @@ SERVICE_ERRORS = frozenset({
 
 def retry_delay(failures):
     return min(5 * 60 * 2 ** min(max(failures - 1, 0), 6), 5 * 60 * 60)
+
+
+def no_listing(evidence):
+    audit = evidence.get("audit") or {}
+    attempts = audit.get("search_attempts") or []
+    return (not evidence.get("error") and not audit.get("error") and audit.get("search_queries_exhausted") is True
+            and audit.get("match_status") == "no_match" and bool(attempts)
+            and all(a.get("state") == "no_matching_feed" and not a.get("error") for a in attempts))
+
+
+def no_listing_retry(now, start):
+    # One useful start-time check, but never a burst after a recent search.
+    next_check = now + 12 * 60 * 60
+    if start and now < start < next_check:
+        next_check = max(start, now + 60 * 60)
+    return next_check
 
 
 def queue_priority(row, item, device, prefer_retry=True):
@@ -88,6 +104,7 @@ class EntitlementChecks:
                 "next_check_at": datetime.fromtimestamp(row["next_check"], UTC).isoformat()
                 if row and row["next_check"] else None,
                 "blocked": blocked,
+                "result": "no_listing" if not stale and no_listing(evidence) else None,
                 "reason": "Event details changed; recheck entitlement" if stale else evidence.get("reason"),
                 "can_check": item["lifecycle"]["state"] not in {"ended", "cancelled"},
             }
@@ -278,6 +295,28 @@ class EntitlementChecks:
             if not self.db.lease(db, "entitlements:" + device["id"], self.owner, now, CHECK_SECONDS + 60):
                 return
             self.entitlement_progress(db, "idle")
+            # Upgrade completed legacy scans; never errors, manual or active work.
+            if not self.db.meta(db, "entitlement_no_listing_v1", False):
+                for old in db.execute("SELECT e.*,c.snapshot FROM event_entitlements e "
+                                      "JOIN contents c ON c.id=e.content_id "
+                                      "WHERE e.state='retry' AND e.status='unknown' AND e.manual=0").fetchall():
+                    evidence = json.loads(old["evidence"])
+                    audit = evidence.get("audit") or {}
+                    snapshot = json.loads(old["snapshot"])
+                    attempts = audit.get("search_attempts") or []
+                    if ([a.get("query") for a in attempts] == search_queries(snapshot)
+                            and old["checked_at"]):
+                        audit["search_queries_exhausted"] = True
+                        if no_listing(evidence):
+                            evidence["reason"] = "No Prime listing found"
+                            evidence["retry_failures"] = 0
+                            checked = parse_time(old["checked_at"]).timestamp()
+                            start = parse_time(snapshot["start_time"]).timestamp()
+                            db.execute("UPDATE event_entitlements SET next_check=?,evidence=? "
+                                       "WHERE device_id=? AND content_id=?",
+                                       (no_listing_retry(checked, start), encode(evidence),
+                                        old["device_id"], old["content_id"]))
+                self.db.set_meta(db, "entitlement_no_listing_v1", True)
             # A lost response after restart is unknown. Never immediately replay it.
             for row in db.execute(
                 "SELECT * FROM event_entitlements WHERE device_id=? AND state='checking' AND started_at<?",
@@ -431,6 +470,7 @@ class EntitlementChecks:
                 if current_item and identity(current_item) != evidence["identity"]:
                     status = "unknown"
                     evidence["reason"] = "Event details changed during the check"
+                    evidence.pop("audit", None)
                 if current_item and current_item["lifecycle"]["state"] in {"ended", "cancelled"}:
                     db.execute("UPDATE event_entitlements SET state='stopped',next_check=NULL WHERE check_id=?", (row["check_id"],))
                 elif deferred:
@@ -444,11 +484,21 @@ class EntitlementChecks:
 
     def finish_entitlement(self, db, row, status, evidence):
         failures = row["failures"] + 1 if status == "unknown" else 0
+        previous = json.loads(row["evidence"])
+        short_failures = previous.get("retry_failures", row["failures"]) + 1 if status == "unknown" else 0
+        evidence["retry_failures"] = short_failures
+        next_check = time.time() + retry_delay(short_failures) if status == "unknown" else None
+        if status == "unknown" and no_listing(evidence):
+            evidence["reason"] = "No Prime listing found"
+            evidence["retry_failures"] = 0
+            content = db.execute("SELECT snapshot FROM contents WHERE id=?", (row["content_id"],)).fetchone()
+            start = json.loads(content[0]).get("start_time") if content else None
+            next_check = no_listing_retry(time.time(), parse_time(start).timestamp() if start else None)
         db.execute(
             "UPDATE event_entitlements SET state=?,status=?,failures=?,next_check=?,checked_at=?,evidence=? "
             "WHERE device_id=? AND content_id=? AND check_id=?",
             ("retry" if status == "unknown" else "complete", status, failures,
-             time.time() + retry_delay(failures) if status == "unknown" else None,
+             next_check,
              datetime.now(UTC).isoformat(), encode(evidence), row["device_id"], row["content_id"], row["check_id"]),
         )
 

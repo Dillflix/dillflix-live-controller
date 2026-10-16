@@ -71,6 +71,7 @@ test("Activity shows entitlement queue blockers, failures and manual retry on ph
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  await page.getByLabel("Entitlement", { exact: true }).selectOption("all");
   await page.getByRole("button", { name: "Activity", exact: true }).click();
   const queue = page.getByRole("region", { name: "Entitlement checks" });
   await expect(queue).toContainText("Playback monitoring has priority");
@@ -166,6 +167,7 @@ test("admin uses one footer status and Check until entitlement is confirmed", as
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  await page.getByLabel("Entitlement", { exact: true }).selectOption("all");
   const card = page.getByTestId("event-demo:lions");
   await expect(card.locator(".df-event-footer")).toContainText("Unentitled");
   await expect(card.locator(".df-entitlement")).toHaveCount(0);
@@ -255,6 +257,7 @@ test("public entitlement gates both actions and exposes no admin check control",
     }),
   );
   await page.goto("/public/");
+  await page.getByLabel("Entitlement", { exact: true }).selectOption("all");
   const card = page.getByTestId("event-test-live");
   await expect(card.getByRole("button", { name: "Add to plan" })).toHaveCount(
     0,
