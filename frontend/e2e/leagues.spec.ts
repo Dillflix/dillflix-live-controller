@@ -3,6 +3,9 @@ import { test, expect } from "@playwright/test";
 for (const [league, code] of [
   ["NHL", "nhl"],
   ["College Football", "college-football"],
+  ["EFL Championship", "eng.2"],
+  ["Bundesliga", "ger.1"],
+  ["2. Bundesliga", "ger.2"],
 ]) {
   test(`${league} discovery can be changed on a phone, reloaded, exported and undone`, async ({
     page,
@@ -20,6 +23,9 @@ for (const [league, code] of [
       "NBA",
       "CFL",
       "UEFA Champions League",
+      "EFL Championship",
+      "Bundesliga",
+      "2. Bundesliga",
       "Formula 1",
     ])
       await expect(

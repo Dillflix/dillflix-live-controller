@@ -1,3 +1,4 @@
+import { leagueName } from "./leagues";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
@@ -43,14 +44,6 @@ interface PublicOverview {
   };
   events: PublicEvent[];
 }
-const names: Record<string, string> = {
-  "college-football": "College Football",
-  pga: "Golf",
-  tennis: "Tennis",
-  "uefa.champions": "UEFA Champions League",
-  f1: "Formula 1",
-};
-const leagueName = (code: string) => names[code] || code.toUpperCase();
 
 function EventDetails({
   event,

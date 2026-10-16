@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, ChevronsUp, Plus, X } from "lucide-react";
 import type { Team } from "./types";
+import { leagueName } from "./leagues";
 
 export function TeamRanking({
   teams,
@@ -50,11 +51,7 @@ export function TeamRanking({
         >
           {leagues.map((l) => (
             <option key={l} value={l}>
-              {l === "pga"
-                ? "Golf"
-                : l === "college-football"
-                  ? "College Football"
-                  : l.toUpperCase()}
+              {leagueName(l)}
             </option>
           ))}
         </select>

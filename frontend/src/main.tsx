@@ -1,3 +1,4 @@
+import { leagueName } from "./leagues";
 import React, {
   useCallback,
   useEffect,
@@ -79,14 +80,6 @@ type Modal =
   | { type: "simulate"; result: SimulationResult }
   | { type: "playback" }
   | null;
-const leagueLabels: Record<string, string> = {
-  "college-football": "College Football",
-  pga: "Golf",
-  tennis: "Tennis",
-  "uefa.champions": "UEFA Champions League",
-  f1: "Formula 1",
-};
-const leagueName = (code: string) => leagueLabels[code] || code.toUpperCase();
 const initialRule = (): Rule => ({
   id: commandId(),
   name: "",
