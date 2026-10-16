@@ -153,7 +153,7 @@ test("stale overlap review requires a fresh preview before saving", async ({
   await page.goto("/");
   await page
     .locator(".df-segmented")
-    .getByRole("button", { name: "Upcoming", exact: true })
+    .getByRole("button", { name: /^Upcoming \d+$/ })
     .click();
   await page
     .getByTestId("event-demo:jays")

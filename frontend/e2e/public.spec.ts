@@ -141,7 +141,7 @@ for (const width of [1280, 390, 320]) {
       expected_revision: 5,
     });
     expect(sent[0]).not.toHaveProperty("actor");
-    await page.getByRole("button", { name: "Upcoming", exact: true }).click();
+    await page.getByRole("button", { name: /^Upcoming \d+$/ }).click();
     await page
       .getByTestId("event-public:upcoming")
       .getByRole("button", { name: "Add to plan" })
