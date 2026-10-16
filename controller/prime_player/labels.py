@@ -52,7 +52,10 @@ def search_queries(snapshot):
         names = [label(team, fields) for team in pair]
         if all(names):
             queries.append(" ".join(names))
-    queries.append(snapshot.get("title"))
+    # Team events use only the original, full-name and short-name queries. A
+    # title is still necessary for broadcasts/sessions without two team labels.
+    if not queries:
+        queries.append(snapshot.get("title"))
     # Case/punctuation variants are not useful extra searches. Keep supplied text
     # intact in the actual query, including apostrophes in school/team names.
     unique = {}
@@ -61,7 +64,7 @@ def search_queries(snapshot):
             query = query.strip()[:300]
             if norm(query):
                 unique.setdefault(norm(query), query)
-    return list(unique.values())[:4]
+    return list(unique.values())[:3]
 
 
 def date_agrees(text, snapshot, captured_at, timezone):

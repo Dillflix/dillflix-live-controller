@@ -16,6 +16,7 @@ from .executor.models import ExecutorError
 from .model_diagnostics import capture_model_calls
 from .planner import parse_time
 from .prime_player.entitlement import choose_entitlement
+from .prime_player.identity_cache import EventMatchCache
 from .prime_player.labels import prime_option
 from .prime_player.search import choose_search
 
@@ -332,7 +333,9 @@ class EntitlementChecks:
                     _, selected, audit = await choose_search(
                         request, device["preferences"]["timezone"], workflow.matcher, search, None,
                         lambda a: evidence.update(audit=a),
-                        select=partial(choose_entitlement, workflow.matcher, before_match=before_match),
+                        select=partial(choose_entitlement, EventMatchCache(workflow.matcher),
+                                       before_match=before_match),
+                        exhaust_denials=True,
                     )
                 check_priority()
                 if selected:
