@@ -795,9 +795,12 @@ async def test_denial_and_unknown_gate_new_actions_without_erasing_plan(tmp_path
         view = controller.overview()
         assert view["device"]["plan"]
         assert not view["events"][0]["entitlement"]["blocked"]
-        with pytest.raises(HTTPException, match="Entitlement is not confirmed"):
-            controller.plan_command("living-room", Command(command_id=uuid4().hex, expected_revision=0,
-                                    action={"type": "add", "content_id": "fixture-game"}))
+        for action in ("add", "play_now"):
+            command = Command(command_id=uuid4().hex, expected_revision=0,
+                              action={"type": action, "content_id": "fixture-game"})
+            for invoke in (controller.plan_command, controller.preview):
+                with pytest.raises(HTTPException, match="Entitlement is not confirmed"):
+                    invoke("living-room", command)
     finally:
         await cleanup(controller)
 
@@ -1044,6 +1047,9 @@ async def test_scheduler_and_preview_require_positive_entitlement(tmp_path, stat
             now = datetime.now(UTC)
             item.update(start_time=now.isoformat(), expected_end_time=(now + timedelta(hours=1)).isoformat())
             device["rules"] = [{"id": "all", "name": "All", "enabled": True, "match": {}}]
+            device["plan"] = []
+            assert choose(device, [item], now, now)["content_id"] == (
+                item["content_id"] if status == "entitled" else None)
             # Existing commitments remain stored, but unknown entries cannot win selection.
             device["plan"] = [controller.entry(item["content_id"])]
             decision = choose(device, [item], now, now)
