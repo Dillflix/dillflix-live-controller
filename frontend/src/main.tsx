@@ -811,7 +811,7 @@ function App() {
       e.lifecycle.state,
     ) &&
       new Date(e.start_time) <= new Date(data.meta.now));
-  const visible = data.events.filter(
+  const filteredEvents = data.events.filter(
     (e) =>
       matchesEntitlement(e.entitlement, entitlementFilter) &&
       (sport === "all" || e.league === sport) &&
@@ -819,9 +819,11 @@ function App() {
         (e.title + " " + e.teams.map((t) => t.full_name).join(" "))
           .toLowerCase()
           .includes(query.toLowerCase())) &&
-      !["ended", "cancelled"].includes(e.lifecycle.state) &&
-      (tab === "live" ? onNow(e) : !onNow(e)),
+      !["ended", "cancelled"].includes(e.lifecycle.state),
   );
+  const liveEvents = filteredEvents.filter(onNow);
+  const upcomingEvents = filteredEvents.filter((e) => !onNow(e));
+  const visible = tab === "live" ? liveEvents : upcomingEvents;
   const browse = () => {
     setView("events");
     setTab("upcoming");
@@ -1073,18 +1075,14 @@ function App() {
                       aria-pressed={tab === "live"}
                       onClick={() => setTab("live")}
                     >
-                      Live{" "}
-                      {
-                        data.events.filter((e) => e.lifecycle.state === "live")
-                          .length
-                      }
+                      Live {liveEvents.length}
                     </button>
                     <button
                       type="button"
                       aria-pressed={tab === "upcoming"}
                       onClick={() => setTab("upcoming")}
                     >
-                      Upcoming
+                      Upcoming {upcomingEvents.length}
                     </button>
                   </div>
                   <EntitlementFilter value={entitlementFilter} onChange={setEntitlementFilter} />

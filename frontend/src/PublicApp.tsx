@@ -199,18 +199,18 @@ function PublicApp() {
       timeZone: data.timezone,
     }).format(new Date(value));
   const entitledEvents = data.events.filter(e => e.entitlement?.status === "entitled");
-  const visible = entitledEvents.filter(
+  const filteredEvents = entitledEvents.filter(
     (e) =>
       e.active &&
       !["ended", "cancelled"].includes(e.state) &&
-      (tab === "live"
-        ? e.state === "live" || e.playable
-        : e.state !== "live" && !e.playable) &&
       (sport === "all" || e.league === sport) &&
       `${e.title} ${e.teams.map((t) => t.full_name).join(" ")}`
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
+  const liveEvents = filteredEvents.filter((e) => e.state === "live" || e.playable);
+  const upcomingEvents = filteredEvents.filter((e) => e.state !== "live" && !e.playable);
+  const visible = tab === "live" ? liveEvents : upcomingEvents;
   const now = data.now_playing;
   const details = data.events.find((event) => event.content_id === detailsId);
   const disabled = busy || !connected;
@@ -294,14 +294,13 @@ function PublicApp() {
               aria-pressed={tab === "live"}
               onClick={() => setTab("live")}
             >
-              Live{" "}
-              {entitledEvents.filter((e) => e.active && e.state === "live").length}
+              Live {liveEvents.length}
             </button>
             <button
               aria-pressed={tab === "upcoming"}
               onClick={() => setTab("upcoming")}
             >
-              Upcoming
+              Upcoming {upcomingEvents.length}
             </button>
           </div>
                   <label className="df-search">

@@ -21,7 +21,7 @@ test("unconfirmed future broadcasts appear in Upcoming without a Play now action
   await expect(page.getByTestId("event-demo:golf")).toHaveCount(0);
   await page
     .locator(".df-segmented")
-    .getByRole("button", { name: "Upcoming", exact: true })
+    .getByRole("button", { name: /^Upcoming \d+$/ })
     .click();
   const card = page.getByTestId("event-demo:golf");
   await expect(card).toBeVisible();
@@ -62,7 +62,7 @@ for (const [name, width, height] of [
     ).toBeVisible();
     await page
       .locator(".df-segmented")
-      .getByRole("button", { name: "Upcoming", exact: true })
+      .getByRole("button", { name: /^Upcoming \d+$/ })
       .click();
     await page
       .getByTestId("event-demo:jays")

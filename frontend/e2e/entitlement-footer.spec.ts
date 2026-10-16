@@ -40,7 +40,7 @@ test("upcoming footer moves from Queued to Checking to Entitled without an extra
   await page.getByLabel("Entitlement", { exact: true }).selectOption("all");
     await page
       .locator(".df-segmented")
-      .getByRole("button", { name: "Upcoming", exact: true })
+      .getByRole("button", { name: /^Upcoming \d+$/ })
       .click();
     const card = page.getByTestId("event-demo:lions");
     await expect(card.locator(".df-entitlement")).toHaveCount(0);
