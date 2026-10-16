@@ -223,3 +223,8 @@ browser run passed 41 tests; one existing remote-control test encountered a
 response-disposal error during teardown and passed on its focused rerun without
 code changes. The full Python suite still cannot collect the Linux deployment
 module on Windows (`pwd` is unavailable).
+
+The public Events list shows only events with confirmed entitlement. Its live count
+and sport choices use the same eligible events. Entitlement filtering and status
+badges remain in the admin interface; the public action bar shows viewing options,
+watch-plan membership, or now-playing status instead.
