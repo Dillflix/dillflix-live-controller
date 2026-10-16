@@ -5,6 +5,13 @@ from Teamarr. The existing Teamarr import window is the only discovery boundary.
 The upgrade also seeds currently imported events once. Feed refreshes, changing
 scores, restarts and reimporting the same event ID do not reset completed checks.
 
+Version 0.18.2 also records positive subscription evidence from accepted foreground
+catalogue selections and fresh, attempt-bound playback with an explicitly entitled
+selected feed. This completes the same durable job without an extra search. Existing
+playback is reconciled on its next ordinary monitor. Event/route identity and device
+scope must match; a late background error cannot overwrite the accepted positive.
+Routine monitoring does not repeatedly refresh completed entitlement records.
+
 Entitlement is separate from event lifecycle, regional availability and live-launch
 readiness. An ENTITLED/UPCOMING or ENTITLED/UNAVAILABLE result is entitled. No match,
 missing data, ambiguous alternatives, incomplete negative coverage and errors are
@@ -53,14 +60,19 @@ no completed result is labelled **Entitlement not checked yet**. Failed checks r
 visible while awaiting their backoff, and stale worker progress is shown explicitly.
 Stable playback does not block the queue for the event's duration.
 
-Automatic dispatch is limited to one event check per minute across the queue. The
-worker waits behind due playback monitoring, launches, cancellation, recovery, manual
+One event check runs at a time, with at least five seconds between automatic starts;
+there is no longer a one-minute dispatch limit. Manual requests come first, then live
+and watch-plan events, then other upcoming events. Within each automatic priority
+group, overdue retries precede first checks, and events are ordered by scheduled
+start rather than opaque ID. Retries keep their long backoff; they cannot be starved
+by the zero-valued initial deadline of hundreds of untouched jobs.
+The worker waits behind due playback monitoring, launches, cancellation, recovery, manual
 control and foreground catalogue work. It uses only the existing non-navigating
 search API, shared query fallbacks and identity matcher; it never calls broadcasts,
 resolve, play, stop, suspend or network-switch APIs. Model calls retain the existing
 training capture with source `schedule_entitlement`.
 
-Each search has a five-second service budget, with the existing five-second transport
+Each search has a fifteen-second service budget, with the existing five-second transport
 allowance. The controller releases its shared operation lane between searches and
 does model work outside it. A check has a two-minute total budget. An in-flight search
 cannot be preempted safely merely by dropping its HTTP connection; urgent playback
@@ -68,6 +80,8 @@ work can wait for that bounded read to settle, but no further background request
 pass it. No player update is required. Host tests establish scheduling and ownership
 behavior, not Fire TV performance under sustained load; device validation must check
 continued position advancement and monitor latency while a populated queue drains.
+Known catalogue timeouts appear as `prime_search_timeout`, rather than an unexplained
+`UnavailableError`. A timeout remains unknown and follows the existing retry backoff.
 
 Schema 12 stores observations and jobs separately from playback readiness. Diagnostics
 include up to 500 current schedule records. Catalogue retention removes old evidence

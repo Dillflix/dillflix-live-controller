@@ -138,6 +138,11 @@ class PrimePlayerClient:
                     }.get(kind, "prime_operation_unknown")
                     if kind == "NetworkError":
                         code = "prime_network_operation_failed"
+                    if (method == "search" and kind == "UnavailableError" and
+                            body["error"].get("message") ==
+                            "catalogue search timed out; request may still be settling"):
+                        raise ExecutorError("prime_search_timeout",
+                                            "Prime catalogue search timed out; entitlement is still unknown")
                     # Server messages can contain arbitrary application content.
                     raise ExecutorError(code, f"Prime Player {method} returned {kind}")
                 if response.status_code != 200 or not isinstance(body.get("result"), dict):

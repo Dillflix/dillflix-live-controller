@@ -1,7 +1,6 @@
 """Durable, low-priority entitlement enrichment of the imported Teamarr catalogue."""
 
 import asyncio
-import hashlib
 import json
 import logging
 import time
@@ -12,34 +11,39 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .database import encode
+from .entitlement_store import identity
 from .executor.models import ExecutorError
 from .model_diagnostics import capture_model_calls
+from .planner import parse_time
 from .prime_player.entitlement import choose_entitlement
 from .prime_player.labels import prime_option
 from .prime_player.search import choose_search
 
 log = logging.getLogger(__name__)
-SEARCH_SECONDS = 5
+SEARCH_SECONDS = 15
 CHECK_SECONDS = 120
-DISPATCH_INTERVAL = 60
+DISPATCH_INTERVAL = 5
+DEFER_SECONDS = 60
 
 
 def retry_delay(failures):
     return min(5 * 60 * 2 ** min(max(failures - 1, 0), 6), 5 * 60 * 60)
 
 
-def identity(item):
-    snapshot = item["snapshot"]
-    event = snapshot.get("event") or {}
-    return hashlib.sha256(encode([
-        snapshot.get("id"), snapshot.get("title"), snapshot.get("start_time"),
-        snapshot.get("competition"), snapshot.get("kind"),
-        event.get("away_team_details"), event.get("home_team_details"), item["viewing_options"],
-    ]).encode()).hexdigest()
+def queue_priority(row, item, device):
+    """Urgent events first; zero-valued initial deadlines must not starve retries."""
+    committed = {entry["content_id"] for entry in device["plan"]}
+    urgent = item["lifecycle"]["state"] == "live" or item["content_id"] in committed
+    return (-row["manual"], not urgent, row["state"] != "retry",
+            parse_time(item["start_time"]).timestamp(), row["next_check"], row["content_id"])
 
 
 class Deferred(Exception):
     """Playback has priority; keep this job without counting an access failure."""
+
+
+class Settled(Exception):
+    """Foreground evidence completed this event while background work was running."""
 
 
 class EntitlementChecks:
@@ -196,7 +200,7 @@ class EntitlementChecks:
             if due and blocker:
                 phase, reason = "waiting", blocker
             elif due and not any(r["manual"] for r in due) and now < dispatch:
-                phase, reason = "waiting", "Pacing automatic checks: at most one event per minute"
+                phase, reason = "waiting", "Brief pause between automatic checks"
             elif due:
                 phase, reason = "ready", "Queued work is ready to run"
             elif any(r["eligible"] and r["entitlement"]["state"] == "retry" for r in rows):
@@ -235,9 +239,9 @@ class EntitlementChecks:
             ).fetchall()
             if not due or not self.entitlement_idle(db, device):
                 return
-            if not due[0]["manual"] and now < self.db.meta(db, "entitlement_dispatch_after", 0):
-                return
             items = {i["content_id"]: i for i in self.items(db, device["id"])}
+            due = sorted((r for r in due if r["content_id"] in items),
+                         key=lambda r: queue_priority(r, items[r["content_id"]], device))
             row = None
             for candidate in due:
                 item = items.get(candidate["content_id"])
@@ -267,6 +271,12 @@ class EntitlementChecks:
 
         def check_priority():
             with self.db.transaction() as db:
+                current_check = db.execute(
+                    "SELECT check_id FROM event_entitlements WHERE device_id=? AND content_id=?",
+                    (device["id"], row["content_id"]),
+                ).fetchone()
+                if not current_check or current_check[0] != row["check_id"]:
+                    raise Settled()
                 current = self.db.device(db, device["id"])
                 blocker = self.entitlement_blocker(db, current, device_read=False)
                 if blocker:
@@ -331,6 +341,8 @@ class EntitlementChecks:
                 evidence.update(reason={"entitled": "Included with your subscription",
                                         "unentitled": "Subscription required for the matching feeds",
                                         "unknown": "Entitlement unconfirmed"}[status], audit=audit)
+        except Settled:
+            pass
         except Deferred as exc:
             deferred = str(exc)
         except asyncio.CancelledError:
@@ -351,7 +363,7 @@ class EntitlementChecks:
                     retained = json.loads(row["evidence"])
                     retained["last_deferral"] = {"reason": deferred, "at": datetime.now(UTC).isoformat()}
                     db.execute("UPDATE event_entitlements SET state='queued',next_check=?,manual=?,evidence=? WHERE check_id=?",
-                               (time.time() + DISPATCH_INTERVAL, row["manual"], encode(retained), row["check_id"]))
+                               (time.time() + DEFER_SECONDS, row["manual"], encode(retained), row["check_id"]))
                 else:
                     self.finish_entitlement(db, row, status, evidence)
                 self.entitlement_progress(db, "waiting" if deferred else "idle", reason=deferred)

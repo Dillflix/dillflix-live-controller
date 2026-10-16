@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from ..database import encode
+from ..entitlement_store import record_entitled
 from ..executor.models import ExecutorError
 from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
@@ -616,6 +617,14 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 and status.get("current_content_id") == launch.get("resolved_id")
             )
             if verified:
+                if (not status.get("error") and device["intent_version"] == row["intent"]
+                        and owner and owner[0] == token):
+                    record_entitled(db, row["device_id"], json.loads(row["request"]), workflow["selected"],
+                                    source="verified_playback", provenance={
+                                        "session_id": workflow["session_id"],
+                                        "attempt_id": workflow["attempt_id"],
+                                        "network_context_id": workflow.get("network_context_id"),
+                                    })
                 report["observation"] = {
                     "device_id": row["device_id"],
                     "request_id": row["request_id"],
