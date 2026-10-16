@@ -1,5 +1,33 @@
 import { test, expect } from "@playwright/test";
 
+const expandedLeagues = [
+  ["EFL League One", "eng.3"],
+  ["EFL League Two", "eng.4"],
+  ["UEFA Europa League", "uefa.europa"],
+  ["UEFA Conference League", "uefa.europa.conf"],
+  ["Premier League", "eng.1"],
+  ["Serie A", "ita.1"],
+  ["La Liga", "esp.1"],
+  ["MLS", "usa.1"],
+  ["NWSL", "usa.nwsl"],
+  ["FA Cup", "eng.fa"],
+  ["WNBA", "wnba"],
+  ["NCAA Men's Basketball", "mens-college-basketball"],
+  ["NCAA Women's Basketball", "womens-college-basketball"],
+  ["PWHL", "pwhl"],
+  ["CHL", "chl"],
+  ["OHL", "ohl"],
+  ["WHL", "whl"],
+  ["QMJHL", "qmjhl"],
+  ["NCAA Men's Hockey", "mens-college-hockey"],
+  ["NCAA Women's Hockey", "womens-college-hockey"],
+  ["United Rugby Championship", "urc"],
+  ["Premiership Rugby", "prem"],
+  ["NRL", "nrl"],
+  ["Australian AFL", "afl"],
+  ["PLL", "pll"],
+] as const;
+
 function fixture() {
   const event = {
     content_id: "public:live",
@@ -246,6 +274,26 @@ test("public authentication failure has a useful empty state", async ({
   );
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Play now" })).toHaveCount(0);
+});
+
+test("public filters display expanded league names and select the right competition", async ({ page }) => {
+  const data = fixture();
+  data.events = expandedLeagues.map(([name, code]) => ({
+    ...data.events[0],
+    content_id: code,
+    title: name + " fixture",
+    league: code,
+  }));
+  await page.route("**/api/public/v1/overview", (route) => route.fulfill({ json: data }));
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/public/");
+  for (const [name, code] of expandedLeagues) {
+    await page.getByRole("button", { name, exact: true }).click();
+    await expect(page.getByRole("button", { name: "Play now", exact: true })).toHaveCount(1);
+    await expect(page.getByTestId(`event-${code}`)).toBeVisible();
+    await expect(page.getByTestId(`event-${code}`)).toContainText(name);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test("guest mode shows anonymous identity and permits public requests", async ({

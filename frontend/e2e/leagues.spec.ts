@@ -6,6 +6,11 @@ for (const [league, code] of [
   ["EFL Championship", "eng.2"],
   ["Bundesliga", "ger.1"],
   ["2. Bundesliga", "ger.2"],
+  ["MLS", "usa.1"],
+  ["NCAA Women's Basketball", "womens-college-basketball"],
+  ["PWHL", "pwhl"],
+  ["United Rugby Championship", "urc"],
+  ["Australian AFL", "afl"],
 ]) {
   test(`${league} discovery can be changed on a phone, reloaded, exported and undone`, async ({
     page,
@@ -18,16 +23,7 @@ for (const [league, code] of [
     await page.setViewportSize({ width: 320, height: 780 });
     await page.goto("/");
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    for (const name of [
-      "College Football",
-      "NBA",
-      "CFL",
-      "UEFA Champions League",
-      "EFL Championship",
-      "Bundesliga",
-      "2. Bundesliga",
-      "Formula 1",
-    ])
+    for (const name of Object.values(before.meta.league_choices))
       await expect(
         page.getByLabel(`Discover ${name}`, { exact: true }),
       ).toBeChecked();

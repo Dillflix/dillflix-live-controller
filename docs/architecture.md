@@ -133,7 +133,15 @@ Demo clock/scenario controls refresh the simulated tracked statuses before retur
 
 When the saved schedule observation expires, the Teamarr status adapter fetches a bounded historical window around the event's original start, limited to its source and league, and matches the exact opaque content ID across validated pages. This is separate from current discovery and does not reactivate old catalog entries or replace their snapshots. The new response must explicitly report final/cancelled to complete an event. Missing entries, transport errors, and elapsed estimates never imply completion. Historical checks retry at least 60 seconds apart after successful responses. The adapter uses Teamarr's existing feed API and upstream caching; it does not claim provider observation times or bypass provider failures. Prime's confirmed native completion takes precedence without a historical fetch. Playback verification and event completion remain distinct sources of evidence.
 
-Team-directory refresh runs in an independent task with its own lease and health record. It starts with NFL/NHL/MLB/NBA and refreshes hourly, also requesting up to 16 other leagues already seen in team data. A provider team ID, qualified by provider and league, joins directory rows to event teams. Teamarr's cache database row ID is never used for that identity. Teams encountered in feed snapshots are retained, and cache rows with absent city/nickname fields do not overwrite richer feed metadata. Each league refresh validates fully before writing; errors or empty rosters do not delete old teams or rankings. The directory's completeness depends on the Teamarr cache.
+Team-directory refresh runs in an independent task with its own lease and health record. It refreshes all selected and committed leagues except F1 hourly, plus up to 16 other leagues already seen in team data. A provider team ID, qualified by provider and league, joins directory rows to event teams. Teamarr's cache database row ID is never used for that identity. Teams encountered in feed snapshots are retained, and cache rows with absent city/nickname fields do not overwrite richer feed metadata. Each league refresh validates fully before writing; errors or empty rosters do not delete old teams or rankings. The directory's completeness depends on the Teamarr cache.
+
+Schema 14 expands prior default discovery selections from 11 to 36 leagues,
+preserving custom/empty selections and all playback state. Each device may select
+up to 100 leagues. Discovery retains 20-league requests for compatibility with
+older Teamarr feed limits, deduplicates opaque content IDs across batches, and
+publishes only when every batch succeeds and the selection is still current.
+League routing remains a Teamarr configuration decision, separate from the
+controller's Prime entitlement gate.
 
 ## UI transport
 

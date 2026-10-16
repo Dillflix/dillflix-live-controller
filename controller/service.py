@@ -755,8 +755,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         try:
             with self.db.transaction() as db:
                 leagues = self.requested_leagues(db)
-            # Batch extra leagues retained by other devices/commitments within
-            # Teamarr's query limit, then publish the complete catalog atomically.
+            # Keep batches compatible with Teamarr's original 20-league limit,
+            # then publish all selected and retained leagues atomically.
             entries, schema = {}, None
             for group in [leagues[i : i + 20] for i in range(0, len(leagues), 20)] or [[]]:
                 page, schema = await self.client.fetch_snapshot(leagues=group)

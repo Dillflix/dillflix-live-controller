@@ -17,7 +17,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 13
+    SCHEMA_VERSION = 14
 
     def __init__(self, path):
         self.path = path
@@ -164,6 +164,22 @@ class Database:
                     selected = device.get("preferences", {}).get("discovery_leagues")
                     if isinstance(selected, list) and set(selected) == previous_defaults:
                         device["preferences"]["discovery_leagues"] = selected + ["eng.2", "ger.1", "ger.2"]
+                        db.execute(
+                            "UPDATE devices SET payload=?, revision=revision+1 WHERE id=?",
+                            (encode(device), device_id),
+                        )
+            if version < 14:
+                previous_defaults = {
+                    "nfl", "college-football", "nhl", "mlb", "nba", "cfl", "uefa.champions",
+                    "eng.2", "ger.1", "ger.2", "f1",
+                }
+                for device_id, payload in db.execute("SELECT id,payload FROM devices").fetchall():
+                    device = json.loads(payload)
+                    selected = device.get("preferences", {}).get("discovery_leagues")
+                    if isinstance(selected, list) and set(selected) == previous_defaults:
+                        device["preferences"]["discovery_leagues"] = selected + [
+                            league for league in DEFAULT_LEAGUES if league not in previous_defaults
+                        ]
                         db.execute(
                             "UPDATE devices SET payload=?, revision=revision+1 WHERE id=?",
                             (encode(device), device_id),

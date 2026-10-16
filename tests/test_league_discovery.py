@@ -16,14 +16,39 @@ from controller.teamarr import TeamarrClient
 
 
 @pytest.mark.parametrize("season,priority", [("regular", 1), ("postseason", 0)])
-@pytest.mark.parametrize("league,sport,away,home", [
-    ("college-football", "football", "Michigan Wolverines", "Ohio State Buckeyes"),
-    ("eng.2", "soccer", "Wolves", "Burnley"),
-    ("ger.1", "soccer", "K\u00f6ln", "Eintracht Frankfurt"),
-    ("ger.2", "soccer", "1. FC N\u00fcrnberg", "Energie Cottbus"),
+@pytest.mark.parametrize("league,sport,away,home,provider", [
+    ("college-football", "football", "Michigan Wolverines", "Ohio State Buckeyes", "espn"),
+    ("eng.2", "soccer", "Wolves", "Burnley", "espn"),
+    ("ger.1", "soccer", "K\u00f6ln", "Eintracht Frankfurt", "espn"),
+    ("ger.2", "soccer", "1. FC N\u00fcrnberg", "Energie Cottbus", "espn"),
+    ("eng.3", "soccer", "Away team", "Home team", "espn"),
+    ("eng.4", "soccer", "Away team", "Home team", "espn"),
+    ("uefa.europa", "soccer", "Away team", "Home team", "espn"),
+    ("uefa.europa.conf", "soccer", "Away team", "Home team", "espn"),
+    ("eng.1", "soccer", "Away team", "Home team", "espn"),
+    ("ita.1", "soccer", "Away team", "Home team", "espn"),
+    ("esp.1", "soccer", "Away team", "Home team", "espn"),
+    ("usa.1", "soccer", "Away team", "Home team", "espn"),
+    ("usa.nwsl", "soccer", "Away team", "Home team", "espn"),
+    ("eng.fa", "soccer", "Away team", "Home team", "espn"),
+    ("wnba", "basketball", "Away team", "Home team", "espn"),
+    ("mens-college-basketball", "basketball", "Away team", "Home team", "espn"),
+    ("womens-college-basketball", "basketball", "Away team", "Home team", "espn"),
+    ("pwhl", "hockey", "Away team", "Home team", "bellmedia"),
+    ("chl", "hockey", "Away team", "Home team", "bellmedia"),
+    ("ohl", "hockey", "Away team", "Home team", "bellmedia"),
+    ("whl", "hockey", "Away team", "Home team", "bellmedia"),
+    ("qmjhl", "hockey", "Away team", "Home team", "bellmedia"),
+    ("mens-college-hockey", "hockey", "Away team", "Home team", "espn"),
+    ("womens-college-hockey", "hockey", "Away team", "Home team", "espn"),
+    ("urc", "rugby", "Away team", "Home team", "espn"),
+    ("prem", "rugby", "Away team", "Home team", "espn"),
+    ("nrl", "rugby", "Away team", "Home team", "espn"),
+    ("afl", "australian-football", "Away team", "Home team", "squiggle"),
+    ("pll", "lacrosse", "Away team", "Home team", "espn"),
 ])
 async def test_league_feed_reaches_priorities_team_directory_and_playback_request(
-    tmp_path, season, priority, league, sport, away, home,
+    tmp_path, season, priority, league, sport, away, home, provider,
 ):
     service = Controller(Settings(
         database=str(tmp_path / "college.db"), mode="teamarr", teamarr_url="http://teamarr"
@@ -31,8 +56,8 @@ async def test_league_feed_reaches_priorities_team_directory_and_playback_reques
     entry = copy.deepcopy(fixtures()[0][1])
     entry.pop("_simulation")
     entry.update(
-        id=f"event:espn:{league}:fixture",
-        provider="espn", competition=league, sports=[sport],
+        id=f"event:{provider}:{league}:fixture",
+        provider=provider, competition=league, sports=[sport],
         title=f"{away} at {home}", status="live",
         start_time=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
         expected_end_time=(datetime.now(UTC) + timedelta(hours=3)).isoformat(),
@@ -43,7 +68,7 @@ async def test_league_feed_reaches_priorities_team_directory_and_playback_reques
         }],
     )
     entry["event"].update(
-        league=league, sport=sport, provider="espn", event_id="fixture", season_type=season,
+        league=league, sport=sport, provider=provider, event_id="fixture", season_type=season,
         home_team=home, away_team=away,
     )
     for field, team_id, name in [
@@ -51,7 +76,7 @@ async def test_league_feed_reaches_priorities_team_directory_and_playback_reques
         ("home_team_details", "194", home),
     ]:
         entry["event"][field].update(
-            id=team_id, provider="espn", full_name=name, short_name=name,
+            id=team_id, provider=provider, full_name=name, short_name=name,
             name=name, city=None, abbreviation="MICH" if team_id == "130" else "OSU",
         )
     requests = []
@@ -60,7 +85,7 @@ async def test_league_feed_reaches_priorities_team_directory_and_playback_reques
         requests.append(request.url)
         if request.url.path.endswith("/teams"):
             return httpx.Response(200, json=[{
-                "provider_team_id": "130", "provider": "espn",
+                "provider_team_id": "130", "provider": provider,
                 "league": league, "team_name": away,
                 "team_abbrev": "MICH",
             }])
@@ -83,7 +108,7 @@ async def test_league_feed_reaches_priorities_team_directory_and_playback_reques
         assert view["meta"]["league_choices"][league] == LEAGUE_NAMES[league]
         assert view["events"][0]["priority"] == priority
         assert view["events"][0]["playable"] is True
-        assert any(t["key"] == f"espn:{league}:130" for t in view["teams"])
+        assert any(t["key"] == f"{provider}:{league}:130" for t in view["teams"])
         assert any(url.path.endswith(f"/cache/leagues/{league}/teams") for url in requests)
         service.tick()
         with service.db.transaction() as db:
@@ -126,7 +151,9 @@ def test_selection_hides_discovery_but_retains_commitments_and_supports_undo(rig
     assert overview(client)["device"]["preferences"] == before["device"]["preferences"]
 
 
-@pytest.mark.parametrize("leagues", [["nba", "nba"], [" "], ["nba&source=games"], ["x"] * 21])
+@pytest.mark.parametrize("leagues", [
+    ["nba", "nba"], [" "], ["nba&source=games"], [f"league-{i}" for i in range(101)],
+])
 def test_invalid_selection_does_not_change_configuration(rig, leagues):
     client, _, _ = rig
     before = overview(client)["device"]
@@ -165,8 +192,11 @@ async def test_inflight_old_selection_cannot_replace_catalog(tmp_path):
             service.replace_catalog(db, [original], "teamarr")
             before = service.db.meta(db, "feed_health")
 
+        calls = []
+
         async def snapshot(leagues):
-            assert leagues == sorted(DEFAULT_LEAGUES)
+            calls.append(leagues)
+            assert leagues == sorted(DEFAULT_LEAGUES)[(len(calls) - 1) * 20:len(calls) * 20]
             with service.db.transaction() as db:
                 device = service.db.device(db)
                 device["preferences"]["discovery_leagues"] = ["cfl"]
