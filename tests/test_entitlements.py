@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -89,6 +90,31 @@ async def test_first_import_checks_once_and_persists_across_restart(tmp_path):
     try:
         assert record(controller)["status"] == "entitled"
         assert record(controller)["next_check"] is None
+    finally:
+        await cleanup(controller)
+
+
+async def test_upcoming_event_is_checked_before_its_start_and_can_be_planned(tmp_path):
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    entries[0].update(status="scheduled", start_time=(datetime.now(UTC) + timedelta(hours=12)).isoformat())
+    with controller.db.transaction() as db:
+        controller.replace_catalog(db, entries, "teamarr")
+    original = workflow.player.search
+
+    async def upcoming(*args):
+        return {**await original(*args), **results(tile(event_state="UPCOMING", starts_at=entries[0]["start_time"]))}
+
+    workflow.player.search = upcoming
+    try:
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        item = controller.overview()["events"][0]
+        assert not item["playable"]
+        assert not item["entitlement"]["blocked"]
+        controller.plan_command("living-room", Command(command_id=uuid4().hex, expected_revision=0,
+                                action={"type": "add", "content_id": "fixture-game"}))
+        assert [c[0] for c in workflow.player.calls] == ["search"]
     finally:
         await cleanup(controller)
 
@@ -256,6 +282,31 @@ async def test_foreground_work_arriving_after_search_prevents_fallback_query(tmp
     try:
         await controller.check_entitlement_once()
         assert [c[0] for c in workflow.player.calls] == ["search"]
+        assert record(controller)["state"] == "queued"
+        assert record(controller)["failures"] == 0
+    finally:
+        await cleanup(controller)
+
+
+async def test_foreground_work_arriving_during_match_prevents_additional_model_calls(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original = workflow.player.search
+    matches = []
+
+    async def mixed(*args):
+        return {**await original(*args), **results(tile(), tile(cid=GTI + "-unknown", entitlement_status=None))}
+
+    async def selecting(*args, **kwargs):
+        matches.append(kwargs["eligible"])
+        workflow.store.submit(payload())
+        return None, {"match_status": "uncertain"}
+
+    workflow.player.search = mixed
+    workflow.matcher._choose = selecting
+    try:
+        await controller.check_entitlement_once()
+        assert len(matches) == 1
         assert record(controller)["state"] == "queued"
         assert record(controller)["failures"] == 0
     finally:

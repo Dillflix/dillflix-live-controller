@@ -177,11 +177,14 @@ class EntitlementChecks:
         context = {"source": "schedule_entitlement", "device_id": device["id"],
                    "content_id": item["content_id"], "check_id": row["check_id"]}
 
-        async def search(query):
+        def check_priority():
             with self.db.transaction() as db:
                 current = self.db.device(db, device["id"])
                 if not self.entitlement_idle(db, current):
                     raise Deferred()
+
+        async def search(query):
+            check_priority()
             # Never queue behind foreground operations. Each request releases this
             # lane before matching/fallback. The service search itself is bounded.
             async with workflow.input_lock:
@@ -209,7 +212,7 @@ class EntitlementChecks:
                     _, selected, audit = await choose_search(
                         request, device["preferences"]["timezone"], workflow.matcher, search, None,
                         lambda a: evidence.update(audit=a),
-                        select=partial(choose_entitlement, workflow.matcher),
+                        select=partial(choose_entitlement, workflow.matcher, before_match=check_priority),
                     )
                 if selected:
                     status = {"ENTITLED": "entitled", "UNENTITLED": "unentitled"}.get(

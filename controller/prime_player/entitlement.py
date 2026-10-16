@@ -4,7 +4,7 @@ from .labels import prime_option
 from .matching import candidates
 
 
-async def choose_entitlement(matcher, request, results, timezone):
+async def choose_entitlement(matcher, request, results, timezone, *, before_match=None):
     items, rejected = candidates(results, request["content_snapshot"], timezone)
     options = [o for o in request["allowed_viewing_options"] if prime_option(o)]
     passes, denied, uncertain = [], [], not options
@@ -20,6 +20,8 @@ async def choose_entitlement(matcher, request, results, timezone):
             )]
             if not pool:
                 continue
+            if before_match:
+                before_match()
             choice, audit = await matcher._choose(scoped, results, timezone, eligible=pool)
             passes.append(audit)
             if audit.get("match_status") == "uncertain":
