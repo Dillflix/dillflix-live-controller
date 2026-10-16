@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from .database import encode
-from .planner import choose, entitlement_eligible, parse_time
+from .planner import choose, parse_time
 from .recovery import PlaybackRecovery, compatible_options
 
 
@@ -141,7 +141,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 )
             )
             # Retaining unknown current playback is not permission to reopen it.
-            if target and (not indexed[target]["playable"] or not entitlement_eligible(indexed[target])):
+            if target and not indexed[target]["playable"]:
                 needs_request = False
             if needs_request and target and self.executor:
                 preparation = self.executor.prepare_selection(db, d, indexed[target])
