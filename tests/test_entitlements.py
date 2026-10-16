@@ -12,7 +12,7 @@ from playback_fixtures import payload
 from test_prime_matching import GTI, results, tile
 from test_prime_workflow import cleanup, launch, rig
 
-from controller.entitlements import DISPATCH_INTERVAL, SEARCH_SECONDS, identity, retry_delay
+from controller.entitlements import DISPATCH_INTERVAL, identity, retry_delay
 from controller.entitlement_store import record_entitled
 from controller.models import Command, EntitlementCommand
 from controller.prime_player.entitlement import choose_entitlement
@@ -201,14 +201,21 @@ async def test_manual_check_precedes_live_and_overdue_retries(tmp_path):
 
 
 async def test_background_search_has_time_to_return_without_launching(tmp_path):
+    from controller.executor.models import ExecutorError
+
     controller, workflow = rig(tmp_path)
-    seed(controller)
+    entries = seed(controller)
+    entries[0].update(kind="broadcast", title="Wuhan Open: Day 5", event=None, source="dazn_tennis")
+    with controller.db.transaction() as db:
+        controller.replace_catalog(db, entries, "teamarr")
     original = workflow.player.search
 
     async def search(query, timeout, ownership):
         # Production requests timed out at five seconds before identity matching.
-        assert timeout == SEARCH_SECONDS == 15
-        return await original(query, timeout, ownership)
+        if timeout < 6:
+            raise ExecutorError("prime_search_timeout", "Catalogue did not return within its budget")
+        return {**await original(query, timeout, ownership),
+                **results(tile(title="Wuhan Open: Day 5", starts_at=entries[0]["start_time"]))}
 
     workflow.player.search = search
     try:
