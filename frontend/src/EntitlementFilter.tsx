@@ -11,7 +11,7 @@ export function matchesEntitlement(value: Entitlement | null | undefined, filter
 
 export function EntitlementFilter({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return <label className="df-entitlement-filter">Entitlement
-    <select value={value} onChange={e => onChange(e.target.value)}>
+    <select aria-label="Entitlement" value={value} onChange={e => onChange(e.target.value)}>
       <option value="entitled">Entitled</option>
       <option value="all">All events</option>
       <option value="unentitled">Unentitled</option>
