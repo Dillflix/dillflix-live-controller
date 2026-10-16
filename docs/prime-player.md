@@ -119,7 +119,10 @@ after the first sample while the event continued playing.
 Newly returned samples must still be younger than 15 seconds (and pass the
 player's own freshness checks). Previously verified evidence has a separate
 bounded lifetime: **five minutes** from the original observation timestamp.
-The 5-second monitoring interval is unchanged. An unknown,
+The stable playback monitoring interval defaults to **30 seconds** from version
+0.18.1, measured after the previous check finishes. Launch verification still runs
+immediately. Existing deployments with EXECUTOR_MONITOR_INTERVAL_SECONDS=5 in
+.env must change it to 30; explicit overrides are preserved. An unknown,
 failed, nonplaying or mismatched check withdraws verification immediately; expiry
 does not renew itself when no successful check arrives.
 

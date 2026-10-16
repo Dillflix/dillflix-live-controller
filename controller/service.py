@@ -254,6 +254,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     "league_choices": LEAGUE_NAMES,
                     "mode": self.settings.mode,
                     "playback_adapter": self.settings.executor.mode,
+                    "playback_monitor_interval_seconds": self.settings.executor.monitor_interval if self.executor else None,
                     "status_simulated": self.executor is None,
                     "now": self.now(db).isoformat(),
                     "server_time": datetime.now(UTC).isoformat(),

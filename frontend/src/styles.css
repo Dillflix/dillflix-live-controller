@@ -1760,3 +1760,11 @@ select:focus-visible {
 #df-app .df-entitlement-jobs .df-entitlement { border: 0; padding: 0; }
 #df-app .df-entitlement-jobs p { font-size: 13px; margin: 8px 0; }
 #df-app .df-entitlement-error { color: var(--df-accent); }
+#df-app .df-event-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+#df-app .df-entitlement-indicator { display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; color: var(--df-muted); }
+#df-app .df-entitlement-indicator svg { flex-shrink: 0; }
+#df-app .df-entitlement-indicator.is-entitled { color: light-dark(#166344, #8ad9b7); }
+#df-app .df-entitlement-indicator.is-unentitled { color: var(--df-accent); }
+#df-app .df-entitlement-spinner { animation: df-entitlement-spin 1.2s linear infinite; }
+@keyframes df-entitlement-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #df-app .df-entitlement-spinner { animation: none; } }

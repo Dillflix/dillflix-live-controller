@@ -23,8 +23,12 @@ revision checks and command receipts. A manual check never launches playback.
 It can also check a retained watch-plan event outside the current import window;
 that exception does not resume automatic scans outside the window.
 
-Both apps explain entitlement and disable Play now/Add to plan for confirmed denial;
-the command API enforces the same rule. Unknown stays usable with an explicit warning.
+Both apps show a single entitlement/job status in the existing event footer:
+Entitled, Unentitled, Unconfirmed, Queued or Checking, with an accessible icon and
+tooltip. Play now/Add to plan appear only after entitlement is confirmed. Admins
+get a Check button instead while unconfirmed or unentitled; public users can view
+details, while manual checks remain admin-only. The command API rejects confirmed
+denial. Unknown remains distinct from denial for existing automation and commitments.
 Existing commitments remain visible and removable, but denied events are not selected
 automatically or shown as winners in schedule previews. Current playback is not stopped
 by this background observation. Changed event identity/routes invalidate the observation

@@ -77,6 +77,9 @@ imports and web assets as the non-root runtime user.
 Version 0.18.1 fixes background entitlement checks repeatedly returning to Queued
 when playback monitoring becomes due, and adds the **Activity → Entitlement checks**
 queue with waiting reasons, errors and manual retries. See [schedule entitlement checks](docs/schedule-entitlement.md).
+Event footers now combine entitlement and queue state; Check replaces Play now/Add
+to plan until entitlement is confirmed. Stable playback monitoring defaults to 30
+seconds; update any explicit `EXECUTOR_MONITOR_INTERVAL_SECONDS=5` in `.env` to `30`.
 Version 0.18.0 added admin rechecks and subscription gating for Play now/Add to plan in both apps.
 Unknown results retry from five minutes up to five hours; conclusive results are
 checked once. Schema 12 migrates automatically and preserves the watch plan.

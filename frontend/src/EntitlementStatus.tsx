@@ -8,6 +8,64 @@ export interface Entitlement {
   can_check: boolean;
 }
 
+export const entitlementConfirmed = (value?: Entitlement | null) =>
+  !value || value.status === "entitled";
+
+export function EntitlementIndicator({
+  value,
+  timezone,
+}: {
+  value?: Entitlement | null;
+  timezone: string;
+}) {
+  if (!value) return null;
+  const label =
+    value.state === "checking"
+      ? "Checking"
+      : value.state === "queued"
+        ? "Queued"
+        : value.status === "entitled"
+          ? "Entitled"
+          : value.status === "unentitled"
+            ? "Unentitled"
+            : "Unconfirmed";
+  const Icon =
+    label === "Checking"
+      ? LoaderCircle
+      : label === "Queued"
+        ? Clock3
+        : label === "Entitled"
+          ? CircleCheck
+          : label === "Unentitled"
+            ? CircleX
+            : CircleHelp;
+  const detail =
+    value.state === "retry" && value.next_check_at
+      ? `Retry scheduled ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: timezone }).format(new Date(value.next_check_at))}`
+      : label === "Queued"
+        ? "Waiting for an entitlement check. See Activity for queue progress."
+        : label === "Checking"
+          ? "Checking subscription entitlement without starting playback."
+          : value.reason ||
+            (value.checked_at
+              ? "See event details for the last check."
+              : "No entitlement result yet.");
+  return (
+    <span
+      className={`df-entitlement-indicator is-${label.toLowerCase()}`}
+      title={detail}
+      aria-label={`Entitlement: ${label}. ${detail}`}
+    >
+      <Icon
+        size={15}
+        aria-hidden="true"
+        className={label === "Checking" ? "df-entitlement-spinner" : undefined}
+      />
+      {label}
+    </span>
+  );
+}
+
 export function EntitlementStatus({
   value,
   timezone,
@@ -74,3 +132,10 @@ export function EntitlementStatus({
     </div>
   );
 }
+import {
+  CircleCheck,
+  CircleHelp,
+  CircleX,
+  Clock3,
+  LoaderCircle,
+} from "lucide-react";

@@ -96,7 +96,7 @@ export function EntitlementQueue({
         · {value.failed_jobs} with errors
       </p>
       <div className="df-entitlement-filters">
-        <label>
+        <label className="df-field">
           Show checks
           <select
             value={filter}
@@ -114,7 +114,7 @@ export function EntitlementQueue({
             <option value="stopped">Stopped</option>
           </select>
         </label>
-        <label>
+        <label className="df-field">
           Find an event
           <input
             type="search"
