@@ -35,6 +35,7 @@ import {
   X,
 } from "lucide-react";
 import { api, ApiError, commandId } from "./api";
+import { EntitlementStatus } from "./EntitlementStatus";
 import { TeamRanking } from "./TeamRanking";
 import { ConfigurationTools } from "./ConfigurationTools";
 import { VPNSettings } from "./VPNSettings";
@@ -505,6 +506,12 @@ function App() {
       `${event.title} marked finished. Use Undo last edit to reverse this.`,
       true,
     );
+  const checkEntitlement = (event: Content) => void mutate(
+    () => api(devicePath + "/entitlement-checks", {
+      command_id: commandId(), expected_revision: d.revision, content_id: event.content_id,
+    }),
+    "Entitlement check queued. Playback operations take priority.",
+  );
   const playbackOffline = d.executor_health?.state === "offline";
   const playbackSimulator = data.meta.playback_adapter === "simulator";
   const observedSimulated = d.observed?.simulated ?? playbackSimulator;
@@ -723,6 +730,8 @@ function App() {
             </span>
           </div>
         </div>
+        <EntitlementStatus value={e.entitlement} timezone={d.preferences.timezone}
+          onCheck={() => checkEntitlement(e)} busy={busy} />
         <div className="df-event-footer">
           <span className="df-footnote">
             {e.watch_entry_id ? <ShieldCheck size={15} /> : <Tv size={15} />}{" "}
@@ -748,6 +757,7 @@ function App() {
               primary={e.playable && !current}
               disabled={
                 busy ||
+                (!!e.entitlement?.blocked && !current) ||
                 (!!d.manual_control && e.playable && !current) ||
                 ["ended", "cancelled"].includes(e.lifecycle.state)
               }
@@ -2017,6 +2027,8 @@ function App() {
                 Manual protection survives delays and overtime. Other manual
                 entries may take precedence during overlap.
               </div>
+              <EntitlementStatus value={modalEvent.entitlement} timezone={d.preferences.timezone}
+                onCheck={() => checkEntitlement(modalEvent)} busy={busy} details />
               <div className="df-dialog-actions">
                 {!["ended", "cancelled"].includes(
                   modalEvent.lifecycle.state,
@@ -2040,6 +2052,7 @@ function App() {
                     onClick={() => void add(modalEvent)}
                     disabled={
                       busy ||
+                      !!modalEvent.entitlement?.blocked ||
                       ["ended", "cancelled"].includes(
                         modalEvent.lifecycle.state,
                       )
@@ -2051,7 +2064,7 @@ function App() {
                 {modalEvent.playable && (
                   <Button
                     primary
-                    disabled={busy || !!d.manual_control}
+                    disabled={busy || !!d.manual_control || !!modalEvent.entitlement?.blocked}
                     onClick={() => play(modalEvent)}
                   >
                     <Play size={15} />

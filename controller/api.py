@@ -22,6 +22,7 @@ from .models import (
     Command,
     CompletionCommand,
     ConfigurationImport,
+    EntitlementCommand,
     ManualControlCommand,
     PublicAccessUpdate,
     PublicCommand,
@@ -291,6 +292,10 @@ def create_app(settings=None, *, start_workers=True):
                 action={"type": "remove", "entry_id": entry_id},
             ),
         )
+
+    @app.post("/api/v1/devices/{device_id}/entitlement-checks")
+    def entitlement_check(device_id: str, command: EntitlementCommand):
+        return service.entitlement_command(device_id, command)
 
     @app.get("/api/v1/devices/{device_id}/vpn-locations")
     async def vpn_locations(device_id: str):

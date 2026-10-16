@@ -18,6 +18,7 @@ from .content_status import (
 )
 from .coordinator import PlaybackCoordinator
 from .database import Database, encode
+from .entitlements import EntitlementChecks
 from .fixtures import default_device, fixtures, make_team
 from .leagues import LEAGUE_NAMES
 from .maintenance import policy, prune
@@ -30,7 +31,7 @@ from .teamarr import TeamarrClient
 log = logging.getLogger(__name__)
 
 
-class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
+class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
     CONFIG_FIELDS = ("rules", "team_ranks", "preferences")
 
     def __init__(
@@ -132,6 +133,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 team["key"] = team_key(team, team["league"])
                 self.db.upsert_team(db, team, datetime.now(UTC).isoformat())
             self.prune_completed_plans(db)
+            self.seed_entitlements(db)
 
     def remember_teams(self, db, item, fetched):
         event = item.get("event") or {}
@@ -162,6 +164,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 (item["id"], source, fetched, encode(item)),
             )
             self.remember_teams(db, item, fetched)
+        self.seed_entitlements(db)
         self.db.set_meta(
             db,
             "feed_health",
@@ -180,7 +183,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         pins = self.pinned_content_ids(db, device_id=device_id)
         completions = self.db.device(db, device_id)["manual_completions"]
         leagues = set(self.db.device(db, device_id)["preferences"]["discovery_leagues"])
-        return [
+        items = [
             content_view(
                 snapshot,
                 r["active"]
@@ -197,6 +200,7 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
             for r in db.execute("SELECT * FROM contents ORDER BY id")
             for snapshot in [json.loads(r["snapshot"])]
         ]
+        return self.entitlement_views(db, device_id, items)
 
     def overview(self, device_id="living-room"):
         with self.db.transaction() as db:
@@ -421,6 +425,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
                 raise HTTPException(404, "Content is not in the catalog")
             if items[content_id]["lifecycle"]["state"] in {"ended", "cancelled"}:
                 raise HTTPException(422, "This event has finished or was cancelled")
+            if (items[content_id].get("entitlement") or {}).get("blocked"):
+                raise HTTPException(422, "Subscription required. An admin can recheck this event's entitlement.")
             if op == "play_now" and not items[content_id]["playable"]:
                 raise HTTPException(
                     422,
@@ -896,6 +902,8 @@ class Controller(ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
         if self.settings.mode == "teamarr":
             self.tasks.append(asyncio.create_task(self.run_feed()))
             self.tasks.append(asyncio.create_task(self.run_team_directory()))
+            if self.executor:
+                self.tasks.append(asyncio.create_task(self.run_entitlements()))
 
     async def stop(self):
         for task in self.tasks:

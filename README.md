@@ -74,6 +74,11 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
+Version 0.18.0 adds [background schedule entitlement checks](docs/schedule-entitlement.md),
+admin rechecks, and subscription gating for Play now/Add to plan in both apps.
+Unknown results retry from five minutes up to five hours; conclusive results are
+checked once. Schema 12 migrates automatically and preserves the watch plan.
+
 Version 0.16.9 removes confirmed completed/cancelled entries from the watch plan,
 including existing entries at startup. Stale retained events now query Teamarr's
 historical feed window by exact content ID to obtain current status. No Teamarr

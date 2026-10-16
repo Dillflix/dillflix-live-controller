@@ -243,6 +243,9 @@ receipt age and retained terminal observations; it does not renew stale evidence
 
 ## Prime catalogue checks and launch outcomes
 
+Upcoming subscription observations use a separate durable queue; see
+[schedule entitlement](schedule-entitlement.md). They never advance playback intent.
+
 API 11 catalogue search runs before the coordinator changes playback intent. The
 latest probe is stored under a device-scoped metadata key, independent of executor
 tokens, and carries the full result, matching audit and timing evidence. Search is

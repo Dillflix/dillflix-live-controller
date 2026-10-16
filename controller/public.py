@@ -25,6 +25,7 @@ def public_overview(service, actor, device_id="living-room"):
                     "scores",
                     "playable",
                     "active",
+                    "entitlement",
                 )
             }
             card["teams"] = [

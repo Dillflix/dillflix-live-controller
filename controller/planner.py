@@ -140,6 +140,8 @@ def choose(device, items, now, real_now):
     for item in items:
         if not item["active"] and item["content_id"] not in committed | {current_id}:
             continue
+        if (item.get("entitlement") or {}).get("blocked") and item["content_id"] != current_id:
+            continue
         evidence = access.get(item["content_id"], {})
         if (evidence.get("scope") == device.get("prime_network_scope")
                 and (not evidence.get("expires_at") or real_now.timestamp() < evidence["expires_at"])
@@ -316,6 +318,7 @@ def preview_plan(device, items, now):
         for p in ordered_plan(device)
         if p["content_id"] in indexed
         and indexed[p["content_id"]]["lifecycle"]["state"] not in {"ended", "cancelled"}
+        and not (indexed[p["content_id"]].get("entitlement") or {}).get("blocked")
     ]
     conflicts, unknown = [], []
     bounds = {now, now + timedelta(hours=24)}

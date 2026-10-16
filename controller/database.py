@@ -17,7 +17,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 11
+    SCHEMA_VERSION = 12
 
     def __init__(self, path):
         self.path = path
@@ -145,6 +145,14 @@ class Database:
             if version < 11:
                 db.execute("""CREATE TABLE IF NOT EXISTS chooser_captures (
                     call_id TEXT PRIMARY KEY, recorded_at TEXT NOT NULL, payload TEXT NOT NULL)""")
+            if version < 12:
+                db.execute("""CREATE TABLE IF NOT EXISTS event_entitlements (
+                    device_id TEXT NOT NULL, content_id TEXT NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'queued', status TEXT NOT NULL DEFAULT 'unknown',
+                    failures INTEGER NOT NULL DEFAULT 0, next_check REAL,
+                    check_id TEXT, started_at REAL, checked_at TEXT, manual INTEGER NOT NULL DEFAULT 0,
+                    evidence TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(device_id,content_id))""")
+                db.execute("CREATE INDEX IF NOT EXISTS entitlement_due ON event_entitlements(device_id,state,next_check)")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
