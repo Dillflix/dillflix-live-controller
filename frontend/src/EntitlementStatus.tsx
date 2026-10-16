@@ -1,4 +1,5 @@
 export interface Entitlement {
+  result?: "no_listing" | null;
   status: "entitled" | "unentitled" | "unknown";
   state: "queued" | "checking" | "retry" | "complete" | "stopped";
   checked_at: string | null;
@@ -28,7 +29,7 @@ export function EntitlementIndicator({
           ? "Entitled"
           : value.status === "unentitled"
             ? "Unentitled"
-            : "Unconfirmed";
+            : value.result === "no_listing" ? "No Prime listing found" : "Unconfirmed";
   const Icon =
     label === "Checking"
       ? LoaderCircle
@@ -52,7 +53,7 @@ export function EntitlementIndicator({
               : "No entitlement result yet.");
   return (
     <span
-      className={`df-entitlement-indicator is-${label.toLowerCase()}`}
+      className={`df-entitlement-indicator is-${label.toLowerCase().replaceAll(" ", "-")}`}
       title={detail}
       aria-label={`Entitlement: ${label}. ${detail}`}
     >
@@ -94,7 +95,7 @@ export function EntitlementStatus({
       : value.status === "unentitled"
         ? "Subscription required"
         : value.checked_at
-          ? "Entitlement unconfirmed"
+          ? value.result === "no_listing" ? "No Prime listing found" : "Entitlement unconfirmed"
           : "Entitlement not checked yet";
   return (
     <div className={`df-entitlement${value.blocked ? " is-blocked" : ""}`}>

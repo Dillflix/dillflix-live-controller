@@ -39,7 +39,11 @@ timezone, service session, generation and network context. Provider/identity tex
 changes invalidate reuse; current access flags always come from the new response.
 This memory ends with the check, so later retries/manual checks read fresh evidence.
 
-Unknown checks retry at 5, 10, 20, 40, 80, 160, then 300 minutes (five-hour cap).
+Successful checks exhausting every query with no matching feed retry after 12 hours.
+If the event starts sooner, one check is scheduled at its start (at least one hour
+since the previous check). No listing is not a subscription denial. Ambiguous
+results and technical failures retry at 5, 10, 20, 40, 80, 160, then 300 minutes
+(five-hour cap).
 The retry count and deadline are durable. Completed entitlement results have no
 periodic refresh. Confirmed completion/cancellation stops retries; events outside
 the imported active catalogue are not scanned automatically. Admin Check/Recheck entitlement on
@@ -117,3 +121,8 @@ include up to 500 current schedule records. Catalogue retention removes old evid
 but retains a compact event marker to prevent rediscovery from creating a new automatic
 check. Schema 11 controllers cannot open this database after migration; back up before
 upgrading if an older binary must be restored.
+
+Events in both web apps default to the Entitled filter. All events, Unentitled,
+Unconfirmed, No Prime listing found, Queued and Checking remain selectable.
+Filters do not change watch plans, Now Playing, or automatic selection. Routes
+without Prime entitlement checks retain their existing visibility.

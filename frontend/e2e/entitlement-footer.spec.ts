@@ -37,6 +37,7 @@ test("upcoming footer moves from Queued to Checking to Entitled without an extra
   for (const value of ["queued", "checking", "complete"]) {
     state = value;
     await page.goto("/");
+  await page.getByLabel("Entitlement", { exact: true }).selectOption("all");
     await page
       .locator(".df-segmented")
       .getByRole("button", { name: "Upcoming", exact: true })

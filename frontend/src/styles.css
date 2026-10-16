@@ -1768,3 +1768,7 @@ select:focus-visible {
 #df-app .df-entitlement-spinner { animation: df-entitlement-spin 1.2s linear infinite; }
 @keyframes df-entitlement-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { #df-app .df-entitlement-spinner { animation: none; } }
+
+#df-app .df-entitlement-filter { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
+#df-app .df-entitlement-filter select { max-width: 100%; border: 1px solid #d7ddea; border-radius: 8px; background: white; color: inherit; padding: 10px; }
+#df-app .df-toolbar { flex-wrap: wrap; }

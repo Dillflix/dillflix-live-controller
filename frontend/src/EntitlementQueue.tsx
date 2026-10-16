@@ -47,7 +47,7 @@ export function EntitlementQueue({
   const rows = value.rows.filter(
     (r) =>
       (filter === "all" ||
-        (filter === "failed"
+        (filter === "no_listing" ? r.entitlement.result === "no_listing" : filter === "failed"
           ? r.entitlement.state === "retry" && r.error
           : r.entitlement.state === filter)) &&
       r.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
@@ -96,7 +96,7 @@ export function EntitlementQueue({
       <p>
         {value.counts.queued} queued · {value.counts.checking} checking ·{" "}
         {value.counts.retry} awaiting retry · {value.counts.complete} completed
-        · {value.failed_jobs} with errors
+        · {value.failed_jobs} with errors · {value.rows.filter(r => r.entitlement.result === "no_listing").length} with no Prime listing
       </p>
       <div className="df-entitlement-filters">
         <label className="df-field">
@@ -113,6 +113,7 @@ export function EntitlementQueue({
             <option value="checking">Checking</option>
             <option value="retry">Awaiting retry</option>
             <option value="failed">Errors</option>
+            <option value="no_listing">No Prime listing found</option>
             <option value="complete">Completed</option>
             <option value="stopped">Stopped</option>
           </select>
