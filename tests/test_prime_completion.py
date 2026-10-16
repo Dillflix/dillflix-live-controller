@@ -5,7 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from playback_fixtures import payload
+from playback_fixtures import confirm_catalogue_entitlement, payload
 from test_prime_catalogue import finish_check
 from test_prime_workflow import cleanup, launch, rig, row
 
@@ -21,6 +21,7 @@ def seed(controller):
     fallback.update(id="fallback-game", title="Other live game")
     with controller.db.transaction() as db:
         controller.replace_catalog(db, [snapshot, fallback], "teamarr")
+        confirm_catalogue_entitlement(db)
         device = controller.db.device(db)
         device["plan"] = [controller.entry(snapshot["id"]), controller.entry(fallback["id"])]
         controller.db.save_device(db, device)
@@ -189,6 +190,7 @@ async def test_completion_survives_restart_expiry_and_late_feed_response(tmp_pat
             )
             # Teamarr still reports live in a fresh catalog response.
             controller.replace_catalog(db, [snapshot], "teamarr")
+            confirm_catalogue_entitlement(db)
         await controller.stop()
         restarted = Controller(controller.settings)
         restarted.executor.recover()

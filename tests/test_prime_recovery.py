@@ -5,7 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from playback_fixtures import payload
+from playback_fixtures import confirm_catalogue_entitlement, payload
 from test_prime_catalogue import finish_check
 from test_prime_workflow import cleanup, rig, row
 
@@ -18,6 +18,7 @@ async def live_prime(tmp_path):
     workflow.loop = asyncio.get_running_loop()
     with controller.db.transaction() as db:
         controller.replace_catalog(db, [payload()["content_snapshot"]], "teamarr")
+        confirm_catalogue_entitlement(db)
     controller.tick()
     await finish_check(controller)
     controller.tick()
@@ -145,6 +146,7 @@ async def test_ended_advances_without_recovery(live_prime, fallback):
         other.update(id="other-game", title="Other game")
         with controller.db.transaction() as db:
             controller.replace_catalog(db, [payload()["content_snapshot"], other], "teamarr")
+            confirm_catalogue_entitlement(db)
     workflow.player.state = "ended"
     await workflow.monitor(row(workflow, token))
     controller.refresh_playback_observation()
@@ -253,8 +255,12 @@ async def test_due_recovery_waits_for_inflight_resume_check(live_prime, monkeypa
     assert all(call[0] not in {"stop", "cancel"} for call in workflow.player.calls)
 
 
-async def test_due_recovery_queues_final_check_then_reopens_if_still_paused(live_prime):
+@pytest.mark.parametrize("background_unknown", [False, True])
+async def test_due_recovery_queues_final_check_then_reopens_if_still_paused(live_prime, background_unknown):
     controller, workflow, token, _ = live_prime
+    if background_unknown:
+        with controller.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET status='unknown',state='retry'")
     workflow.player.state = "paused"
     await workflow.monitor(row(workflow, token))
     controller.tick()
@@ -301,6 +307,7 @@ async def test_route_change_bypasses_pause_recheck(live_prime):
         )
         snapshot["viewing_options"][0]["channel"] = "New live locator"
         controller.replace_catalog(db, [snapshot], "teamarr")
+        confirm_catalogue_entitlement(db)
     controller.stage_playback()
     await finish_check(controller)
     with controller.db.transaction() as db:
@@ -318,6 +325,7 @@ async def test_new_manual_choice_preempts_pause_recovery(live_prime):
         current = payload()["content_snapshot"]
         other = {**current, "id": "another-live-event"}
         controller.replace_catalog(db, [current, other], "teamarr")
+        confirm_catalogue_entitlement(db)
         device = controller.db.device(db)
         device["plan"] = [controller.entry(other["id"])]
         controller.db.save_device(db, device)

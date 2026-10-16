@@ -23,7 +23,7 @@ from .fixtures import default_device, fixtures, make_team
 from .leagues import LEAGUE_NAMES
 from .maintenance import policy, prune
 from .manual_control import ManualControl
-from .planner import choose, content_view, ordered_plan, parse_time, preview_plan, priority, team_key
+from .planner import entitlement_eligible, choose, content_view, ordered_plan, parse_time, preview_plan, priority, team_key
 from .playback import PlaybackAdapter, SimulatedPlaybackAdapter
 from .storage_lock import database_guard
 from .teamarr import TeamarrClient
@@ -429,6 +429,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 raise HTTPException(422, "This event has finished or was cancelled")
             if (items[content_id].get("entitlement") or {}).get("blocked"):
                 raise HTTPException(422, "Subscription required. An admin can recheck this event's entitlement.")
+            if not entitlement_eligible(items[content_id]):
+                raise HTTPException(422, "Entitlement is not confirmed. Check this event before adding it or playing it.")
             if op == "play_now" and not items[content_id]["playable"]:
                 raise HTTPException(
                     422,

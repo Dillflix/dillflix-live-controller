@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from playback_fixtures import payload, settings
+from playback_fixtures import confirm_catalogue_entitlement, payload, settings
 from test_prime_matching import GTI, results, tile
 
 from controller.executor.models import CancelRequest, ExecutorError, PlaybackReport
@@ -690,6 +690,7 @@ async def test_due_scheduled_prime_event_can_be_selected_without_claiming_live(
         snapshot["start_time"] = (datetime.now(UTC) + timedelta(seconds=offset)).isoformat()
         with controller.db.transaction() as db:
             controller.replace_catalog(db, [snapshot], "teamarr")
+            confirm_catalogue_entitlement(db)
             items = controller.items(db)
             device = controller.db.device(db, "living-room")
             decision = choose(device, items, datetime.now(UTC), datetime.now(UTC))

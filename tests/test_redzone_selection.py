@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from playback_fixtures import payload
+from playback_fixtures import confirm_catalogue_entitlement, payload
 from test_prime_catalogue import saved
 from test_prime_matching import results, tile
 from test_prime_workflow import cleanup, rig, row
@@ -67,6 +67,7 @@ async def test_redzone_uses_catalogue_before_switching(tmp_path, selection, prim
     try:
         with controller.db.transaction() as db:
             controller.replace_catalog(db, [game, broadcast], "teamarr")
+            confirm_catalogue_entitlement(db)
             device = controller.db.device(db)
             device.update(
                 automation="active",
@@ -149,6 +150,7 @@ async def test_ready_catalogue_cannot_launch_a_now_ineligible_broadcast(tmp_path
     try:
         with controller.db.transaction() as db:
             controller.replace_catalog(db, [broadcast], "teamarr")
+            confirm_catalogue_entitlement(db)
             device = controller.db.device(db)
             device.update(automation="active", plan=[controller.entry(broadcast["id"])])
             controller.db.save_device(db, device)

@@ -61,3 +61,22 @@ def payload(intent=2):
             {"id": "prime-option", "app": "prime_video", "presentation": "live", "decision": "eligible"}
         ],
     }
+
+
+def confirm_catalogue_entitlement(db):
+    """Seed prior matched discovery for tests of subsequent launch/recovery policy."""
+    import json
+    from controller.entitlement_store import record_entitled
+    from controller.planner import allowed_options
+    from controller.prime_player.labels import prime_option
+
+    for row in db.execute("SELECT snapshot FROM contents WHERE source='teamarr'").fetchall():
+        snapshot = json.loads(row[0])
+        options = allowed_options(snapshot)
+        option = next((o for o in options if prime_option(o)), None)
+        if option:
+            record_entitled(db, "living-room",
+                            {"content_snapshot": snapshot, "allowed_viewing_options": options},
+                            {"content_id": "amzn1.dv.gti.fixture", "viewing_option_id": option["id"],
+                             "entitlement_status": "ENTITLED"},
+                            source="fixture_discovery", provenance={})

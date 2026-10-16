@@ -763,7 +763,7 @@ async def test_pruned_unchecked_event_keeps_once_only_marker(tmp_path):
         await cleanup(controller)
 
 
-async def test_denial_gates_actions_and_unknown_does_not(tmp_path):
+async def test_denial_and_unknown_gate_new_actions_without_erasing_plan(tmp_path):
     controller, workflow = rig(tmp_path)
     seed(controller)
     original = workflow.player.search
@@ -795,8 +795,12 @@ async def test_denial_gates_actions_and_unknown_does_not(tmp_path):
         view = controller.overview()
         assert view["device"]["plan"]
         assert not view["events"][0]["entitlement"]["blocked"]
-        controller.plan_command("living-room", Command(command_id=uuid4().hex, expected_revision=0,
-                                action={"type": "add", "content_id": "fixture-game"}))
+        for action in ("add", "play_now"):
+            command = Command(command_id=uuid4().hex, expected_revision=0,
+                              action={"type": action, "content_id": "fixture-game"})
+            for invoke in (controller.plan_command, controller.preview):
+                with pytest.raises(HTTPException, match="Entitlement is not confirmed"):
+                    invoke("living-room", command)
     finally:
         await cleanup(controller)
 
@@ -1021,5 +1025,56 @@ async def test_legacy_no_match_is_rescheduled_without_search(tmp_path):
         await controller.check_entitlement_once()
         assert not workflow.player.calls
         assert record(controller)["next_check"] > time.time() + 43190
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("status,state", [
+    ("unknown", "queued"), ("unknown", "checking"), ("unknown", "retry"),
+    ("unentitled", "complete"), ("entitled", "complete"), ("entitled", "checking"),
+])
+async def test_scheduler_and_preview_require_positive_entitlement(tmp_path, status, state):
+    from controller.planner import choose, preview_plan
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    try:
+        with controller.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET status=?,state=?", (status, state))
+            device = controller.db.device(db)
+            item = controller.items(db, device["id"])[0]
+            item["playable"] = True
+            item["lifecycle"]["state"] = "live"
+            now = datetime.now(UTC)
+            item.update(start_time=now.isoformat(), expected_end_time=(now + timedelta(hours=1)).isoformat())
+            device["rules"] = [{"id": "all", "name": "All", "enabled": True, "match": {}}]
+            device["plan"] = []
+            assert choose(device, [item], now, now)["content_id"] == (
+                item["content_id"] if status == "entitled" else None)
+            # Existing commitments remain stored, but unknown entries cannot win selection.
+            device["plan"] = [controller.entry(item["content_id"])]
+            decision = choose(device, [item], now, now)
+            assert decision["content_id"] == (item["content_id"] if status == "entitled" else None)
+            preview = preview_plan(device, [item], now)
+            assert any(s["content_id"] == item["content_id"] for s in preview["segments"]) == (status == "entitled")
+            assert len(device["plan"]) == 1
+            # A transient recheck result must not displace existing playback.
+            device["observed"] = {"content_id": item["content_id"], "verified": True}
+            assert choose(device, [item], now, now)["content_id"] == item["content_id"]
+        assert not workflow.player.calls
+    finally:
+        await cleanup(controller)
+
+
+async def test_unmatched_import_waits_for_discovery_before_staging(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    try:
+        controller.stage_playback()
+        with controller.db.transaction() as db:
+            assert db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+            assert controller.entitlement_idle(db, controller.db.device(db))
+        assert not workflow.player.calls
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
     finally:
         await cleanup(controller)
