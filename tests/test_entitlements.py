@@ -987,6 +987,11 @@ async def test_successful_no_match_has_long_retry_and_manual_override(tmp_path):
         assert len(workflow.player.calls) == count
         controller.entitlement_command("living-room", manual(controller))
         assert record(controller)["next_check"] == 0
+        async def failing(*args):
+            raise TimeoutError()
+        workflow.player.search = failing
+        await controller.check_entitlement_once()
+        assert 290 < record(controller)["next_check"] - time.time() <= 300
     finally:
         await cleanup(controller)
 

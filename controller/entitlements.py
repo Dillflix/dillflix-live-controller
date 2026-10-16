@@ -309,6 +309,7 @@ class EntitlementChecks:
                         audit["search_queries_exhausted"] = True
                         if no_listing(evidence):
                             evidence["reason"] = "No Prime listing found"
+                            evidence["retry_failures"] = 0
                             checked = parse_time(old["checked_at"]).timestamp()
                             start = parse_time(snapshot["start_time"]).timestamp()
                             db.execute("UPDATE event_entitlements SET next_check=?,evidence=? "
@@ -483,9 +484,13 @@ class EntitlementChecks:
 
     def finish_entitlement(self, db, row, status, evidence):
         failures = row["failures"] + 1 if status == "unknown" else 0
-        next_check = time.time() + retry_delay(failures) if status == "unknown" else None
+        previous = json.loads(row["evidence"])
+        short_failures = previous.get("retry_failures", row["failures"]) + 1 if status == "unknown" else 0
+        evidence["retry_failures"] = short_failures
+        next_check = time.time() + retry_delay(short_failures) if status == "unknown" else None
         if status == "unknown" and no_listing(evidence):
             evidence["reason"] = "No Prime listing found"
+            evidence["retry_failures"] = 0
             content = db.execute("SELECT snapshot FROM contents WHERE id=?", (row["content_id"],)).fetchone()
             start = json.loads(content[0]).get("start_time") if content else None
             next_check = no_listing_retry(time.time(), parse_time(start).timestamp() if start else None)
