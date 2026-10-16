@@ -35,7 +35,9 @@ export function EntitlementStatus({
       ? "Included with your subscription"
       : value.status === "unentitled"
         ? "Subscription required"
-        : "Entitlement unconfirmed";
+        : value.checked_at
+          ? "Entitlement unconfirmed"
+          : "Entitlement not checked yet";
   return (
     <div className={`df-entitlement${value.blocked ? " is-blocked" : ""}`}>
       <div>

@@ -1,5 +1,112 @@
 import { test, expect } from "@playwright/test";
 
+test("Activity shows entitlement queue blockers, failures and manual retry on phone", async ({
+  page,
+}) => {
+  const requests: Record<string, unknown>[] = [];
+  const checked = "2026-10-15T23:00:00Z";
+  await page.route("**/api/v1/overview", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.entitlement_queue = {
+      phase: "waiting",
+      reason: "Playback monitoring has priority",
+      updated_at: checked,
+      dispatch_after: null,
+      failed_jobs: 1,
+      counts: { queued: 1, checking: 0, retry: 1, complete: 0, stopped: 0 },
+      rows: [
+        {
+          content_id: "queued-event",
+          title: "Wuhan Open: Day 5",
+          failures: 0,
+          error: null,
+          eligible: true,
+          started_at: checked,
+          last_deferral: {
+            at: checked,
+            reason: "A playback request has priority",
+          },
+          entitlement: {
+            status: "unknown",
+            state: "queued",
+            checked_at: null,
+            next_check_at: null,
+            blocked: false,
+            reason: null,
+            can_check: true,
+          },
+        },
+        {
+          content_id: "retry-event",
+          title: "Toronto at Montreal",
+          failures: 2,
+          error: {
+            code: "prime_timeout",
+            message: "Catalogue request timed out",
+          },
+          eligible: true,
+          started_at: checked,
+          last_deferral: null,
+          entitlement: {
+            status: "unknown",
+            state: "retry",
+            checked_at: checked,
+            next_check_at: "2026-10-16T01:00:00Z",
+            blocked: false,
+            reason: "Entitlement check failed; retry scheduled",
+            can_check: true,
+          },
+        },
+      ],
+    };
+    await route.fulfill({ response, json: body });
+  });
+  await page.route(
+    "**/api/v1/devices/living-room/entitlement-checks",
+    async (route) => {
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({ json: { accepted: true } });
+    },
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  const queue = page.getByRole("region", { name: "Entitlement checks" });
+  await expect(queue).toContainText("Playback monitoring has priority");
+  await expect(queue).toContainText("1 with errors");
+  await expect(queue).toContainText("Entitlement not checked yet");
+  await expect(queue).toContainText("Last deferred");
+  await expect(queue).toContainText("prime_timeout");
+  await expect(queue).toContainText("Retry scheduled");
+  await queue.getByLabel("Show checks").selectOption("failed");
+  await expect(queue).not.toContainText("Wuhan Open");
+  await queue.getByRole("button", { name: "Recheck entitlement" }).click();
+  expect(requests[0].content_id).toBe("retry-event");
+  await queue.getByLabel("Show checks").selectOption("all");
+  await queue.getByLabel("Find an event").fill("Wuhan");
+  await expect(queue).not.toContainText("Toronto at Montreal");
+  await queue
+    .getByRole("button", { name: "Check entitlement", exact: true })
+    .click();
+  expect(requests[1].content_id).toBe("queued-event");
+  await queue.getByLabel("Find an event").clear();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/entitlement-queue-phone.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({
+    path: "test-results/entitlement-queue-desktop.png",
+    fullPage: true,
+  });
+});
+
 const denied = {
   status: "unentitled",
   state: "complete",

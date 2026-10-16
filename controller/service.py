@@ -245,6 +245,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 ),
                 "undo": self.undo_summary(db, device),
                 "events": cards,
+                "entitlement_queue": self.entitlement_queue(db, device, items),
                 "plan_preview": preview_plan(device, items, self.now(db)),
                 "activity": activity,
                 "health": self.db.meta(db, "feed_health", {"state": "starting"}),

@@ -195,6 +195,7 @@ export interface Overview {
     last_attempt?: string;
   };
   events: Content[];
+  entitlement_queue?: import("./EntitlementQueue").EntitlementQueueView | null;
   plan_preview: Preview;
   activity: {
     sequence: number;

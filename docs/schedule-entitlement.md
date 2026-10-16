@@ -33,6 +33,21 @@ acquisition still performs its own fresh readiness checks.
 
 ## Work scheduling and playback
 
+Version 0.18.1 fixes a starvation bug: a routine playback monitor becoming due
+during search could previously discard the returned data before matching, sending
+the job from Checking back to Queued indefinitely without a result or failure count.
+Matching now continues alongside routine monitoring. Before a fallback search, the
+worker yields to monitoring for up to 15 seconds while preserving its fetched data
+and matching progress. Launches, recovery and manual control still defer the job.
+
+Admin **Activity → Entitlement checks** shows the queue, worker phase and waiting
+reason, last start/check times, retry counts and deadlines, errors, and last deferral.
+Use the filters to see queued, checking, retrying, failed, completed or stopped jobs;
+search by event title and check/recheck individual events there. A queued event with
+no completed result is labelled **Entitlement not checked yet**. Failed checks remain
+visible while awaiting their backoff, and stale worker progress is shown explicitly.
+Stable playback does not block the queue for the event's duration.
+
 Automatic dispatch is limited to one event check per minute across the queue. The
 worker waits behind due playback monitoring, launches, cancellation, recovery, manual
 control and foreground catalogue work. It uses only the existing non-navigating

@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { api, ApiError, commandId } from "./api";
 import { EntitlementStatus } from "./EntitlementStatus";
+import { EntitlementQueue } from "./EntitlementQueue";
 import { TeamRanking } from "./TeamRanking";
 import { ConfigurationTools } from "./ConfigurationTools";
 import { VPNSettings } from "./VPNSettings";
@@ -506,7 +507,7 @@ function App() {
       `${event.title} marked finished. Use Undo last edit to reverse this.`,
       true,
     );
-  const checkEntitlement = (event: Content) => void mutate(
+  const checkEntitlement = (event: { content_id: string }) => void mutate(
     () => api(devicePath + "/entitlement-checks", {
       command_id: commandId(), expected_revision: d.revision, content_id: event.content_id,
     }),
@@ -1353,6 +1354,8 @@ function App() {
                   "Activity",
                   "Selections, switches, manual choices, and recovery.",
                 )}
+                <EntitlementQueue value={data.entitlement_queue} timezone={d.preferences.timezone}
+                  busy={busy} onCheck={checkEntitlement} />
                 <section className="df-panel">
                   <h3>Playback monitoring</h3>
                   {d.prime_network && (

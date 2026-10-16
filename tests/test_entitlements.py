@@ -192,6 +192,118 @@ async def test_search_does_not_change_playback_and_monitor_has_priority(tmp_path
         await cleanup(controller)
 
 
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_monitor_becoming_due_during_search_does_not_discard_result(tmp_path, fallback):
+    """Production's short monitor interval must not cause checking -> queued loops."""
+    from dataclasses import replace
+
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    workflow.config = replace(workflow.config, monitor_interval=5)
+    try:
+        token = await launch(workflow)
+        workflow.player.calls.clear()
+        original = workflow.player.search
+        searches = []
+
+        async def search(*args):
+            result = await original(*args)
+            searches.append(args[0])
+            # Deterministically simulate a monitor becoming due during the RPC.
+            with controller.db.transaction() as db:
+                db.execute("UPDATE executor_jobs SET next_check=0 WHERE token=?", (token,))
+            if fallback and len(searches) == 1:
+                return {**result, "containers": []}
+            return result
+
+        workflow.player.search = search
+        workflow.worker = asyncio.create_task(workflow.run())
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        assert record(controller)["state"] == "complete"
+        assert record(controller)["checked_at"] is not None
+        assert len(searches) == (2 if fallback else 1)
+        assert len(set(searches)) == len(searches)  # No replay of already fetched data.
+        assert all(c[0] in {"search", "status"} for c in workflow.player.calls)
+        if fallback:
+            assert [c[0] for c in workflow.player.calls[:3]] == ["search", "status", "search"]
+        assert workflow.store.report(token)["observation"]["verified"]
+    finally:
+        await cleanup(controller)
+
+
+async def test_matching_can_finish_while_monitor_holds_device_lane(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original_search, original_choose = workflow.player.search, workflow.matcher._choose
+    release = asyncio.Event()
+
+    async def monitor():
+        async with workflow.input_lock:
+            await release.wait()
+
+    async def search(*args):
+        result = await original_search(*args)
+        workflow.active = asyncio.create_task(monitor())
+        return result
+
+    async def matching(*args, **kwargs):
+        await asyncio.sleep(0)
+        assert workflow.input_lock.locked()
+        # The final priority fence must also allow this ordinary monitor.
+        return await original_choose(*args, **kwargs)
+
+    workflow.player.search, workflow.matcher._choose = search, matching
+    try:
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        assert not release.is_set()
+    finally:
+        release.set()
+        if workflow.active:
+            await workflow.active
+        await cleanup(controller)
+
+
+async def test_queue_exposes_never_checked_waiting_errors_and_retry(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    try:
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            device["manual_control"] = {"test": True}
+            controller.db.save_device(db, device)
+        await controller.check_entitlement_once()
+        queue = controller.overview()["entitlement_queue"]
+        assert queue["phase"] == "waiting"
+        assert queue["reason"] == "Manual control is active"
+        assert queue["counts"]["queued"] == 1
+        assert queue["rows"][0]["entitlement"]["checked_at"] is None
+        assert queue["failed_jobs"] == 0
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            device["manual_control"] = None
+            controller.db.save_device(db, device)
+
+        async def fail(*args):
+            raise TimeoutError()
+
+        workflow.player.search = fail
+        await controller.check_entitlement_once()
+        queue = controller.overview()["entitlement_queue"]
+        assert queue["counts"]["retry"] == 1
+        assert queue["failed_jobs"] == 1
+        assert queue["reason"] == "Waiting for scheduled retries"
+        assert queue["rows"][0]["error"]["code"] == "TimeoutError"
+        assert queue["rows"][0]["entitlement"]["next_check_at"]
+        assert queue["rows"][0]["failures"] == 1
+        with controller.db.transaction() as db:
+            controller.db.set_meta(db, "entitlement_worker", {"phase": "idle", "updated_at": 0})
+        assert controller.overview()["entitlement_queue"]["phase"] == "unavailable"
+    finally:
+        await cleanup(controller)
+
+
 async def test_manual_check_bypasses_backoff_and_is_idempotent(tmp_path):
     controller, workflow = rig(tmp_path)
     seed(controller)
@@ -284,6 +396,9 @@ async def test_foreground_work_arriving_after_search_prevents_fallback_query(tmp
         assert [c[0] for c in workflow.player.calls] == ["search"]
         assert record(controller)["state"] == "queued"
         assert record(controller)["failures"] == 0
+        evidence = json.loads(record(controller)["evidence"])
+        assert evidence["last_deferral"]["reason"] == "Playback launch or cancellation has priority"
+        assert controller.overview()["entitlement_queue"]["rows"][0]["last_deferral"] == evidence["last_deferral"]
     finally:
         await cleanup(controller)
 

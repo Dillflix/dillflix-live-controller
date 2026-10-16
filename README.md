@@ -74,8 +74,10 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
-Version 0.18.0 adds [background schedule entitlement checks](docs/schedule-entitlement.md),
-admin rechecks, and subscription gating for Play now/Add to plan in both apps.
+Version 0.18.1 fixes background entitlement checks repeatedly returning to Queued
+when playback monitoring becomes due, and adds the **Activity → Entitlement checks**
+queue with waiting reasons, errors and manual retries. See [schedule entitlement checks](docs/schedule-entitlement.md).
+Version 0.18.0 added admin rechecks and subscription gating for Play now/Add to plan in both apps.
 Unknown results retry from five minutes up to five hours; conclusive results are
 checked once. Schema 12 migrates automatically and preserves the watch plan.
 

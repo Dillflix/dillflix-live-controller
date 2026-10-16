@@ -1747,3 +1747,16 @@ select:focus-visible {
 #df-app .df-entitlement small { display: block; color: var(--df-muted); }
 #df-app .df-entitlement.is-blocked { background: var(--df-tint); color: var(--df-accent); }
 #df-app .df-entitlement .df-button { font-size: 12px; }
+#df-app .df-entitlement-queue { margin-bottom: 24px; }
+#df-app .df-entitlement-worker { display: flex; flex-direction: column; gap: 6px; padding: 16px; margin: 16px 0; border: 1px solid var(--df-line); border-radius: 8px; }
+#df-app .df-entitlement-worker small { color: var(--df-muted); }
+#df-app .df-entitlement-worker.is-error { border-color: var(--df-accent); }
+#df-app .df-entitlement-filters { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0; }
+#df-app .df-entitlement-filters label { display: flex; flex: 1 1 200px; min-width: 0; flex-direction: column; gap: 8px; }
+#df-app .df-entitlement-filters input, #df-app .df-entitlement-filters select { width: 100%; min-width: 0; }
+#df-app .df-entitlement-jobs { list-style: none; padding: 0; margin: 0; }
+#df-app .df-entitlement-jobs li { border-top: 1px solid var(--df-line); padding: 18px 0; overflow-wrap: anywhere; }
+#df-app .df-entitlement-jobs h4 { margin: 0 0 8px; }
+#df-app .df-entitlement-jobs .df-entitlement { border: 0; padding: 0; }
+#df-app .df-entitlement-jobs p { font-size: 13px; margin: 8px 0; }
+#df-app .df-entitlement-error { color: var(--df-accent); }
