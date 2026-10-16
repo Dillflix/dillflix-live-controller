@@ -255,8 +255,12 @@ async def test_due_recovery_waits_for_inflight_resume_check(live_prime, monkeypa
     assert all(call[0] not in {"stop", "cancel"} for call in workflow.player.calls)
 
 
-async def test_due_recovery_queues_final_check_then_reopens_if_still_paused(live_prime):
+@pytest.mark.parametrize("background_unknown", [False, True])
+async def test_due_recovery_queues_final_check_then_reopens_if_still_paused(live_prime, background_unknown):
     controller, workflow, token, _ = live_prime
+    if background_unknown:
+        with controller.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET status='unknown',state='retry'")
     workflow.player.state = "paused"
     await workflow.monitor(row(workflow, token))
     controller.tick()
