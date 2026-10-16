@@ -41,8 +41,9 @@ Version 0.18.1 fixes a starvation bug: a routine playback monitor becoming due
 during search could previously discard the returned data before matching, sending
 the job from Checking back to Queued indefinitely without a result or failure count.
 Matching now continues alongside routine monitoring. Before a fallback search, the
-worker yields to monitoring for up to 15 seconds while preserving its fetched data
-and matching progress. Launches, recovery and manual control still defer the job.
+worker yields to monitoring within the check's shared two-minute deadline while
+preserving its fetched data and matching progress. Launches, recovery and manual
+control still defer the job.
 
 Admin **Activity → Entitlement checks** shows the queue, worker phase and waiting
 reason, last start/check times, retry counts and deadlines, errors, and last deferral.

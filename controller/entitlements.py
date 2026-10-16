@@ -22,7 +22,6 @@ log = logging.getLogger(__name__)
 SEARCH_SECONDS = 5
 CHECK_SECONDS = 120
 DISPATCH_INTERVAL = 60
-MONITOR_YIELD_SECONDS = 15
 
 
 def retry_delay(failures):
@@ -284,17 +283,19 @@ class EntitlementChecks:
         async def search(query):
             # Keep earlier search/matching progress while a routine monitor runs.
             # Launch, manual control and recovery still defer the entire job.
-            until = time.monotonic() + MONITOR_YIELD_SECONDS
+            waiting = False
             while True:
                 check_priority()
                 with self.db.transaction() as db:
                     blocker = self.entitlement_blocker(db, self.db.device(db, device["id"]))
                 if not blocker:
                     break
-                if time.monotonic() >= until:
-                    raise Deferred(blocker)
-                progress("waiting", blocker)
-                await asyncio.sleep(0.1)
+                if not waiting:
+                    progress("waiting", blocker)
+                    waiting = True
+                # The whole job's deadline bounds this wait. A slow ordinary
+                # monitor must not reset otherwise valid matching progress.
+                await asyncio.sleep(0.25)
             progress("searching", "Reading Prime catalogue data")
             async with workflow.input_lock:
                 health = await workflow.player.health()
