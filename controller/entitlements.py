@@ -73,7 +73,7 @@ class EntitlementChecks:
         if not self.executor:
             return
         # INSERT OR IGNORE is the once-per-event boundary, including reimports.
-        # Rows intentionally outlive catalogue retention as compact deduplication records.
+        # Deduplication lasts for the catalogue retention window, not forever.
         for device in db.execute("SELECT id FROM devices").fetchall():
             for row in db.execute("SELECT id,snapshot FROM contents WHERE active=1 AND source='teamarr'"):
                 snapshot = json.loads(row["snapshot"])
@@ -229,7 +229,8 @@ class EntitlementChecks:
             return None
         now = time.time()
         projected = {i["content_id"]: i for i in items}
-        rows, counts = [], {s: 0 for s in ("queued", "checking", "retry", "complete", "stopped")}
+        rows, history_rows = [], []
+        counts = {s: 0 for s in ("queued", "checking", "retry", "complete", "stopped")}
         failures = 0
         for r in db.execute("SELECT e.* FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
                             "WHERE e.device_id=? ORDER BY "
@@ -239,14 +240,19 @@ class EntitlementChecks:
             if not item or not item.get("entitlement"):
                 continue
             evidence = json.loads(r["evidence"])
-            counts[r["state"]] += 1
-            failures += int(r["state"] == "retry" and bool(evidence.get("error")))
-            rows.append({"content_id": r["content_id"], "title": item["title"],
+            terminal = item["lifecycle"]["state"] in {"ended", "cancelled"}
+            eligible = not terminal and bool(item["active"] or r["manual"])
+            if eligible:
+                counts[r["state"]] += 1
+                failures += int(r["state"] == "retry" and bool(evidence.get("error")))
+            (rows if eligible else history_rows).append({"content_id": r["content_id"], "title": item["title"],
                          "entitlement": item["entitlement"], "failures": r["failures"],
                          "error": evidence.get("error"), "last_deferral": evidence.get("last_deferral"),
                          "started_at": datetime.fromtimestamp(r["started_at"], UTC).isoformat()
                          if r["started_at"] else None,
-                         "eligible": bool(item["active"] or r["manual"]),
+                         "eligible": eligible,
+                         "history_reason": "Event ended or cancelled" if terminal else
+                         "Outside the imported schedule window" if not eligible else None,
                          "due": r["next_check"] is not None and r["next_check"] <= now,
                          "manual": bool(r["manual"])})
         worker = self.db.meta(db, "entitlement_worker", {})
@@ -283,7 +289,7 @@ class EntitlementChecks:
                 "updated_at": datetime.fromtimestamp(worker["updated_at"], UTC).isoformat() if worker else None,
                 "dispatch_after": datetime.fromtimestamp(service["next_probe"] if service else dispatch, UTC).isoformat()
                 if service or dispatch > now else None,
-                "rows": rows}
+                "rows": rows, "history_rows": history_rows}
 
     async def check_entitlement_once(self):
         workflow = self.executor
@@ -323,6 +329,13 @@ class EntitlementChecks:
                 (device["id"], now - CHECK_SECONDS - 30),
             ).fetchall():
                 self.finish_entitlement(db, row, "unknown", {"reason": "Check interrupted; retry scheduled"})
+            items = {i["content_id"]: i for i in self.items(db, device["id"])}
+            # Completion cleanup is independent of retry deadlines and playback priority.
+            for item in items.values():
+                if item["lifecycle"]["state"] in {"ended", "cancelled"}:
+                    db.execute("UPDATE event_entitlements SET state='stopped',next_check=NULL,manual=0 "
+                               "WHERE device_id=? AND content_id=? AND state IN ('queued','retry')",
+                               (device["id"], item["content_id"]))
             due = db.execute(
                 "SELECT e.* FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
                 "WHERE (c.active=1 OR e.manual=1) AND e.device_id=? AND e.state IN ('queued','retry') "
@@ -330,7 +343,6 @@ class EntitlementChecks:
             ).fetchall()
             if not due or not self.entitlement_idle(db, device):
                 return
-            items = {i["content_id"]: i for i in self.items(db, device["id"])}
             prefer_retry = not self.db.meta(db, "entitlement_last_retry:" + device["id"], False)
             due = sorted((r for r in due if r["content_id"] in items),
                          key=lambda r: queue_priority(r, items[r["content_id"]], device, prefer_retry))
