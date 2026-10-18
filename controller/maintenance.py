@@ -44,9 +44,12 @@ def prune(database, settings, owner):
         if not database.lease(db, "maintenance", owner, time.time(), 60):
             return None
         devices = [database.device(db, row[0]) for row in db.execute("SELECT id FROM devices")]
+        before = counts(db)
+        cutoff = (datetime.now(UTC) - timedelta(days=settings.catalog_retention_days)).timestamp()
+        # Undo is useful briefly, but must not pin old event snapshots forever.
+        db.execute("DELETE FROM edit_history WHERE unixepoch(created_at)<?", (cutoff,))
         contents, requests, commands = set(), set(), set()
         for d in devices:
-            contents.update(d.get("manual_completions", {}))
             contents.update(p["content_id"] for p in d["plan"])
             contents.add(d.get("desired"))
             observed = d.get("observed") or {}
@@ -66,6 +69,11 @@ def prune(database, settings, owner):
         for row in db.execute("SELECT request_id,content_id FROM executor_jobs WHERE request IS NOT NULL"):
             requests.add(row["request_id"])
             contents.add(row["content_id"])
+        # Let a bounded catalogue request settle before removing its source row.
+        contents.update(row[0] for row in db.execute(
+            "SELECT content_id FROM event_entitlements WHERE state='checking' AND started_at>?",
+            (time.time() - 180,),
+        ))
         # A last request remains useful to the UI even after completion.
         requests.update(
             row[0]
@@ -85,7 +93,6 @@ def prune(database, settings, owner):
         db.executemany("INSERT INTO keep_contents VALUES (?)", [(x,) for x in contents if x])
         db.executemany("INSERT INTO keep_requests VALUES (?)", [(x,) for x in requests if x])
         db.executemany("INSERT INTO keep_commands VALUES (?,?)", list(commands))
-        before = counts(db)
         # A lower simulator intent is permanently fenced even after its payload and
         # cancellation receipt are removed. Never prune the highest-intent evidence.
         retired = [
@@ -118,7 +125,6 @@ def prune(database, settings, owner):
             "WHERE n>? AND (device_id,id) NOT IN (SELECT device_id,id FROM keep_commands))",
             (settings.command_history_limit,),
         )
-        cutoff = (datetime.now(UTC) - timedelta(days=settings.catalog_retention_days)).timestamp()
         db.execute(
             "DELETE FROM contents WHERE active=0 AND unixepoch(seen_at)<? "
             "AND id NOT IN (SELECT id FROM keep_contents)",
@@ -128,12 +134,15 @@ def prune(database, settings, owner):
             "DELETE FROM content_status WHERE content_id NOT IN (SELECT id FROM contents) "
             "AND content_id NOT IN (SELECT id FROM keep_contents)"
         )
-        # Keep the once-per-event marker, but not retired catalogue/model evidence.
-        db.execute("UPDATE event_entitlements SET evidence='{}',state='stopped',status='unknown',next_check=NULL "
-                   "WHERE content_id NOT IN (SELECT id FROM contents) AND (state!='stopped' OR evidence!='{}')")
+        # Deduplicate reimports only for the bounded catalogue retention window.
+        db.execute("DELETE FROM event_entitlements WHERE content_id NOT IN (SELECT id FROM contents) "
+                   "AND content_id NOT IN (SELECT id FROM keep_contents)")
         known = {r[0] for r in db.execute("SELECT id FROM contents")}
         for d in devices:
             d["failures"] = {key: value for key, value in d["failures"].items() if key in known}
+            d["manual_completions"] = {
+                key: value for key, value in d.get("manual_completions", {}).items() if key in known
+            }
             database.save_device(db, d)
         after = counts(db)
         result = {

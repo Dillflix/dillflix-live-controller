@@ -9,6 +9,7 @@ export interface EntitlementQueueView {
   service_probe_at?: string | null;
   counts: Record<Entitlement["state"], number>;
   failed_jobs: number;
+  history_rows?: EntitlementQueueView["rows"];
   rows: {
     content_id: string;
     title: string;
@@ -18,6 +19,7 @@ export interface EntitlementQueueView {
     last_deferral: { reason: string; at: string } | null;
     started_at: string | null;
     eligible: boolean;
+    history_reason?: string | null;
   }[];
 }
 
@@ -33,6 +35,7 @@ export function EntitlementQueue({
   onCheck: (event: { content_id: string }) => void;
 }) {
   const [filter, setFilter] = useState("all");
+  const [scope, setScope] = useState("current");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(20);
   if (!value) return null;
@@ -44,7 +47,7 @@ export function EntitlementQueue({
       minute: "2-digit",
       timeZone: timezone,
     }).format(new Date(s));
-  const rows = value.rows.filter(
+  const rows = (scope === "history" ? value.history_rows || [] : value.rows).filter(
     (r) =>
       (filter === "all" ||
         (filter === "no_listing" ? r.entitlement.result === "no_listing" : filter === "failed"
@@ -99,6 +102,13 @@ export function EntitlementQueue({
         · {value.failed_jobs} with errors · {value.rows.filter(r => r.entitlement.result === "no_listing").length} with no Prime listing
       </p>
       <div className="df-entitlement-filters">
+        <label className="df-field">
+          Check history
+          <select value={scope} onChange={(e) => { setScope(e.target.value); setLimit(20); }}>
+            <option value="current">Current schedule</option>
+            <option value="history">Historical checks ({value.history_rows?.length || 0})</option>
+          </select>
+        </label>
         <label className="df-field">
           Show checks
           <select
@@ -158,8 +168,7 @@ export function EntitlementQueue({
             )}
             {!row.eligible && (
               <p>
-                Outside the imported schedule window; automatic checking is
-                paused.
+                {row.history_reason || "Outside the imported schedule window"}; excluded from current queue totals.
               </p>
             )}
           </li>

@@ -745,7 +745,7 @@ async def test_foreground_work_arriving_during_match_prevents_additional_model_c
         await cleanup(controller)
 
 
-async def test_pruned_unchecked_event_keeps_once_only_marker(tmp_path):
+async def test_pruned_event_deletes_marker_and_reimport_can_be_checked(tmp_path):
     from controller.maintenance import prune
 
     controller, workflow = rig(tmp_path)
@@ -754,11 +754,12 @@ async def test_pruned_unchecked_event_keeps_once_only_marker(tmp_path):
         with controller.db.transaction() as db:
             db.execute("UPDATE contents SET active=0,seen_at='2000-01-01T00:00:00Z'")
         prune(controller.db, controller.settings, controller.owner)
-        assert record(controller)["state"] == "stopped"
+        with controller.db.transaction() as db:
+            assert not db.execute("SELECT 1 FROM event_entitlements").fetchone()
         with controller.db.transaction() as db:
             controller.replace_catalog(db, entries, "teamarr")
         await controller.check_entitlement_once()
-        assert not workflow.player.calls
+        assert [c[0] for c in workflow.player.calls] == ["search"]
     finally:
         await cleanup(controller)
 
@@ -1076,5 +1077,33 @@ async def test_unmatched_import_waits_for_discovery_before_staging(tmp_path):
         assert not workflow.player.calls
         await controller.check_entitlement_once()
         assert record(controller)["status"] == "entitled"
+    finally:
+        await cleanup(controller)
+
+
+async def test_current_queue_excludes_history_and_stops_terminal_retries_before_due(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller, count=3)
+    try:
+        with controller.db.transaction() as db:
+            db.execute("UPDATE contents SET active=0 WHERE id='event-1'")
+            device = controller.db.device(db)
+            device['manual_completions']['event-2'] = datetime.now(UTC).isoformat()
+            device['manual_control'] = {'test': True}
+            controller.db.save_device(db, device)
+            db.execute("UPDATE event_entitlements SET state='retry',next_check=?,evidence=? "
+                       "WHERE content_id!='fixture-game'",
+                       (time.time() + 43200, json.dumps({'error': {'code': 'old_error'}})))
+        queue = controller.overview()['entitlement_queue']
+        assert queue['counts']['queued'] == 1
+        assert queue['counts']['retry'] == 0
+        assert queue['failed_jobs'] == 0
+        assert [r['content_id'] for r in queue['rows']] == ['fixture-game']
+        assert {r['content_id'] for r in queue['history_rows']} == {'event-1', 'event-2'}
+        await controller.check_entitlement_once()
+        assert record(controller, 'event-2')['state'] == 'stopped'
+        assert record(controller, 'event-2')['next_check'] is None
+        assert record(controller, 'event-1')['state'] == 'retry'
+        assert not workflow.player.calls
     finally:
         await cleanup(controller)

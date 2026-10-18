@@ -28,7 +28,7 @@ class Settings:
     maintenance_interval: int = 3600
     job_history_limit: int = 1000
     command_history_limit: int = 10000
-    catalog_retention_days: int = 30
+    catalog_retention_days: int = 7
     prime_player_socket: str = ""
     screen_adb_serial: str = ""
     screen_adb_path: str = "adb"
@@ -79,7 +79,7 @@ class Settings:
             playback_recovery_grace=max(5, float(os.getenv("PLAYBACK_RECOVERY_GRACE_SECONDS", "60"))),
             job_history_limit=max(50, int(os.getenv("JOB_HISTORY_LIMIT", "1000"))),
             command_history_limit=max(100, int(os.getenv("COMMAND_HISTORY_LIMIT", "10000"))),
-            catalog_retention_days=max(1, int(os.getenv("CATALOG_RETENTION_DAYS", "30"))),
+            catalog_retention_days=max(1, int(os.getenv("CATALOG_RETENTION_DAYS", "7"))),
             screen_adb_serial=os.getenv("SCREEN_ADB_SERIAL", "").strip(),
             screen_adb_path=os.getenv("SCREEN_ADB_PATH", "adb"),
             screen_server_path=Path(os.getenv("SCREEN_SERVER_PATH", "data/scrcpy-server-v3.3.4")),

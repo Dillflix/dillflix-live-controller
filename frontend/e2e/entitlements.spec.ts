@@ -15,6 +15,12 @@ test("Activity shows entitlement queue blockers, failures and manual retry on ph
       dispatch_after: null,
       failed_jobs: 1,
       counts: { queued: 1, checking: 0, retry: 1, complete: 0, stopped: 0 },
+      history_rows: [{
+        content_id: "old-event", title: "Old finished event", failures: 1, error: null,
+        eligible: false, history_reason: "Event ended or cancelled", started_at: checked,
+        entitlement: { status: "unknown", state: "stopped", result: "no_listing",
+          checked_at: checked, next_check_at: null, blocked: false, can_check: false },
+      }],
       rows: [
         {
           content_id: "queued-event",
@@ -76,6 +82,13 @@ test("Activity shows entitlement queue blockers, failures and manual retry on ph
   const queue = page.getByRole("region", { name: "Entitlement checks" });
   await expect(queue).toContainText("Playback monitoring has priority");
   await expect(queue).toContainText("1 with errors");
+  await expect(queue).toContainText("0 with no Prime listing");
+  await expect(queue).not.toContainText("Old finished event");
+  await queue.getByLabel("Check history", { exact: true }).selectOption("history");
+  await expect(queue).toContainText("Old finished event");
+  await expect(queue).toContainText("Event ended or cancelled; excluded from current queue totals.");
+  await expect(queue).not.toContainText("Wuhan Open");
+  await queue.getByLabel("Check history", { exact: true }).selectOption("current");
   await expect(queue).toContainText("Entitlement not checked yet");
   await expect(queue).toContainText("Last deferred");
   await expect(queue).toContainText("prime_timeout");

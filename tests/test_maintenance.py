@@ -203,3 +203,48 @@ async def test_shutdown_drains_a_failed_retention_write_and_releases_restore_gua
     await asyncio.wait_for(stopping, timeout=1)
     with database_guard(settings.database, exclusive=True):
         pass
+
+
+def test_expired_completion_and_undo_do_not_pin_catalogue_or_entitlement_history(rig):
+    c, s, settings = rig
+    command(c, {"type": "add", "content_id": "demo:jays"})
+    entry = next(p for p in overview(c)["device"]["plan"] if p["content_id"] == "demo:jays")
+    command(c, {"type": "remove", "entry_id": entry["id"]})
+    with s.db.transaction() as db:
+        device = s.db.device(db)
+        device["manual_completions"]["demo:jays"] = "2000-01-01T00:00:00Z"
+        s.db.save_device(db, device)
+        db.execute("UPDATE contents SET active=0,seen_at='2000-01-01T00:00:00Z' WHERE id='demo:jays'")
+        db.execute("UPDATE edit_history SET created_at='2000-01-01T00:00:00Z'")
+        db.execute("INSERT INTO event_entitlements(device_id,content_id,state,evidence) VALUES "
+                   "('living-room','demo:jays','retry','{\"reason\":\"No Prime listing found\"}')")
+        db.execute("INSERT INTO event_entitlements(device_id,content_id) VALUES ('living-room','orphan')")
+    result = prune(s.db, settings, s.owner)
+    assert result["removed"]["event_entitlements"] == 2
+    assert result["removed"]["edit_history"] >= 2
+    with s.db.transaction() as db:
+        assert not db.execute("SELECT 1 FROM contents WHERE id='demo:jays'").fetchone()
+        assert "demo:jays" not in s.db.device(db)["manual_completions"]
+
+
+def test_recent_absence_retains_result_and_inflight_check_has_bounded_protection(rig):
+    import time
+    from datetime import UTC, datetime, timedelta
+
+    _, s, settings = rig
+    with s.db.transaction() as db:
+        db.execute("UPDATE contents SET active=0,seen_at=? WHERE id='demo:jays'",
+                   ((datetime.now(UTC) - timedelta(days=6)).isoformat(),))
+        db.execute("UPDATE contents SET active=0,seen_at='2000-01-01T00:00:00Z' WHERE id='demo:golf'")
+        db.execute("INSERT INTO event_entitlements(device_id,content_id,state,status) VALUES "
+                   "('living-room','demo:jays','complete','entitled')")
+        db.execute("INSERT INTO event_entitlements(device_id,content_id,state,started_at) VALUES "
+                   "('living-room','demo:golf','checking',?)", (time.time(),))
+    prune(s.db, settings, s.owner)
+    with s.db.transaction() as db:
+        assert db.execute("SELECT COUNT(*) FROM event_entitlements").fetchone()[0] == 2
+        db.execute("UPDATE event_entitlements SET started_at=0 WHERE content_id='demo:golf'")
+    prune(s.db, settings, s.owner)
+    with s.db.transaction() as db:
+        assert not db.execute("SELECT 1 FROM contents WHERE id='demo:golf'").fetchone()
+        assert db.execute("SELECT status FROM event_entitlements").fetchone()[0] == "entitled"

@@ -75,13 +75,13 @@ Maintenance runs at startup and approximately hourly, independently of pause/res
 | --- | --- | --- |
 | `JOB_HISTORY_LIMIT` | 1,000 | Newest completed jobs per device; configurable minimum 50 |
 | `COMMAND_HISTORY_LIMIT` | 10,000 | Newest command receipts per device; configurable minimum 100 |
-| `CATALOG_RETENTION_DAYS` | 30 | Last-seen age for inactive, unreferenced catalog entries; minimum 1 day |
+| `CATALOG_RETENTION_DAYS` | 7 | Last-seen age for inactive, unreferenced catalog entries and maximum undo-history age; minimum 1 day |
 | Activity | 2,000 | Recent activity rows |
-| Undo | 50 | Recent edits per device |
+| Undo | 50 | Recent edits per device within `CATALOG_RETENTION_DAYS` |
 
-Defaults apply to existing `.env` files. After editing these values, recreate the service with `docker compose up -d`.
+Defaults apply only when the variable is absent; existing explicit `.env` values remain in effect. After editing these values, recreate the service with `docker compose up -d`.
 
-Safety references can exceed history limits. Cleanup preserves pending work, unacknowledged cancellation, current controller/simulator observations, the latest request, highest simulator intent evidence, and undo references. Unfinished manual commitments remain. Confirmed ended/cancelled reservations are removed by status/planning reconciliation and at startup, while completion evidence and undo references persist. Active catalog entries and the team directory remain too. Old inactive entries survive while referenced by a watch plan, undo snapshot, current playback, or outstanding work. Cleanup never manufactures event completion.
+Safety references can exceed history limits. Cleanup preserves pending work, unacknowledged cancellation, current controller/simulator observations, the latest request, highest simulator intent evidence, and undo references. Unfinished manual commitments remain. Confirmed ended/cancelled reservations are removed by status/planning reconciliation and at startup, while completion evidence persists until catalogue expiry and undo references expire after the retention window. Active catalog entries and the team directory remain too. Old inactive entries survive while referenced by a watch plan, undo snapshot, current playback, or outstanding work. Cleanup never manufactures event completion.
 
 Simulator request/cancellation history is removed only after a strictly higher persisted intent permanently fences old work. Cancellation records with no provable device intent stay retained. Real executor full payloads/reports retire seven days after cancellation acknowledgment. Compact request-ID/hash/token/intent tombstones remain; unresolved stop obligations never expire.
 
@@ -125,3 +125,5 @@ docker compose logs --tail=100 controller
 ```
 
 Confirm watch-plan/priority persistence across a container restart, nginx/SSE behavior through the real proxy, timezone display, and physical mobile controls. Exercise the simulator with the household feed for an extended period and monitor memory, database size, refresh failures, and decision history. These deployment checks remain separate from validating the actual TV/model integration using the executor setup guide.
+
+Entitlement history is deleted with its expired catalogue entry, including the once-per-event marker. Reimports within retention reuse the result; reimports after deletion may be checked again. Existing explicit `CATALOG_RETENTION_DAYS` overrides remain in effect. Set it to `7` in `.env` to adopt the new default. Current entitlement queue totals exclude completed and out-of-window events; use **Historical checks** for retained results. Cleanup reuses SQLite pages rather than automatically shrinking the database file.
