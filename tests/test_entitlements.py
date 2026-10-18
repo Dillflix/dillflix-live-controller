@@ -962,7 +962,7 @@ def test_admin_only_recheck_and_public_action_gate(tmp_path):
         assert "evidence" not in public["events"][0]["entitlement"]
 
 
-@pytest.mark.parametrize("hours,expected", [(24, 12), (6, 6), (0.25, 1), (-1, 12)])
+@pytest.mark.parametrize("hours,expected", [(48, 24), (24, 24), (18, 18), (6, 6), (0.25, 1), (-1, 24)])
 def test_no_listing_retry_spacing(hours, expected):
     from controller.entitlements import no_listing_retry
     assert no_listing_retry(100000, 100000 + hours * 3600) == 100000 + expected * 3600
@@ -982,7 +982,7 @@ async def test_successful_no_match_has_long_retry_and_manual_override(tmp_path):
         await controller.check_entitlement_once()
         row = record(controller)
         assert row["status"] == "unknown" and row["state"] == "retry"
-        assert 43190 < row["next_check"] - time.time() <= 43200
+        assert 86390 < row["next_check"] - time.time() <= 86400
         assert json.loads(row["evidence"])["reason"] == "No Prime listing found"
         view = controller.overview()["events"][0]["entitlement"]
         assert view["result"] == "no_listing"
@@ -1011,21 +1011,26 @@ def test_partial_or_ambiguous_search_is_not_no_listing():
     assert not no_listing({"audit": {**audit, "search_attempts": [{"state": "access_unknown"}]}})
 
 
-async def test_legacy_no_match_is_rescheduled_without_search(tmp_path):
+@pytest.mark.parametrize("already_migrated", [False, True])
+async def test_legacy_no_match_is_rescheduled_without_search(tmp_path, already_migrated):
     from controller.prime_player.labels import search_queries
     controller, workflow = rig(tmp_path)
     entries = seed(controller)
     entries[0]["start_time"] = (datetime.now(UTC) + timedelta(hours=24)).isoformat()
     evidence = {"audit": {"match_status": "no_match", "search_attempts": [
         {"query": q, "state": "no_matching_feed"} for q in search_queries(entries[0])]}}
+    checked = datetime.now(UTC) - timedelta(hours=6 if already_migrated else 0)
     with controller.db.transaction() as db:
         controller.replace_catalog(db, entries, "teamarr")
-        db.execute("UPDATE event_entitlements SET state='retry',checked_at=?,evidence=?,next_check=0",
-                   (datetime.now(UTC).isoformat(), json.dumps(evidence)))
+        controller.db.set_meta(db, "entitlement_no_listing_v1", already_migrated)
+        if already_migrated:
+            evidence["audit"]["search_queries_exhausted"] = True
+        db.execute("UPDATE event_entitlements SET state='retry',checked_at=?,evidence=?,next_check=?",
+                   (checked.isoformat(), json.dumps(evidence), checked.timestamp() + 12 * 3600))
     try:
         await controller.check_entitlement_once()
         assert not workflow.player.calls
-        assert record(controller)["next_check"] > time.time() + 43190
+        assert record(controller)["next_check"] == pytest.approx(checked.timestamp() + 24 * 3600)
     finally:
         await cleanup(controller)
 

@@ -39,7 +39,9 @@ timezone, service session, generation and network context. Provider/identity tex
 changes invalidate reuse; current access flags always come from the new response.
 This memory ends with the check, so later retries/manual checks read fresh evidence.
 
-Successful checks exhausting every query with no matching feed retry after 12 hours.
+Successful checks exhausting every query with no matching feed retry after 24 hours.
+Existing automatic no-listing retries are rescheduled once from their last check
+time when this policy is deployed; deployment does not trigger a new search.
 If the event starts sooner, one check is scheduled at its start (at least one hour
 since the previous check). No listing is not a subscription denial. Ambiguous
 results and technical failures retry at 5, 10, 20, 40, 80, 160, then 300 minutes
