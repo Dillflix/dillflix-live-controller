@@ -19,7 +19,8 @@ for (const publicView of [false, true]) {
         ["live-nhl", "nhl", "live", true, "entitled"],
         // The list treats this as live even without a literal live state.
         ["started-nfl", "nfl", "scheduled", true, "entitled"],
-        ["future-nfl", "nfl", "scheduled", false, "entitled"],
+        // Rule-based broadcasts such as RedZone have a known start but unknown live status.
+        ["future-nfl", "nfl", "unknown", false, "entitled"],
         ["future-nhl", "nhl", "scheduled", false, "entitled"],
         ["denied-live", "nfl", "live", true, "unentitled"],
         ["denied-future", "nfl", "scheduled", false, "unentitled"],
@@ -52,6 +53,10 @@ for (const publicView of [false, true]) {
       await expect(page.locator(".df-section-head")).toContainText(`${upcoming} events`);
     };
     await checkCounts(3, 2);
+    const unknownStatus = page.getByTestId("event-counts-future-nfl")
+      .locator(".df-event-top .df-event-status");
+    await expect(unknownStatus).toContainText(/\d+:\d{2} [AP]M/);
+    await expect(unknownStatus).not.toContainText(/unknown|Live/);
     await expect(cards.first().locator(".df-event-meta")).toContainText(/P[DS]T/);
     await expect(page.getByText(/\d+ viewing options?/)).toHaveCount(0);
     await expect(page.getByText(/Times shown in/)).toHaveCount(0);

@@ -674,7 +674,7 @@ function App() {
                 ? "Retry pending"
                 : live
                   ? "Live"
-                  : e.lifecycle.state === "scheduled"
+                  : ["scheduled", "unknown"].includes(e.lifecycle.state)
                     ? time(e.start_time)
                     : e.lifecycle.state}
             </span>
