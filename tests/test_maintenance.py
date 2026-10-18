@@ -248,3 +248,29 @@ def test_recent_absence_retains_result_and_inflight_check_has_bounded_protection
     with s.db.transaction() as db:
         assert not db.execute("SELECT 1 FROM contents WHERE id='demo:golf'").fetchone()
         assert db.execute("SELECT status FROM event_entitlements").fetchone()[0] == "entitled"
+
+
+def test_recent_undo_copies_do_not_renew_old_completion_retention(rig):
+    from datetime import UTC, datetime
+
+    _, s, settings = rig
+    old = {'demo:jays': '2000-01-01T00:00:00Z'}
+    recent = {**old, 'demo:golf': datetime.now(UTC).isoformat()}
+    with s.db.transaction() as db:
+        device = s.db.device(db)
+        device['manual_completions'] = recent
+        s.db.save_device(db, device)
+        db.execute("UPDATE contents SET active=0,seen_at='2000-01-01T00:00:00Z' "
+                   "WHERE id IN ('demo:jays','demo:golf')")
+        db.execute("INSERT INTO edit_history(device_id,command_id,description,created_at,before_payload,after_payload) "
+                   "VALUES ('living-room','recent','Mark event finished',?,?,?)",
+                   (datetime.now(UTC).isoformat(), encode({'manual_completions': old}),
+                    encode({'manual_completions': recent})))
+    prune(s.db, settings, s.owner)
+    with s.db.transaction() as db:
+        assert not db.execute("SELECT 1 FROM contents WHERE id='demo:jays'").fetchone()
+        assert db.execute("SELECT 1 FROM contents WHERE id='demo:golf'").fetchone()
+        assert set(s.db.device(db)['manual_completions']) == {'demo:golf'}
+        row = db.execute("SELECT before_payload,after_payload FROM edit_history WHERE command_id='recent'").fetchone()
+        assert json.loads(row[0])['manual_completions'] == {}
+        assert set(json.loads(row[1])['manual_completions']) == {'demo:golf'}
