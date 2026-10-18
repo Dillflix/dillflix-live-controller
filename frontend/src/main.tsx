@@ -1162,7 +1162,7 @@ function App() {
                             </p>
                             <p>
                               {event
-                                ? `${time(event.start_time)} – ${time(event.expected_end_time)} est.`
+                                ? eventSchedule(event.start_time, event.expected_end_time, d.preferences.timezone)
                                 : "Waiting for updated schedule data"}
                             </p>
                             <p>
@@ -1966,8 +1966,6 @@ function App() {
                   {modalEvent.lifecycle.state}
                   {modalEvent.lifecycle.stale ? " · stale" : ""}
                 </dd>
-                <dt>Expected end</dt>
-                <dd>{time(modalEvent.expected_end_time)} · estimate only</dd>
                 <dt>Status source</dt>
                 <dd>
                   {modalEvent.lifecycle.timestamp_basis === "manual"
