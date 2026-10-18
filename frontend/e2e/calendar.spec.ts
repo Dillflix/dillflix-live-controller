@@ -13,7 +13,7 @@ test("calendar days follow the display timezone across midnight and DST", () => 
 });
 
 for (const publicView of [false, true])
-  for (const width of [1280, 390]) {
+  for (const width of [1280, 390, 320]) {
     test(`${publicView ? "public" : "admin"} calendar ${width}px: dates, filters and shared event actions`, async ({
       page,
     }) => {

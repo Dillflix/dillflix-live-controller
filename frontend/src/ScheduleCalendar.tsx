@@ -58,12 +58,20 @@ export function ScheduleViewToggle({
 
 /** Date keys are civil dates in the display zone, never the browser's local zone. */
 export function calendarDate(value: string, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
+  return dateKey(value, dateFormatter(timeZone));
+}
+
+function dateFormatter(timeZone: string) {
+  return new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     timeZone,
-  }).formatToParts(new Date(value));
+  });
+}
+
+function dateKey(value: string, formatter: Intl.DateTimeFormat) {
+  const parts = formatter.formatToParts(new Date(value));
   const part = (name: string) => parts.find((p) => p.type === name)!.value;
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
@@ -98,10 +106,17 @@ export function ScheduleCalendar<T extends CalendarEvent>({
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const detail = useRef<HTMLElement>(null);
+  const formatter = dateFormatter(timeZone);
+  const starts = new Map(
+    events.map((event) => [
+      event.content_id,
+      dateKey(event.start_time, formatter),
+    ]),
+  );
   // Nonterminal events that started before today stay visible; an estimated end
   // never removes them or changes their playback eligibility.
   const dayOf = (event: T) => {
-    const start = calendarDate(event.start_time, timeZone);
+    const start = starts.get(event.content_id)!;
     return start < today ? today : start;
   };
   const lastDay = events.reduce(
@@ -117,7 +132,7 @@ export function ScheduleCalendar<T extends CalendarEvent>({
   );
   const sorted = [...events].sort(
     (a, b) =>
-      a.start_time.localeCompare(b.start_time) ||
+      Date.parse(a.start_time) - Date.parse(b.start_time) ||
       a.content_id.localeCompare(b.content_id),
   );
   const groups = new Map(
@@ -135,13 +150,13 @@ export function ScheduleCalendar<T extends CalendarEvent>({
       day: "numeric",
       timeZone: "UTC",
     }).format(new Date(`${day}T12:00:00Z`));
-  const startLabel = (event: T) =>
-    new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone,
-      timeZoneName: "short",
-    }).format(new Date(event.start_time));
+  const clock = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+    timeZoneName: "short",
+  });
+  const startLabel = (event: T) => clock.format(new Date(event.start_time));
   useEffect(() => {
     if (selected) detail.current?.focus({ preventScroll: false });
   }, [selected]);
@@ -158,6 +173,7 @@ export function ScheduleCalendar<T extends CalendarEvent>({
             onClick={() => {
               setPage(0);
               setPickedDay(today);
+              setSelected(null);
             }}
           >
             Today
@@ -167,7 +183,10 @@ export function ScheduleCalendar<T extends CalendarEvent>({
             className="df-button"
             aria-label="Previous seven days"
             disabled={currentPage === 0}
-            onClick={() => setPage(currentPage - 1)}
+            onClick={() => {
+              setPage(currentPage - 1);
+              setSelected(null);
+            }}
           >
             <ChevronLeft size={16} />
           </button>
@@ -176,7 +195,10 @@ export function ScheduleCalendar<T extends CalendarEvent>({
             className="df-button"
             aria-label="Next seven days"
             disabled={currentPage >= maxPage}
-            onClick={() => setPage(currentPage + 1)}
+            onClick={() => {
+              setPage(currentPage + 1);
+              setSelected(null);
+            }}
           >
             <ChevronRight size={16} />
           </button>
@@ -193,7 +215,10 @@ export function ScheduleCalendar<T extends CalendarEvent>({
             key={day}
             aria-label={dateLabel(day, true)}
             aria-pressed={activeDay === day}
-            onClick={() => setPickedDay(day)}
+            onClick={() => {
+              setPickedDay(day);
+              setSelected(null);
+            }}
           >
             <span>
               {new Intl.DateTimeFormat(undefined, {
@@ -216,7 +241,10 @@ export function ScheduleCalendar<T extends CalendarEvent>({
           >
             <header>
               <h4>{day === today ? "Today" : dateLabel(day, true)}</h4>
-              <span>{groups.get(day)!.length} events</span>
+              <span>
+                {groups.get(day)!.length}{" "}
+                {groups.get(day)!.length === 1 ? "event" : "events"}
+              </span>
             </header>
             <div className="df-calendar-events">
               {groups.get(day)!.length ? (
@@ -231,7 +259,7 @@ export function ScheduleCalendar<T extends CalendarEvent>({
                     aria-label={`${event.title}, ${eventSchedule(event.start_time, event.expected_end_time, timeZone)}`}
                   >
                     <time dateTime={event.start_time}>
-                      {calendarDate(event.start_time, timeZone) < today
+                      {starts.get(event.content_id)! < today
                         ? "Started earlier"
                         : startLabel(event)}
                     </time>

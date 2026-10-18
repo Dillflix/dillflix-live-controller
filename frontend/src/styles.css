@@ -627,6 +627,7 @@ select:focus-visible {
 #df-app .df-calendar-selection:focus { outline: none; }
 #df-app .df-calendar-day-picker { display: none; }
 @media (max-width: 900px) {
+  #df-app .df-title-row:has(.df-view-toggle) { flex-wrap: wrap; }
   #df-app .df-calendar-day-picker {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
