@@ -134,9 +134,9 @@ async def test_launch_observation_retry_does_not_extend_deadline(tmp_path):
         token = report["token"]
         w.store.phase(token, "verifying")
         w.defer_launch_observation(token, ExecutorError("prime_transport_unknown", "Lost health"))
+        request = json.loads(row(w, token)["request"])
+        request["deadline_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         with w.db.transaction() as db:
-            request = json.loads(row(w, token)["request"])
-            request["deadline_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
             db.execute("UPDATE executor_jobs SET request=? WHERE token=?", (json.dumps(request), token))
         await w.navigate(row(w, token))
         assert w.store.report(token)["operation"]["state"] == "timed_out"
