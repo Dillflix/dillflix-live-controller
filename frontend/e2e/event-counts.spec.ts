@@ -52,6 +52,10 @@ for (const publicView of [false, true]) {
       await expect(page.locator(".df-section-head")).toContainText(`${upcoming} events`);
     };
     await checkCounts(3, 2);
+    await expect(cards.first().locator(".df-event-meta")).toContainText(/P[DS]T/);
+    await expect(page.getByText(/\d+ viewing options?/)).toHaveCount(0);
+    await expect(page.getByText(/Times shown in/)).toHaveCount(0);
+    await page.screenshot({ path: `test-results/entitlement-schedule-${publicView ? "public" : "admin"}.png` });
     await page.locator(".df-filters").getByRole("button", { name: "NFL", exact: true }).click();
     await checkCounts(2, 1);
     await page.getByRole("searchbox").fill("Searchable Team");
