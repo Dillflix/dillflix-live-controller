@@ -104,7 +104,7 @@ export function EntitlementQueue({
       <div className="df-entitlement-filters">
         <label className="df-field">
           Check history
-          <select value={scope} onChange={(e) => { setScope(e.target.value); setLimit(20); }}>
+          <select aria-label="Check history" value={scope} onChange={(e) => { setScope(e.target.value); setLimit(20); }}>
             <option value="current">Current schedule</option>
             <option value="history">Historical checks ({value.history_rows?.length || 0})</option>
           </select>
