@@ -29,7 +29,8 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 
 - **Take control** with a selectable duration (including 4 hours, up to 24 hours), mobile D-pad, focused keyboard shortcuts, and text entry. Extend the session, resume automation, or finish with automation paused. Sessions survive restarts; other browsers must explicitly take over. See [manual control](docs/manual-control.md).
 - An optional live device-screen panel with inline phone video, fullscreen, automatic reconnect, shared capture across viewers, and cleanup when the panel or tab is hidden. See [screen setup](docs/screen-mirroring.md).
-- Events page with live/upcoming views, league filters, search, structured team names, provider logos, event details, and manual selection.
+- Events page with Cards/Calendar views, live/upcoming and entitlement filters, league filters, search, structured team names, provider logos, event details, and manual selection. The calendar shows a week on desktop and a day picker on phones; selecting an event opens its existing actions. Both interfaces remember the view choice, and the public interface continues to show only entitled events.
+- Teamarr discovery requests the next seven days, with its existing live-event lookback. New events enter the existing entitlement queue once; browsing dates never triggers device searches. Missing Prime listings retain their daily retry policy. Calendar dates use the configured display timezone, and estimated end times remain estimates.
 - A persistent watch plan that automatically removes confirmed ended or cancelled events. The first eligible manual entry wins an overlap; the others resume while still live. Play now moves an event to the front without deleting other commitments.
 - Ordered priority rules for leagues, season stages, teams, content kind, and coverage sources, all editable in the UI. Team rankings break ties within a rule.
 - A persistent, searchable team directory. Rank preferred teams even when they have no event in the schedule window; unranked teams tie.
@@ -215,7 +216,7 @@ docker compose up -d --build
 
 `TEAMARR_URL` is the server root, without `/api/v1`. It must be reachable **from inside the controller container**. A hostname such as `teamarr` works only on a Docker network shared with that service; `localhost` inside a container points to that container. `TEAMARR_TOKEN` optionally supplies a bearer token if your Teamarr proxy requires one.
 
-The adapter reads `GET /api/v1/events/feed`, covering the current time through three days ahead, with Teamarr's normal lookback semantics. It uses schema version 1. Its first request specifies the window, selected leagues and page size; subsequent requests use the opaque cursor alone. One expired snapshot is retried from the beginning.
+The adapter reads `GET /api/v1/events/feed`, covering the current time through seven days ahead, with Teamarr's normal lookback semantics. It uses schema version 1. Its first request specifies the window, selected leagues and page size; subsequent requests use the opaque cursor alone. One expired snapshot is retried from the beginning.
 
 Choose **Settings → Leagues in your schedule** to enable or disable NFL, NHL,
 MLB, NBA, CFL, UEFA Champions League and Formula 1. All seven are enabled when
@@ -230,7 +231,7 @@ Use the matching Teamarr update for NBA/CFL/Champions League/F1 routes. This
 installation accesses DAZN, Sportsnet and TSN exclusively through **Prime Video**,
 so every new league's configured route is `prime_video`. Formula 1 is delivered
 as separate provider-confirmed practice, qualifying, sprint and race sessions.
-Only sessions within the three-day discovery window appear; an empty league on
+Only sessions within the seven-day discovery window appear; an empty league on
 a quiet week is expected. Their scheduled times do not establish live status.
 
 The team directory reads `GET /api/v1/cache/leagues/{league}/teams` on startup and hourly, independently of feed ingestion. It requests the selected leagues and leagues retained for commitments, excluding Formula 1, plus up to 16 additional leagues already known from team data. It also remembers teams encountered in events. These are Teamarr's cached rosters; an unpopulated cache can return no teams. Failed or empty refreshes never delete known teams or preferences. Settings shows directory health separately from schedule health. Provider team IDs are used for matching; Teamarr's local cache row IDs are not.

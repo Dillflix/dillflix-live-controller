@@ -62,7 +62,7 @@ class TeamarrClient:
                 now = datetime.now(UTC)
                 params = {
                     "start": (start or now).isoformat(),
-                    "end": (end or now + timedelta(days=3)).isoformat(),
+                    "end": (end or now + timedelta(days=7)).isoformat(),
                     "limit": 500,
                 }
                 if leagues is not None:
