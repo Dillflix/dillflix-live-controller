@@ -417,17 +417,23 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             with self.db.transaction() as db:
                 self.store.allowed(db, token, navigation=True)
             workflow = self.store.report(token)["prime_player"]
-            if workflow.get("network_context_id"):
-                current = await self.check_session(workflow["session_id"], capabilities=("playback_status",))
-                if current.get("network", {}).get("context_id") != workflow["network_context_id"]:
-                    raise ExecutorError("prime_network_context_changed", "Playback network changed before verification")
+            try:
+                if workflow.get("network_context_id"):
+                    current = await self.check_session(workflow["session_id"], capabilities=("playback_status",))
+                    if current.get("network", {}).get("context_id") != workflow["network_context_id"]:
+                        raise ExecutorError("prime_network_context_changed", "Playback network changed before verification")
+            except ExecutorError as exc:
+                return self.defer_launch_observation(token, exc)
             cleanup = workflow.get("unavailable_trial_cleanup")
             if cleanup:
                 return await self.finish_unavailable_trial(token, workflow, cleanup["outcome"])
             outcome = workflow.get("launch_outcome") or {}
-            if outcome.get("state") != "playing":
-                await self.check_session(workflow["session_id"])
-                outcome = await self.player.attempt(workflow["attempt_id"])
+            try:
+                if outcome.get("state") != "playing":
+                    await self.check_session(workflow["session_id"])
+                    outcome = await self.player.attempt(workflow["attempt_id"])
+            except ExecutorError as exc:
+                return self.defer_launch_observation(token, exc)
             self.validate_outcome(outcome, workflow)
             self.save_workflow(token, launch_outcome=outcome)
             if outcome["state"] == "failed" and unavailable_live_trial(workflow.get("selected") or {}):
@@ -462,6 +468,20 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 self.record_launch(token, outcome)
                 return
             await asyncio.sleep(2)
+
+    def defer_launch_observation(self, token, error):
+        """A lost read cannot establish failure of an already dispatched launch."""
+        if error.code not in {"prime_transport_unknown", "prime_operation_unknown"}:
+            raise error
+        with self.db.transaction() as db:
+            # Preserve cancellation, ownership and the original deadline fences.
+            row = self.store.allowed(db, token, navigation=True)
+            report = json.loads(row["report"])
+            report["observation_status"] = {
+                "state": "unavailable", "checked_at": utc(), "error": error.detail(),
+            }
+            self.store.write(db, token, report, next_check=time.time() + 5)
+        return False
 
     async def finish_unavailable_trial(self, token, workflow, outcome):
         """Settle a definitive failure before advancing the persisted network plan."""

@@ -8,6 +8,12 @@ Prime completion is written atomically to the executor report and durable conten
 
 ## Responsibilities
 
+During launch verification, uncertain health or attempt reads retain the original
+playback attempt and retry observation after five seconds. They do not fail the
+launch or trigger cancellation, stopping, another play request, or network
+fallback. The original navigation deadline and ownership/cancellation checks
+still apply; successful verification clears the observation error.
+
 | Module | Responsibility |
 | --- | --- |
 | `controller/teamarr.py` | Fetch a complete paginated Teamarr catalog and cached team rosters; validate provider identities |

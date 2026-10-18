@@ -1,4 +1,7 @@
 from dataclasses import replace
+import json
+import time
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from playback_fixtures import payload
@@ -79,6 +82,68 @@ def network_rig(tmp_path):
     w.config = replace(w.config, prime_network_policy=POLICY)
     w.player = NetworkPlayer()
     return c, w
+
+
+@pytest.mark.parametrize("failed_read", ["health", "attempt"])
+@pytest.mark.parametrize("error_code", ["prime_transport_unknown", "prime_operation_unknown"])
+async def test_launch_read_failure_retains_attempt_until_observation_recovers(tmp_path, failed_read, error_code):
+    c, w = network_rig(tmp_path)
+    w.player.target = "calgary"
+    original_play = w.player.play
+    original_read = getattr(w.player, failed_read)
+
+    async def pending_play(*args):
+        return {**await original_play(*args), "state": "launch_requested"}
+
+    async def unavailable_read(*args):
+        if w.player.attempt_id:
+            raise ExecutorError(error_code, "Observation unavailable")
+        return await original_read(*args)
+
+    w.player.play = pending_play
+    setattr(w.player, failed_read, unavailable_read)
+    try:
+        report, _ = w.store.submit(payload())
+        token = report["token"]
+        deadline = report["operation"]["deadline_at"]
+        for _ in range(2):
+            await w.navigate(row(w, token))
+            current = w.store.report(token)
+            assert current["operation"]["state"] == "navigating"
+            assert current["operation"]["deadline_at"] == deadline
+            assert current["observation_status"]["error"]["code"] == error_code
+            assert row(w, token)["cancel_requested"] == 0
+            assert row(w, token)["next_check"] > time.time()
+        attempt = w.player.attempt_id
+        setattr(w.player, failed_read, original_read)
+        await w.navigate(row(w, token))
+        assert w.store.report(token)["operation"]["state"] == "playing_verified"
+        assert w.store.report(token)["observation_status"]["error"] is None
+        assert w.player.attempt_id == attempt
+        assert len([call for call in w.player.calls if call[0] == "play"]) == 1
+        assert not any(call[0] in {"cancel", "stop"} for call in w.player.calls)
+        assert not w.player.transitions
+    finally:
+        await cleanup(c)
+
+
+async def test_launch_observation_retry_does_not_extend_deadline(tmp_path):
+    c, w = network_rig(tmp_path)
+    try:
+        report, _ = w.store.submit(payload())
+        token = report["token"]
+        w.store.phase(token, "verifying")
+        w.defer_launch_observation(token, ExecutorError("prime_transport_unknown", "Lost health"))
+        request = json.loads(row(w, token)["request"])
+        request["deadline_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+        with w.db.transaction() as db:
+            db.execute("UPDATE executor_jobs SET request=? WHERE token=?", (json.dumps(request), token))
+        await w.navigate(row(w, token))
+        assert w.store.report(token)["operation"]["state"] == "timed_out"
+        assert row(w, token)["cancel_requested"] == 1
+        assert not w.player.calls
+    finally:
+        await cleanup(c)
 
 
 @pytest.mark.parametrize("uncertain", [False, True])
