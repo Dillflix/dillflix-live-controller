@@ -1,4 +1,5 @@
 import { leagueName } from "./leagues";
+import { eventSchedule } from "./eventSchedule";
 import { EntitlementFilter, matchesEntitlement } from "./EntitlementFilter";
 import React, {
   useCallback,
@@ -721,15 +722,14 @@ function App() {
           <div className="df-event-meta">
             <Clock3 size={14} />
             <span>
-              {date(e.start_time)} · {time(e.start_time)}
-              {e.expected_end_time && ` – ${time(e.expected_end_time)} est.`}
+              {eventSchedule(e.start_time, e.expected_end_time, d.preferences.timezone)}
             </span>
           </div>
         </div>
         <div className="df-event-footer">
           <div className="df-event-status">
           <EntitlementIndicator value={e.entitlement} timezone={d.preferences.timezone} />
-          {(!e.entitlement || current || e.watch_entry_id) && <span className="df-footnote">
+          {(current || e.watch_entry_id || (!e.entitlement && !e.viewing_options.length)) && <span className="df-footnote">
             {e.watch_entry_id ? <ShieldCheck size={15} /> : <Tv size={15} />}{" "}
             {current
               ? observedSimulated
@@ -737,9 +737,7 @@ function App() {
                 : "Live playback"
               : e.watch_entry_id
                 ? "In watch plan"
-                : e.viewing_options.length
-                  ? `${e.viewing_options.length} viewing ${e.viewing_options.length === 1 ? "option" : "options"}`
-                  : "Route needed"}
+                : "Route needed"}
           </span>}
           </div>
           <div className="df-row" style={{ gap: 6 }}>
@@ -1062,7 +1060,7 @@ function App() {
                 {heading(
                   "Your sports. Your priorities.",
                   "What's on",
-                  `${data.meta.mode === "demo" ? "Sample schedule" : "Teamarr schedule"} · ${time(data.meta.now)} · ${d.preferences.timezone}`,
+                  `${data.meta.mode === "demo" ? "Sample schedule" : "Teamarr schedule"} · ${time(data.meta.now)}`,
                   <Button quiet onClick={browse}>
                     <CalendarDays size={16} />
                     Upcoming
@@ -1164,7 +1162,7 @@ function App() {
                             </p>
                             <p>
                               {event
-                                ? `${time(event.start_time)} – ${time(event.expected_end_time)} est.`
+                                ? eventSchedule(event.start_time, event.expected_end_time, d.preferences.timezone)
                                 : "Waiting for updated schedule data"}
                             </p>
                             <p>
@@ -1960,8 +1958,7 @@ function App() {
           {modal.type === "details" && modalEvent && (
             <>
               <p>
-                {leagueName(modalEvent.league)} · {date(modalEvent.start_time)}{" "}
-                · {time(modalEvent.start_time)}
+                {leagueName(modalEvent.league)} · {eventSchedule(modalEvent.start_time, modalEvent.expected_end_time, d.preferences.timezone)}
               </p>
               <dl className="df-kv">
                 <dt>Event status</dt>
@@ -1969,8 +1966,6 @@ function App() {
                   {modalEvent.lifecycle.state}
                   {modalEvent.lifecycle.stale ? " · stale" : ""}
                 </dd>
-                <dt>Expected end</dt>
-                <dd>{time(modalEvent.expected_end_time)} · estimate only</dd>
                 <dt>Status source</dt>
                 <dd>
                   {modalEvent.lifecycle.timestamp_basis === "manual"

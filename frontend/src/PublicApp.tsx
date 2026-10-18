@@ -1,4 +1,5 @@
 import { leagueName } from "./leagues";
+import { eventSchedule } from "./eventSchedule";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
@@ -78,10 +79,6 @@ function EventDetails({
         {event.phase === "unknown" ? event.kind : event.phase}
       </p>
       <p>{when}</p>
-      <p>
-        {event.viewing_option_count} viewing{" "}
-        {event.viewing_option_count === 1 ? "option" : "options"}
-      </p>
       {event.planned && <p>In watch plan</p>}
       <EntitlementStatus value={event.entitlement} timezone={timezone} details />
     </dialog>
@@ -185,19 +182,9 @@ function PublicApp() {
       </div>
     );
 
-  const time = (value: string) =>
-    new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone: data.timezone,
-    }).format(new Date(value));
-  const date = (value: string) =>
-    new Intl.DateTimeFormat(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      timeZone: data.timezone,
-    }).format(new Date(value));
+  const time = (value: string) => new Intl.DateTimeFormat(undefined, {
+    hour: "numeric", minute: "2-digit", timeZone: data.timezone,
+  }).format(new Date(value));
   const entitledEvents = data.events.filter(e => e.entitlement?.status === "entitled");
   const filteredEvents = entitledEvents.filter(
     (e) =>
@@ -400,22 +387,18 @@ function PublicApp() {
                     <div className="df-event-meta">
                       <Clock3 size={14} />
                       <span>
-                        {date(e.start_time)} · {time(e.start_time)}
-                        {e.expected_end_time &&
-                          ` – ${time(e.expected_end_time)} est.`}
+                        {eventSchedule(e.start_time, e.expected_end_time, data.timezone)}
                       </span>
                     </div>
                   </div>
                   <div className="df-event-footer df-public-event-footer">
                     <div className="df-event-status">
-                    <span className="df-footnote">
+                    {(current || e.planned) && <span className="df-footnote">
                       {e.planned ? <ShieldCheck size={15} /> : <Tv size={15} />}
                       {current
                         ? "Now playing"
-                        : e.planned
-                          ? "In watch plan"
-                          : `${e.viewing_option_count} viewing ${e.viewing_option_count === 1 ? "option" : "options"}`}
-                    </span>
+                        : "In watch plan"}
+                    </span>}
                     </div>
                     <div className="df-row df-public-actions">
                       {(current || !entitlementConfirmed(e.entitlement)) && (
@@ -467,15 +450,12 @@ function PublicApp() {
             </button>
           </div>
         )}
-        <p className="df-subtitle df-public-footer">
-          Times shown in {data.timezone}. End times are estimates.
-        </p>
       </main>
       {details && (
         <EventDetails
           event={details}
           timezone={data.timezone}
-          when={`${date(details.start_time)} · ${time(details.start_time)}${details.expected_end_time ? ` – ${time(details.expected_end_time)} est.` : ""}`}
+          when={eventSchedule(details.start_time, details.expected_end_time, data.timezone)}
           onClose={() => setDetailsId(null)}
         />
       )}
