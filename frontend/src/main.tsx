@@ -1,5 +1,6 @@
 import { leagueName } from "./leagues";
 import { eventSchedule } from "./eventSchedule";
+import { ScheduleCalendar, ScheduleViewToggle, useScheduleView } from "./ScheduleCalendar";
 import { EntitlementFilter, matchesEntitlement } from "./EntitlementFilter";
 import React, {
   useCallback,
@@ -372,6 +373,7 @@ function RuleForm({
 }
 
 function App() {
+  const [scheduleView, setScheduleView] = useScheduleView();
   const [data, setData] = useState<Overview | null>(null),
     [view, setView] = useState<View>("events"),
     [tab, setTab] = useState("live"),
@@ -1061,10 +1063,7 @@ function App() {
                   "Your sports. Your priorities.",
                   "What's on",
                   `${data.meta.mode === "demo" ? "Sample schedule" : "Teamarr schedule"} · ${time(data.meta.now)}`,
-                  <Button quiet onClick={browse}>
-                    <CalendarDays size={16} />
-                    Upcoming
-                  </Button>,
+                  <ScheduleViewToggle value={scheduleView} onChange={setScheduleView} />,
                 )}
                 <div className="df-toolbar">
                   <div className="df-segmented">
@@ -1113,7 +1112,9 @@ function App() {
                   <h2>{tab === "live" ? "Live coverage" : "Coming up"}</h2>
                   <span>{visible.length} events</span>
                 </div>
-                {visible.length ? (
+                {scheduleView === "calendar" ? (
+                  <ScheduleCalendar events={visible} now={data.meta.now} timeZone={d.preferences.timezone} renderEvent={card} />
+                ) : visible.length ? (
                   <div className="df-grid">{visible.map(card)}</div>
                 ) : (
                   <div className="df-empty">

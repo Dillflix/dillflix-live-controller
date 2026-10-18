@@ -61,6 +61,7 @@ def public_overview(service, actor, device_id="living-room"):
         )
         return {
             "revision": device["revision"],
+            "now": service.now(db).isoformat(),
             "viewer": {"name": actor["name"], "guest": actor["id"] == "guest:anonymous"},
             "timezone": device["preferences"]["timezone"],
             "permissions": {

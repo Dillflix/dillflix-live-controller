@@ -226,6 +226,8 @@ async def test_feed_pagination_uses_cursor_only_and_restarts_expired_snapshot():
     ).fetch_snapshot()
     assert calls[1] == {"cursor": "old"}
     assert "start" in calls[2]
+    for index in (0, 2):
+        assert datetime.fromisoformat(calls[index]["end"]) - datetime.fromisoformat(calls[index]["start"]) == timedelta(days=7)
     assert items == [entry]
     assert schema == 1
 

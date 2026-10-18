@@ -1,5 +1,6 @@
 import { leagueName } from "./leagues";
 import { eventSchedule } from "./eventSchedule";
+import { ScheduleCalendar, ScheduleViewToggle, useScheduleView } from "./ScheduleCalendar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
@@ -32,6 +33,7 @@ interface PublicEvent {
   }[];
 }
 interface PublicOverview {
+  now: string;
   revision: number;
   viewer: { name: string; guest: boolean };
   timezone: string;
@@ -105,6 +107,7 @@ async function publicApi<T>(path: string, body?: unknown): Promise<T> {
 }
 
 function PublicApp() {
+  const [scheduleView, setScheduleView] = useScheduleView();
   const [data, setData] = useState<PublicOverview | null>(null);
   const [tab, setTab] = useState("live");
   const [sport, setSport] = useState("all");
@@ -201,6 +204,117 @@ function PublicApp() {
   const now = data.now_playing;
   const details = data.events.find((event) => event.content_id === detailsId);
   const disabled = busy || !connected;
+  const card = (e: PublicEvent) => {
+    const current =
+      now.verified && now.event?.content_id === e.content_id;
+    return (
+      <article
+        className={`df-event ${current ? "is-current" : ""}`}
+        key={e.content_id}
+        data-testid={`event-${e.content_id}`}
+      >
+        <div className="df-event-body">
+          <div className="df-event-top">
+            <span>{leagueName(e.league)}</span>
+            <span>·</span>
+            <span>{e.phase === "unknown" ? e.kind : e.phase}</span>
+            <span
+              className={`df-event-status ${e.state === "live" ? "df-live" : ""}`}
+            >
+              {e.state === "live"
+                ? "Live"
+                : ["scheduled", "unknown"].includes(e.state)
+                  ? time(e.start_time)
+                  : e.state}
+            </span>
+          </div>
+          {e.teams.length ? (
+            <div className="df-match">
+              {e.teams.map((team, i) => (
+                <div className="df-team" key={team.key}>
+                  {team.logo_url ? (
+                    <img
+                      className="df-monogram"
+                      src={team.logo_url}
+                      alt=""
+                      loading="lazy"
+                      onError={(ev) => {
+                        ev.currentTarget.style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <span className="df-monogram">
+                      {team.abbreviation}
+                    </span>
+                  )}
+                  <div className="df-team-text">
+                    <small>{team.city}</small>
+                    <strong>{team.name || team.full_name}</strong>
+                  </div>
+                  {e.state === "live" && e.scores[i] != null && (
+                    <span className="df-score">{e.scores[i]}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="df-broadcast">
+              <div className="df-broadcast-mark">
+                <Tv />
+              </div>
+              <strong>{e.title}</strong>
+            </div>
+          )}
+          <div className="df-event-meta">
+            <Clock3 size={14} />
+            <span>
+              {eventSchedule(e.start_time, e.expected_end_time, data.timezone)}
+            </span>
+          </div>
+        </div>
+        <div className="df-event-footer df-public-event-footer">
+          <div className="df-event-status">
+          {(current || e.planned) && <span className="df-footnote">
+            {e.planned ? <ShieldCheck size={15} /> : <Tv size={15} />}
+            {current
+              ? "Now playing"
+              : "In watch plan"}
+          </span>}
+          </div>
+          <div className="df-row df-public-actions">
+            {(current || !entitlementConfirmed(e.entitlement)) && (
+              <button
+                className="df-button"
+                onClick={() => setDetailsId(e.content_id)}
+              >
+                Details
+              </button>
+            )}
+            {!e.planned && !current && entitlementConfirmed(e.entitlement) && (
+              <button
+                className="df-button"
+                disabled={disabled || !data.permissions.add_to_plan || !!e.entitlement?.blocked}
+                onClick={() => void request(e, "add")}
+              >
+                <Plus size={14} />
+                Add to plan
+              </button>
+            )}
+            {e.playable && !current && entitlementConfirmed(e.entitlement) && (
+              <button
+                className="df-button df-button-primary"
+                disabled={disabled || !data.permissions.play_now || !!e.entitlement?.blocked}
+                onClick={() => void request(e, "play_now")}
+              >
+                <Play size={14} />
+                Play now
+              </button>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  };
   return (
     <div id="df-app">
       <header className="df-header df-public-header">
@@ -247,6 +361,7 @@ function PublicApp() {
             <h1>What's on</h1>
             <p className="df-subtitle">{data.actions_message}</p>
           </div>
+          <ScheduleViewToggle value={scheduleView} onChange={setScheduleView} />
         </div>
         {!connected && (
           <div className="df-warning" role="status">
@@ -321,119 +436,11 @@ function PublicApp() {
           <h2>{tab === "live" ? "Live coverage" : "Coming up"}</h2>
           <span>{visible.length} events</span>
         </div>
-        {visible.length ? (
+        {scheduleView === "calendar" ? (
+          <ScheduleCalendar events={visible} now={data.now || new Date().toISOString()} timeZone={data.timezone} renderEvent={card} />
+        ) : visible.length ? (
           <div className="df-grid">
-            {visible.map((e) => {
-              const current =
-                now.verified && now.event?.content_id === e.content_id;
-              return (
-                <article
-                  className={`df-event ${current ? "is-current" : ""}`}
-                  key={e.content_id}
-                  data-testid={`event-${e.content_id}`}
-                >
-                  <div className="df-event-body">
-                    <div className="df-event-top">
-                      <span>{leagueName(e.league)}</span>
-                      <span>·</span>
-                      <span>{e.phase === "unknown" ? e.kind : e.phase}</span>
-                      <span
-                        className={`df-event-status ${e.state === "live" ? "df-live" : ""}`}
-                      >
-                        {e.state === "live"
-                          ? "Live"
-                          : ["scheduled", "unknown"].includes(e.state)
-                            ? time(e.start_time)
-                            : e.state}
-                      </span>
-                    </div>
-                    {e.teams.length ? (
-                      <div className="df-match">
-                        {e.teams.map((team, i) => (
-                          <div className="df-team" key={team.key}>
-                            {team.logo_url ? (
-                              <img
-                                className="df-monogram"
-                                src={team.logo_url}
-                                alt=""
-                                loading="lazy"
-                                onError={(ev) => {
-                                  ev.currentTarget.style.display = "none";
-                                }}
-                              />
-                            ) : (
-                              <span className="df-monogram">
-                                {team.abbreviation}
-                              </span>
-                            )}
-                            <div className="df-team-text">
-                              <small>{team.city}</small>
-                              <strong>{team.name || team.full_name}</strong>
-                            </div>
-                            {e.state === "live" && e.scores[i] != null && (
-                              <span className="df-score">{e.scores[i]}</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="df-broadcast">
-                        <div className="df-broadcast-mark">
-                          <Tv />
-                        </div>
-                        <strong>{e.title}</strong>
-                      </div>
-                    )}
-                    <div className="df-event-meta">
-                      <Clock3 size={14} />
-                      <span>
-                        {eventSchedule(e.start_time, e.expected_end_time, data.timezone)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="df-event-footer df-public-event-footer">
-                    <div className="df-event-status">
-                    {(current || e.planned) && <span className="df-footnote">
-                      {e.planned ? <ShieldCheck size={15} /> : <Tv size={15} />}
-                      {current
-                        ? "Now playing"
-                        : "In watch plan"}
-                    </span>}
-                    </div>
-                    <div className="df-row df-public-actions">
-                      {(current || !entitlementConfirmed(e.entitlement)) && (
-                        <button
-                          className="df-button"
-                          onClick={() => setDetailsId(e.content_id)}
-                        >
-                          Details
-                        </button>
-                      )}
-                      {!e.planned && !current && entitlementConfirmed(e.entitlement) && (
-                        <button
-                          className="df-button"
-                          disabled={disabled || !data.permissions.add_to_plan || !!e.entitlement?.blocked}
-                          onClick={() => void request(e, "add")}
-                        >
-                          <Plus size={14} />
-                          Add to plan
-                        </button>
-                      )}
-                      {e.playable && !current && entitlementConfirmed(e.entitlement) && (
-                        <button
-                          className="df-button df-button-primary"
-                          disabled={disabled || !data.permissions.play_now || !!e.entitlement?.blocked}
-                          onClick={() => void request(e, "play_now")}
-                        >
-                          <Play size={14} />
-                          Play now
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
+            {visible.map(card)}
           </div>
         ) : (
           <div className="df-empty">

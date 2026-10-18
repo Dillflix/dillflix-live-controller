@@ -151,6 +151,21 @@ controller's Prime entitlement gate.
 
 ## UI transport
 
+The admin and public Events pages share a client-only calendar presentation and
+Cards/Calendar preference. Both layouts use the same filtered events and action
+handlers. The calendar groups start times by the configured timezone; retained
+nonterminal events that started before today remain accessible under Today.
+Selecting an event opens its normal card and existing entitlement/action gates.
+Desktop shows seven date columns; phones use a day picker. Date navigation never
+requests Prime searches or changes playback state. Public overview includes the
+schedule clock so demo and production dates match the admin interface.
+
+Default Teamarr discovery spans seven days from the current clock, preserving
+cursor pagination, atomic replacement and the upstream live-event lookback.
+Explicit historical status windows remain unchanged. Newly discovered events
+use the existing one-time entitlement queue and daily missing-listing retries;
+the wider import does not increase search concurrency.
+
 The browser fetches `/overview` and listens to SSE invalidation notices. It also polls every 10 seconds to recover from a lost notification. Update sequence numbers represent activity invalidations, not a complete event-sourcing stream; clients fetch a fresh snapshot after reconnecting. GET requests use a generation guard so older responses cannot overwrite newer state.
 
 Mutations include command IDs and the observed configuration revision. The interface refreshes after saving and on a conflict; it does not silently merge another browser's plan. A successful mutation means the command was accepted, not that live playback was verified. Demo status is visible throughout the interface.
