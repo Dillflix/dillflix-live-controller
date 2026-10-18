@@ -342,7 +342,7 @@ function PublicApp() {
                       >
                         {e.state === "live"
                           ? "Live"
-                          : e.state === "scheduled"
+                          : ["scheduled", "unknown"].includes(e.state)
                             ? time(e.start_time)
                             : e.state}
                       </span>
