@@ -46,7 +46,7 @@ def no_listing(evidence):
 
 def no_listing_retry(now, start):
     # One useful start-time check, but never a burst after a recent search.
-    next_check = now + 12 * 60 * 60
+    next_check = now + 24 * 60 * 60
     if start and now < start < next_check:
         next_check = max(start, now + 60 * 60)
     return next_check
@@ -301,8 +301,9 @@ class EntitlementChecks:
             if not self.db.lease(db, "entitlements:" + device["id"], self.owner, now, CHECK_SECONDS + 60):
                 return
             self.entitlement_progress(db, "idle")
-            # Upgrade completed legacy scans; never errors, manual or active work.
-            if not self.db.meta(db, "entitlement_no_listing_v1", False):
+            # Upgrade existing no-listing deadlines to daily checks from the last
+            # check, including legacy scans; never errors, manual or active work.
+            if not self.db.meta(db, "entitlement_no_listing_v2", False):
                 for old in db.execute("SELECT e.*,c.snapshot FROM event_entitlements e "
                                       "JOIN contents c ON c.id=e.content_id "
                                       "WHERE e.state='retry' AND e.status='unknown' AND e.manual=0").fetchall():
@@ -310,8 +311,8 @@ class EntitlementChecks:
                     audit = evidence.get("audit") or {}
                     snapshot = json.loads(old["snapshot"])
                     attempts = audit.get("search_attempts") or []
-                    if ([a.get("query") for a in attempts] == search_queries(snapshot)
-                            and old["checked_at"]):
+                    if (old["checked_at"] and (no_listing(evidence)
+                            or [a.get("query") for a in attempts] == search_queries(snapshot))):
                         audit["search_queries_exhausted"] = True
                         if no_listing(evidence):
                             evidence["reason"] = "No Prime listing found"
@@ -322,7 +323,7 @@ class EntitlementChecks:
                                        "WHERE device_id=? AND content_id=?",
                                        (no_listing_retry(checked, start), encode(evidence),
                                         old["device_id"], old["content_id"]))
-                self.db.set_meta(db, "entitlement_no_listing_v1", True)
+                self.db.set_meta(db, "entitlement_no_listing_v2", True)
             # A lost response after restart is unknown. Never immediately replay it.
             for row in db.execute(
                 "SELECT * FROM event_entitlements WHERE device_id=? AND state='checking' AND started_at<?",
