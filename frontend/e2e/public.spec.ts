@@ -202,7 +202,8 @@ for (const planned of [false, true]) {
       await details.click();
       const dialog = page.getByRole("dialog", { name: data.events[0].title });
       await expect(dialog).toBeVisible();
-      await expect(dialog).toContainText("1 viewing option");
+      await expect(dialog).not.toContainText("1 viewing option");
+      await expect(dialog).toContainText(/P[DS]T/);
       await expect(dialog.getByRole("button")).toHaveCount(1);
       expect(
         await dialog.evaluate((element) => {
