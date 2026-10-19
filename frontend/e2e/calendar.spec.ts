@@ -20,6 +20,7 @@ for (const publicView of [false, true])
       const now = "2026-10-18T06:00:00Z"; // Oct 17, 11 PM in the display timezone.
       const prefix = publicView ? "/api/public/v1" : "/api/v1";
       const sent: any[] = [];
+      let includeLive = true;
       await page.route(`**${prefix}/overview`, async (route) => {
         const response = publicView ? undefined : await route.fetch();
         const body = publicView
@@ -57,6 +58,14 @@ for (const publicView of [false, true])
         const template = body.events[0];
         body.events = [
           [
+            "live",
+            "Live tennis",
+            "tennis",
+            "2026-10-18T05:00:00Z",
+            "2026-10-18T07:00:00Z",
+            "entitled",
+          ],
+          [
             "night",
             "Overnight tennis",
             "tennis",
@@ -88,28 +97,35 @@ for (const publicView of [false, true])
             null,
             "unentitled",
           ],
-        ].map(([id, title, league, start_time, expected_end_time, status]) => ({
-          ...template,
-          content_id: `cal-${id}`,
-          title,
-          league,
-          start_time,
-          expected_end_time,
-          teams: [],
-          active: true,
-          kind: "broadcast",
-          watch_entry_id: null,
-          planned: false,
-          state: "unknown",
-          lifecycle: { ...template.lifecycle, state: "unknown" },
-          playable: false,
-          entitlement: {
-            status,
-            state: "complete",
-            blocked: status !== "entitled",
-            can_check: true,
-          },
-        }));
+        ]
+          .map(
+            ([id, title, league, start_time, expected_end_time, status]) => ({
+              ...template,
+              content_id: `cal-${id}`,
+              title,
+              league,
+              start_time,
+              expected_end_time,
+              teams: [],
+              active: true,
+              kind: "broadcast",
+              watch_entry_id: null,
+              planned: false,
+              state: id === "live" ? "live" : "unknown",
+              lifecycle: {
+                ...template.lifecycle,
+                state: id === "live" ? "live" : "unknown",
+              },
+              playable: id === "live",
+              entitlement: {
+                status,
+                state: "complete",
+                blocked: status !== "entitled",
+                can_check: true,
+              },
+            }),
+          )
+          .filter((event) => includeLive || event.content_id !== "cal-live");
         await route.fulfill({ response, json: body });
       });
       await page.route(`**${prefix}/**watch-plan**`, async (route) => {
@@ -130,15 +146,33 @@ for (const publicView of [false, true])
       });
       await page.setViewportSize({ width, height: 1000 });
       await page.goto(publicView ? "/public/" : "/");
-      await page
-        .getByRole("button", { name: "Upcoming 3", exact: true })
-        .click();
+      await expect(
+        page.getByRole("button", { name: "Live 1", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
       await page.getByRole("button", { name: "Calendar", exact: true }).click();
       const calendar = page.getByRole("region", {
         name: "Event calendar",
         exact: true,
       });
       await expect(calendar).toBeVisible();
+      await expect(page.locator(".df-segmented")).toHaveCount(0);
+      await expect(page.locator(".df-section-head").first()).toContainText(
+        "Schedule",
+      );
+      await expect(page.locator(".df-section-head").first()).toContainText(
+        "4 events",
+      );
+      await expect(page.getByTestId("calendar-cal-live")).toBeVisible();
+      await expect(
+        page
+          .getByTestId("calendar-cal-live")
+          .getByText("Live", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page
+          .getByTestId("calendar-cal-night")
+          .getByText("Live", { exact: true }),
+      ).toHaveCount(0);
       await expect(calendar.locator(".df-calendar-day:visible")).toHaveCount(
         width > 900 ? 7 : 1,
       );
@@ -160,8 +194,16 @@ for (const publicView of [false, true])
         "cal-night",
       );
       await page.getByRole("button", { name: "Cards", exact: true }).click();
+      await expect(
+        page.getByRole("button", { name: "Live 1", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator('[data-testid^="event-cal-"]')).toHaveCount(1);
+      await page
+        .getByRole("button", { name: "Upcoming 3", exact: true })
+        .click();
       await expect(page.locator('[data-testid^="event-cal-"]')).toHaveCount(3);
       await page.getByRole("button", { name: "Calendar", exact: true }).click();
+      await expect(page.getByTestId("calendar-cal-live")).toBeVisible();
       await page
         .locator(".df-filters")
         .getByRole("button", { name: "NFL", exact: true })
@@ -199,6 +241,18 @@ for (const publicView of [false, true])
         await expect(
           page.getByLabel("Entitlement", { exact: true }),
         ).toHaveCount(0);
+      else {
+        await page
+          .getByLabel("Entitlement", { exact: true })
+          .selectOption("unentitled");
+        await expect(
+          page.locator('[data-testid^="calendar-cal-"]'),
+        ).toHaveCount(1);
+        await expect(page.getByTestId("calendar-cal-denied")).toBeVisible();
+        await page
+          .getByLabel("Entitlement", { exact: true })
+          .selectOption("entitled");
+      }
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
@@ -208,9 +262,18 @@ for (const publicView of [false, true])
       await page.screenshot({
         path: `test-results/entitlement-calendar-${publicView ? "public" : "admin"}-${width}.png`,
       });
+      // A remembered Calendar view must show upcoming events even when Cards'
+      // default Live tab would be empty, exactly as in the reported incident.
+      includeLive = false;
       await page.reload();
       await expect(
         page.getByRole("button", { name: "Calendar", exact: true }),
       ).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator(".df-segmented")).toHaveCount(0);
+      await expect(page.getByTestId("calendar-cal-live")).toHaveCount(0);
+      await expect(page.getByTestId("calendar-cal-night")).toBeVisible();
+      await expect(page.locator(".df-section-head").first()).toContainText(
+        "3 events",
+      );
     });
   }

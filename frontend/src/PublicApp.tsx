@@ -200,7 +200,7 @@ function PublicApp() {
   );
   const liveEvents = filteredEvents.filter((e) => e.state === "live" || e.playable);
   const upcomingEvents = filteredEvents.filter((e) => e.state !== "live" && !e.playable);
-  const visible = tab === "live" ? liveEvents : upcomingEvents;
+  const visible = scheduleView === "calendar" ? filteredEvents : tab === "live" ? liveEvents : upcomingEvents;
   const now = data.now_playing;
   const details = data.events.find((event) => event.content_id === detailsId);
   const disabled = busy || !connected;
@@ -391,7 +391,7 @@ function PublicApp() {
           </p>
         )}
         <div className="df-toolbar">
-          <div className="df-segmented">
+          {scheduleView === "cards" && <div className="df-segmented">
             <button
               aria-pressed={tab === "live"}
               onClick={() => setTab("live")}
@@ -404,8 +404,8 @@ function PublicApp() {
             >
               Upcoming {upcomingEvents.length}
             </button>
-          </div>
-                  <label className="df-search">
+          </div>}
+          <label className="df-search">
             <span className="df-screenreader">Find a team or event</span>
             <input
               type="search"
@@ -433,11 +433,11 @@ function PublicApp() {
           ))}
         </div>
         <div className="df-section-head">
-          <h2>{tab === "live" ? "Live coverage" : "Coming up"}</h2>
+          <h2>{scheduleView === "calendar" ? "Schedule" : tab === "live" ? "Live coverage" : "Coming up"}</h2>
           <span>{visible.length} events</span>
         </div>
         {scheduleView === "calendar" ? (
-          <ScheduleCalendar events={visible} now={data.now || new Date().toISOString()} timeZone={data.timezone} renderEvent={card} />
+          <ScheduleCalendar events={visible} now={data.now || new Date().toISOString()} timeZone={data.timezone} renderEvent={card} isLive={e => e.state === "live"} />
         ) : visible.length ? (
           <div className="df-grid">
             {visible.map(card)}

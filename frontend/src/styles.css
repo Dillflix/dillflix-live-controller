@@ -622,6 +622,7 @@ select:focus-visible {
 #df-app .df-calendar-event time { font-size: .74rem; color: var(--df-accent); font-weight: 650; }
 #df-app .df-calendar-event strong { font-size: .82rem; line-height: 1.4; }
 #df-app .df-calendar-event > span { font-size: .72rem; color: var(--df-muted); }
+#df-app .df-calendar-event > .df-calendar-live { color: var(--df-success); font-weight: 650; }
 #df-app .df-calendar-empty { color: var(--df-muted); font-size: .78rem; padding: 12px 3px; }
 #df-app .df-calendar-selection { max-width: 650px; margin-top: 22px; scroll-margin: 24px; }
 #df-app .df-calendar-selection:focus { outline: none; }
