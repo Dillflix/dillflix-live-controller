@@ -152,8 +152,10 @@ controller's Prime entitlement gate.
 ## UI transport
 
 The admin and public Events pages share a client-only calendar presentation and
-Cards/Calendar preference. Both layouts use the same filtered events and action
-handlers. The calendar groups start times by the configured timezone; retained
+Cards/Calendar preference. Both layouts share search, sport and entitlement filters
+and action handlers. Live/Upcoming tabs apply only to Cards; Calendar combines both
+in one schedule and labels live events individually. Returning to Cards restores
+its selected tab. The calendar groups start times by the configured timezone; retained
 nonterminal events that started before today remain accessible under Today.
 Selecting an event opens its normal card and existing entitlement/action gates.
 Desktop shows seven date columns; phones use a day picker. Date navigation never

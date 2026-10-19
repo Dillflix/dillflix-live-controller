@@ -823,7 +823,7 @@ function App() {
   );
   const liveEvents = filteredEvents.filter(onNow);
   const upcomingEvents = filteredEvents.filter((e) => !onNow(e));
-  const visible = tab === "live" ? liveEvents : upcomingEvents;
+  const visible = scheduleView === "calendar" ? filteredEvents : tab === "live" ? liveEvents : upcomingEvents;
   const browse = () => {
     setView("events");
     setTab("upcoming");
@@ -1066,7 +1066,7 @@ function App() {
                   <ScheduleViewToggle value={scheduleView} onChange={setScheduleView} />,
                 )}
                 <div className="df-toolbar">
-                  <div className="df-segmented">
+                  {scheduleView === "cards" && <div className="df-segmented">
                     <button
                       type="button"
                       aria-pressed={tab === "live"}
@@ -1081,7 +1081,7 @@ function App() {
                     >
                       Upcoming {upcomingEvents.length}
                     </button>
-                  </div>
+                  </div>}
                   <EntitlementFilter value={entitlementFilter} onChange={setEntitlementFilter} />
                   <label className="df-search">
                     <span className="df-screenreader">
@@ -1109,11 +1109,11 @@ function App() {
                   ))}
                 </div>
                 <div className="df-section-head">
-                  <h2>{tab === "live" ? "Live coverage" : "Coming up"}</h2>
+                  <h2>{scheduleView === "calendar" ? "Schedule" : tab === "live" ? "Live coverage" : "Coming up"}</h2>
                   <span>{visible.length} events</span>
                 </div>
                 {scheduleView === "calendar" ? (
-                  <ScheduleCalendar events={visible} now={data.meta.now} timeZone={d.preferences.timezone} renderEvent={card} />
+                  <ScheduleCalendar events={visible} now={data.meta.now} timeZone={d.preferences.timezone} renderEvent={card} isLive={e => e.lifecycle.state === "live"} />
                 ) : visible.length ? (
                   <div className="df-grid">{visible.map(card)}</div>
                 ) : (

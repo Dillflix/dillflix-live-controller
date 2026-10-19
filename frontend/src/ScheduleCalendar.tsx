@@ -95,11 +95,13 @@ export function ScheduleCalendar<T extends CalendarEvent>({
   now,
   timeZone,
   renderEvent,
+  isLive,
 }: {
   events: T[];
   now: string;
   timeZone: string;
   renderEvent: (event: T) => ReactNode;
+  isLive: (event: T) => boolean;
 }) {
   const today = calendarDate(now, timeZone);
   const [page, setPage] = useState(0);
@@ -256,13 +258,14 @@ export function ScheduleCalendar<T extends CalendarEvent>({
                     aria-pressed={selected === event.content_id}
                     data-testid={`calendar-${event.content_id}`}
                     onClick={() => setSelected(event.content_id)}
-                    aria-label={`${event.title}, ${eventSchedule(event.start_time, event.expected_end_time, timeZone)}`}
+                    aria-label={`${event.title}, ${isLive(event) ? "Live, " : ""}${eventSchedule(event.start_time, event.expected_end_time, timeZone)}`}
                   >
                     <time dateTime={event.start_time}>
                       {starts.get(event.content_id)! < today
                         ? "Started earlier"
                         : startLabel(event)}
                     </time>
+                    {isLive(event) && <span className="df-calendar-live">Live</span>}
                     <strong>{event.title}</strong>
                     <span>{leagueName(event.league)}</span>
                   </button>
