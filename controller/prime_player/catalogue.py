@@ -191,7 +191,7 @@ class CatalogueChecks:
                 async def search(query):
                     nonlocal session
                     async with self.input_lock:
-                        if not self.catalogue_current(probe):
+                        if not await self.database_call(lambda: self.catalogue_current(probe)):
                             raise ExecutorError("prime_stale_result", "Plan changed before catalogue search")
                         evidence["runtime_capability"] = "search"
                         health = await self.check_session(session, capabilities=("search",))
@@ -210,7 +210,7 @@ class CatalogueChecks:
 
                 async def fetch_broadcasts(results, content_id):
                     async with self.input_lock:
-                        if not self.catalogue_current(probe):
+                        if not await self.database_call(lambda: self.catalogue_current(probe)):
                             raise ExecutorError("prime_stale_result", "Plan changed during broadcast selection")
                         evidence["runtime_capability"] = "broadcasts"
                         current = await self.check_session(session, capabilities=("broadcasts",))
@@ -250,10 +250,10 @@ class CatalogueChecks:
             evidence.update(state="access_unknown", error=error)
         finally:
             rpc_context.reset(correlation)
-            self.finish_catalogue(probe, evidence)
+            await self.database_call(lambda: self.finish_catalogue(probe, evidence))
 
     def catalogue_current(self, probe):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             device = self.db.device(db, probe["device_id"])
             saved = self.db.meta(db, key(device["id"]), {})
             return (

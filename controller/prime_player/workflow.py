@@ -224,9 +224,9 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             )
         if health.get("serial") != self.settings.screen_adb_serial:
             raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from SCREEN_ADB_SERIAL")
-        self.record_runtime_adaptation(health)
+        await self.database_call(lambda: self.record_runtime_adaptation(health))
         self.player.require(health, *capabilities)
-        if not control and self.record_player_health(health):
+        if not control and await self.database_call(lambda: self.record_player_health(health)):
             raise ExecutorError("prime_device_recovery", "Player inspection unavailable; waiting for device recovery")
         return health
 
@@ -781,11 +781,11 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
     async def monitor(self, row):
         token = row["token"]
         try:
-            workflow = self.store.report(token)["prime_player"]
+            workflow = await self.database_call(lambda: self.store.report(token)["prime_player"])
             await self.check_session(workflow["session_id"], capabilities=("playback_status",))
             async with self.input_lock:
                 status = await self.player.status(workflow["attempt_id"], self.config.prime_status_timeout)
-            self.record_status(token, status)
+            await self.database_call(lambda: self.record_status(token, status))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -796,26 +796,28 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 if isinstance(exc, ExecutorError)
                 else ExecutorError("prime_status_unknown", "Status unavailable")
             )
-            with self.db.transaction() as db:
-                row = self.store.get_row(db, token)
-                report = json.loads(row["report"])
-                if report["observation"] and report["observation"].get("verified"):
-                    self.db.log(
-                        db,
-                        utc(),
-                        "Playback monitoring unavailable",
-                        error.message,
-                        "recovery",
-                        row["device_id"],
-                    )
-                if report["observation"]:
-                    report["observation"]["verified"] = False
-                report["observation_status"] = {
-                    "state": "unavailable",
-                    "checked_at": utc(),
-                    "error": error.detail(),
-                }
-                self.store.write(db, token, report, next_check=time.time() + self.config.monitor_interval)
+            def persist_error():
+                with self.db.transaction() as db:
+                    row = self.store.get_row(db, token)
+                    report = json.loads(row["report"])
+                    if report["observation"] and report["observation"].get("verified"):
+                        self.db.log(
+                            db,
+                            utc(),
+                            "Playback monitoring unavailable",
+                            error.message,
+                            "recovery",
+                            row["device_id"],
+                        )
+                    if report["observation"]:
+                        report["observation"]["verified"] = False
+                    report["observation_status"] = {
+                        "state": "unavailable",
+                        "checked_at": utc(),
+                        "error": error.detail(),
+                    }
+                    self.store.write(db, token, report, next_check=time.time() + self.config.monitor_interval)
+            await self.database_call(persist_error)
 
     def save_cancellation(self, token, **fields):
         with self.db.transaction() as db:

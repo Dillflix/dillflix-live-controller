@@ -405,7 +405,7 @@ class ContentStatusCoordinator:
                     )
                 return False
 
-    async def refresh_status(self, *, force=False):
+    def prepare_status_requests(self, *, force=False):
         with self.db.transaction() as db:
             if not self.db.lease(
                 db,
@@ -457,6 +457,12 @@ class ContentStatusCoordinator:
                 )
                 if len(requests) >= 50:
                     break
+        return requests
+
+    async def refresh_status(self, *, force=False):
+        requests = await self.playback_work(lambda: self.prepare_status_requests(force=force))
+        if requests is None:
+            return
         semaphore = asyncio.Semaphore(8)
 
         async def lookup(request):
@@ -466,9 +472,9 @@ class ContentStatusCoordinator:
                         self.status_adapter.lookup(request), self.settings.status_lookup_timeout
                     )
                 except Exception as exc:
-                    self.accept_status_report(request, None, f"{type(exc).__name__}: status lookup failed")
+                    await self.playback_work(self.accept_status_report, request, None, f"{type(exc).__name__}: status lookup failed")
                 else:
-                    self.accept_status_report(request, report)
+                    await self.playback_work(self.accept_status_report, request, report)
 
         await asyncio.gather(*(lookup(request) for request in requests))
 

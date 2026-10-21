@@ -1,5 +1,7 @@
 """Subscription evidence only: no broadcasts, resolver, navigation or playback."""
 
+import inspect
+
 from .labels import prime_option
 from .matching import candidates
 
@@ -21,7 +23,9 @@ async def choose_entitlement(matcher, request, results, timezone, *, before_matc
             if not pool:
                 continue
             if before_match:
-                before_match()
+                pending = before_match()
+                if inspect.isawaitable(pending):
+                    await pending
             choice, audit = await matcher._choose(scoped, results, timezone, eligible=pool)
             passes.append(audit)
             if audit.get("match_status") == "uncertain":
