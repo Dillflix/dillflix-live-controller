@@ -473,7 +473,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
 
     def defer_launch_observation(self, token, error):
         """A lost read cannot establish failure of an already dispatched launch."""
-        if error.code not in {"prime_transport_unknown", "prime_operation_unknown"}:
+        if error.code not in {"prime_busy", "prime_transport_unknown", "prime_operation_unknown"}:
             raise error
         with self.db.transaction() as db:
             # Preserve cancellation, ownership and the original deadline fences.
