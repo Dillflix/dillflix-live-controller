@@ -178,7 +178,9 @@ class CatalogueChecks:
                     return  # Next staging tick queues the newest request after this read settles.
                 self.catalogue_task = asyncio.create_task(self.observe_catalogue(probe))
 
-            self.loop.call_soon_threadsafe(schedule)
+            # The worker uses WAL snapshots: scheduling before this transaction
+            # commits lets it see the previous probe and reject its own work.
+            db.defer_after_commit(lambda: self.loop.call_soon_threadsafe(schedule))
         return {"state": "pending"}
 
     async def observe_catalogue(self, probe):

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -12,6 +13,49 @@ from test_prime_workflow import cleanup, launch, rig, row
 from controller.planner import content_view
 from controller.prime_player.catalogue import key
 from controller.prime_player.diagnostics import collect
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+async def test_catalogue_worker_waits_for_staging_commit(tmp_path, monkeypatch, rollback):
+    controller, workflow = rig(tmp_path)
+    _, item, _ = setup_selection(controller, monkeypatch)
+    workflow.loop = asyncio.get_running_loop()
+    staged, release = threading.Event(), threading.Event()
+
+    def stage():
+        try:
+            with controller.db.transaction() as db:
+                device = controller.db.device(db)
+                workflow.prepare_selection(db, device, item)
+                staged.set()
+                assert release.wait(3)
+                if rollback:
+                    raise RuntimeError("rollback fixture")
+        except RuntimeError:
+            if not rollback:
+                raise
+
+    task = asyncio.create_task(asyncio.to_thread(stage))
+    try:
+        assert await asyncio.to_thread(staged.wait, 2)
+        # Let the loop run while the new probe is still invisible to WAL readers.
+        await asyncio.sleep(0.05)
+        assert not getattr(workflow, "catalogue_task", None)
+        assert not workflow.player.calls
+        release.set()
+        await task
+        await asyncio.sleep(0)
+        if rollback:
+            assert not getattr(workflow, "catalogue_task", None)
+        else:
+            await asyncio.wait_for(workflow.catalogue_task, 3)
+            _, probe = saved(controller)
+            assert probe["state"] == "ready"
+            assert [c[0] for c in workflow.player.calls] == ["search"]
+    finally:
+        release.set()
+        await task
+        await cleanup(controller)
 
 
 def setup_selection(controller, monkeypatch):

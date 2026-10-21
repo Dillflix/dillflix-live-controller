@@ -24,6 +24,11 @@ def is_database_busy(error):
 class TransactionConnection(sqlite3.Connection):
     """Allow domain code to mark a post-commit wake-up without an early signal."""
 
+    def defer_after_commit(self, callback):
+        if not hasattr(self, "commit_callbacks"):
+            self.commit_callbacks = []
+        self.commit_callbacks.append(callback)
+
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
@@ -231,6 +236,8 @@ class Database:
             yield db
             notify = bool(self.before_commit(db)) if db.total_changes and self.before_commit else False
             db.commit()
+            for callback in getattr(db, "commit_callbacks", ()):
+                callback()
             if notify and self.after_commit:
                 self.after_commit()
         except BaseException:
