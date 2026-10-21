@@ -16,7 +16,7 @@ A busy playback-monitor response defers the read for five seconds without
 withdrawing existing evidence or extending its expiry. Expired evidence, changed
 sessions and negative playback observations still require revalidation.
 
-During launch verification, uncertain health or attempt reads retain the original
+During launch verification, busy or uncertain health or attempt reads retain the original
 playback attempt and retry observation after five seconds. They do not fail the
 launch or trigger cancellation, stopping, another play request, or network
 fallback. The original navigation deadline and ownership/cancellation checks

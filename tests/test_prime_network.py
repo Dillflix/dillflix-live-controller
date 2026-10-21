@@ -85,7 +85,7 @@ def network_rig(tmp_path):
 
 
 @pytest.mark.parametrize("failed_read", ["health", "attempt"])
-@pytest.mark.parametrize("error_code", ["prime_transport_unknown", "prime_operation_unknown"])
+@pytest.mark.parametrize("error_code", ["prime_busy", "prime_transport_unknown", "prime_operation_unknown"])
 async def test_launch_read_failure_retains_attempt_until_observation_recovers(tmp_path, failed_read, error_code):
     c, w = network_rig(tmp_path)
     w.player.target = "calgary"
@@ -127,13 +127,14 @@ async def test_launch_read_failure_retains_attempt_until_observation_recovers(tm
         await cleanup(c)
 
 
-async def test_launch_observation_retry_does_not_extend_deadline(tmp_path):
+@pytest.mark.parametrize("error_code", ["prime_busy", "prime_transport_unknown"])
+async def test_launch_observation_retry_does_not_extend_deadline(tmp_path, error_code):
     c, w = network_rig(tmp_path)
     try:
         report, _ = w.store.submit(payload())
         token = report["token"]
         w.store.phase(token, "verifying")
-        w.defer_launch_observation(token, ExecutorError("prime_transport_unknown", "Lost health"))
+        w.defer_launch_observation(token, ExecutorError(error_code, "Observation unavailable"))
         request = json.loads(row(w, token)["request"])
         request["deadline_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         with w.db.transaction() as db:
