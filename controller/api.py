@@ -138,6 +138,7 @@ def create_app(settings=None, *, start_workers=True):
             "executor_running": bool(
                 service.executor and service.executor.worker and not service.executor.worker.done()
             ),
+            "executor_database": getattr(service.executor, "database_status", None),
         }
 
     @app.get("/healthz", include_in_schema=False)

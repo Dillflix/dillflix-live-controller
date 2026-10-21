@@ -139,6 +139,7 @@ async def test_web_export_reads_player_history_after_health_and_rpc_failure(tmp_
         ) as client:
             response = await client.get("/api/v1/devices/living-room/diagnostics")
         assert response.status_code == 200
+        assert response.json()["controller_health"]["executor_database"] is None
         capture_health = response.json()["model_capture"]
         assert capture_health["state"] == "error"
         assert capture_health["failure_count_since_start"] == 1

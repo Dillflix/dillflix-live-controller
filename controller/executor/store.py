@@ -193,7 +193,7 @@ class ExecutorStore:
         return report
 
     def report(self, token):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             return self.project(self.get_row(db, token), db)
 
     def by_request(self, request_id):
