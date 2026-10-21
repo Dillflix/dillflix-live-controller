@@ -21,7 +21,13 @@ RECORD_BYTES = 256 * 1024
 EXPORT_BYTES = 1024 * 1024
 
 
-def scrub(value):
+def scrub(value, _secrets=None):
+    # Capture once per record, not once per string in a runtime module inventory.
+    # This runs on the RPC caller's event loop, before the writer queue.
+    if _secrets is None:
+        _secrets = tuple(secret for name, secret in os.environ.items()
+                         if len(secret) >= 8 and any(s in name.lower()
+                         for s in ("api_key", "token", "password", "secret")))
     if isinstance(value, dict):
         return {
             str(k): "[redacted]"
@@ -29,17 +35,14 @@ def scrub(value):
                 s in str(k).lower()
                 for s in ("password", "secret", "authorization", "api_key", "access_token", "cookie", "plex_token", "plex-token")
             )
-            else scrub(v)
+            else scrub(v, _secrets)
             for k, v in value.items()
         }
     if isinstance(value, (list, tuple)):
-        return [scrub(v) for v in value]
+        return [scrub(v, _secrets) for v in value]
     if isinstance(value, str):
-        for name, secret in os.environ.items():
-            if len(secret) >= 8 and any(
-                s in name.lower() for s in ("api_key", "token", "password", "secret")
-            ):
-                value = value.replace(secret, "[redacted]")
+        for secret in _secrets:
+            value = value.replace(secret, "[redacted]")
         value = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]", value)
         value = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}", "[redacted]", value)
         value = re.sub(
