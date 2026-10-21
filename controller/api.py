@@ -189,7 +189,7 @@ def create_app(settings=None, *, start_workers=True):
             recorder.snapshot if recorder else lambda: read_logs(str(settings.database) + ".diagnostics")
         )
         if service.executor:
-            bundle["model_capture"] = await asyncio.to_thread(service.executor.model_captures.status)
+            bundle["model_capture"].update(await asyncio.to_thread(service.executor.model_captures.status))
             player = service.executor.player
             bundle["prime_player"] = {"state": "unavailable"}
             # Collect independently: a failed health call must not hide evidence.

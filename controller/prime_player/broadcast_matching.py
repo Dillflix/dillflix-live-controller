@@ -137,7 +137,7 @@ async def choose(items, *, parent, target, option, complete, direct, matcher):
             raise ExecutorError(
                 "prime_broadcast_selection_invalid", "Broadcast selection context exceeds its bound"
             )
-        with model_decision():
+        with model_decision() as validation:
             try:
                 answer = await matcher.model.completion(
                     matcher.config.prime_match_model,
@@ -165,16 +165,33 @@ async def choose(items, *, parent, target, option, complete, direct, matcher):
                 continue
             chosen = next((i for i in pool if i["content_id"] == choice["content_id"]), None)
             fields = evidence_fields(chosen) if chosen else {}
-            if (
-                chosen is None
-                or choice["language"] is None
-                or not choice["evidence"]
-                or any(fields.get(e["field"]) != e["quote"] for e in choice["evidence"])
-                or (choice["language"] == "unlabeled" and option.get("language"))
-            ):
-                raise ExecutorError(
-                    "prime_broadcast_selection_invalid", "Model selected outside the supplied broadcast evidence"
+            issue = None
+            if chosen is None:
+                issue = "selected_id_not_in_readiness_group"
+            elif choice["language"] is None:
+                issue = "missing_language"
+            elif choice["language"] == "unlabeled" and option.get("language"):
+                issue = "required_language_not_established"
+            if issue:
+                # Stable, non-sensitive detail is retained with the model call.
+                error = ExecutorError(
+                    "prime_broadcast_selection_invalid", "Broadcast selection rejected: " + issue
                 )
+                error.validation_reason = issue
+                raise error
+            # Quotes explain the decision; transcription is not a playback gate.
+            quote_audit = {
+                "state": "exact" if choice["evidence"] else "missing",
+                "mismatched_evidence_indexes": [
+                    index for index, e in enumerate(choice["evidence"])
+                    if fields.get(e["field"]) != e["quote"]
+                ],
+            }
+            if quote_audit["mismatched_evidence_indexes"]:
+                quote_audit["state"] = "mismatch"
+            validation["quote_audit"] = quote_audit
+            choice["quote_audit"] = quote_audit
+            passes[-1]["quote_audit"] = quote_audit
             if state in {"feeds_unavailable", "feeds_locked", "no_matching_feed"} and (
                 not complete or any(p["match_status"] == "uncertain" for p in passes[:-1])
             ):

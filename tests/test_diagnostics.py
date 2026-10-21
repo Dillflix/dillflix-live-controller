@@ -5,6 +5,7 @@ import pytest
 
 from controller.api import create_app
 from controller.config import Settings
+from controller.model_capture import ModelCaptureStore
 from controller.prime_player.diagnostics import collect, redact
 
 
@@ -15,6 +16,13 @@ async def test_export_is_read_only_and_keeps_device_scope(tmp_path):
         with service.db.transaction() as db:
             service.db.log(db, "2026-10-03T08:00:00Z", "Decision", "detail", "test", "living-room")
             service.db.log(db, "2026-10-03T08:00:00Z", "Other device", "hidden", "test", "other")
+        store = ModelCaptureStore(service.settings.database)
+        assert store.record({
+            "call_id": "failed-choice", "context": {"device_id": "living-room"},
+            "request": {"json": {"messages": [{"role": "user", "content": "candidate"}]}},
+            "response": {"json": {"answer": "selected ID", "api_key": "private"}},
+            "validation": {"state": "rejected", "reason": "selected_id_not_in_readiness_group"},
+        })
         before = (tmp_path / "state.sqlite").read_bytes()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -26,6 +34,11 @@ async def test_export_is_read_only_and_keeps_device_scope(tmp_path):
             assert bundle["prime_player"]["state"] == "not_configured"
             assert any(r["message"] == "Decision" for r in bundle["activity"])
             assert not any(r["message"] == "Other device" for r in bundle["activity"])
+            capture = bundle["model_capture"]["records"][0]
+            assert capture["call_id"] == "failed-choice"
+            assert capture["response"]["json"]["answer"] == "selected ID"
+            assert capture["response"]["json"]["api_key"] == "[redacted]"
+            assert capture["validation"]["reason"] == "selected_id_not_in_readiness_group"
             assert (await client.get("/api/v1/devices/missing/diagnostics")).status_code == 404
         assert (tmp_path / "state.sqlite").read_bytes() == before
     finally:
