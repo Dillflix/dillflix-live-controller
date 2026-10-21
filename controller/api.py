@@ -151,7 +151,9 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/overview")
     def overview():
-        return service.overview()
+        # This synchronous endpoint runs in FastAPI's thread pool. Render here
+        # too, rather than returning a large object for event-loop serialization.
+        return JSONResponse(service.overview())
 
     @app.get("/api/public/v1/overview")
     def viewer_overview(request: Request):
@@ -207,8 +209,8 @@ def create_app(settings=None, *, start_workers=True):
                 bundle["prime_player"]["persisted_logs"] = await asyncio.to_thread(
                     read_logs, Path(settings.executor.prime_socket).parent / "diagnostics"
                 )
-        return JSONResponse(
-            redact(bundle),
+        return await asyncio.to_thread(
+            JSONResponse, await asyncio.to_thread(redact, bundle),
             headers={
                 "Content-Disposition": 'attachment; filename="dillflix-diagnostics.json"',
                 "Cache-Control": "no-store",
@@ -222,12 +224,12 @@ def create_app(settings=None, *, start_workers=True):
     @app.get("/api/v1/events")
     def events():
         data = service.overview()
-        return {
+        return JSONResponse({
             "items": data["events"],
             "meta": data["meta"],
             "health": data["health"],
             "status_health": data["status_health"],
-        }
+        })
 
     @app.get("/api/v1/teams")
     def teams(league: str | None = None):
@@ -379,11 +381,14 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/updates")
     async def updates(request: Request):
+        def read_sequence():
+            with service.db.snapshot() as db:
+                return str(db.execute("SELECT COALESCE(MAX(sequence),0) FROM activity").fetchone()[0])
+
         async def stream():
             previous = request.headers.get("last-event-id")
             while not await request.is_disconnected():
-                with service.db.transaction() as db:
-                    sequence = str(db.execute("SELECT COALESCE(MAX(sequence),0) FROM activity").fetchone()[0])
+                sequence = await asyncio.to_thread(read_sequence)
                 if sequence != previous:
                     yield f'id: {sequence}\nevent: update\ndata: {{"sequence":{sequence}}}\n\n'
                     previous = sequence

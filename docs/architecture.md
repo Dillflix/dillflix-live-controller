@@ -45,6 +45,20 @@ visibly. Health/diagnostics expose `executor_database` state and the next retry 
 | `controller/current_playback.py`, `controller/artwork.py` | Accepted live-event projection and matchup/provider artwork selection |
 | `frontend/src` | React interface using server state rather than an independent browser watch plan |
 
+## Event-loop responsiveness
+
+Content-status preparation and result writes, entitlement dependency probes,
+claims/progress/completion, catalogue health/result persistence and playback
+monitor persistence run through cancellation-drained worker calls. Each complete
+SQLite transaction stays on its worker thread; shutdown waits for an in-flight
+transaction before releasing ownership. Page-update streams read WAL snapshots
+in workers rather than taking the writer lock. Large overview/events responses
+and diagnostic redaction/JSON rendering are also constructed off the event loop.
+The thread-stack watchdog remains enabled to identify further synchronous paths.
+
+For physical acceptance using the deployed supervisor and persisted adaptation,
+see [production recovery acceptance](production-recovery-acceptance.md).
+
 ## Selection rules
 
 Public access defaults to proxy authentication. Explicit guest mode permits only

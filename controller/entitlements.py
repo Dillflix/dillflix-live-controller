@@ -226,12 +226,19 @@ class EntitlementChecks:
         self.db.set_meta(db, key, value)
         self.entitlement_progress(db, "waiting", reason="Prime search unavailable: " + str(error))
 
+    def entitlement_write(self, function, *args):
+        with self.db.transaction() as db:
+            return function(db, *args)
+
+    def entitlement_dependency(self, device_id):
+        with self.db.snapshot() as db:
+            return self.db.meta(db, "entitlement_service:" + device_id, {})
+
     async def entitlement_service_ready(self, workflow, device_id):
         """Probe one shared dependency before claiming any event job."""
-        with self.db.transaction() as db:
-            blocked = self.db.meta(db, "entitlement_service:" + device_id, {})
-            if blocked.get("next_probe", 0) > time.time():
-                return False
+        blocked = await self.playback_work(self.entitlement_dependency, device_id)
+        if blocked.get("next_probe", 0) > time.time():
+            return False
         try:
             async with workflow.input_lock:
                 health = await workflow.player.health()
@@ -240,21 +247,22 @@ class EntitlementChecks:
                 workflow.player.require(health, "search")
                 workflow.player.ownership(health, automatic=True)
         except ExecutorError as exc:
-            with self.db.transaction() as db:
-                self.entitlement_service_failure(db, device_id, exc)
+            await self.playback_work(self.entitlement_write, self.entitlement_service_failure, device_id, exc)
             return False
-        with self.db.transaction() as db:
-            self.db.set_meta(db, "entitlement_service:" + device_id, {})
-            # Older deployments charged shared outages to individual events.
-            # Preserve that history, but don't leave them behind hours of backoff
-            # after the dependency has recovered.
-            repair = blocked or not self.db.meta(db, "entitlement_service_repaired:" + device_id, False)
-            for row in (db.execute("SELECT content_id,evidence FROM event_entitlements "
-                                   "WHERE device_id=? AND state='retry'", (device_id,)).fetchall() if repair else []):
-                if (json.loads(row["evidence"]).get("error") or {}).get("code") in SERVICE_ERRORS:
-                    db.execute("UPDATE event_entitlements SET state='queued',next_check=0 "
-                               "WHERE device_id=? AND content_id=?", (device_id, row["content_id"]))
-            self.db.set_meta(db, "entitlement_service_repaired:" + device_id, True)
+        def repair_dependency():
+            with self.db.transaction() as db:
+                self.db.set_meta(db, "entitlement_service:" + device_id, {})
+                # Older deployments charged shared outages to individual events.
+                # Preserve that history, but don't leave them behind hours of backoff
+                # after the dependency has recovered.
+                repair = blocked or not self.db.meta(db, "entitlement_service_repaired:" + device_id, False)
+                for row in (db.execute("SELECT content_id,evidence FROM event_entitlements "
+                                       "WHERE device_id=? AND state='retry'", (device_id,)).fetchall() if repair else []):
+                    if (json.loads(row["evidence"]).get("error") or {}).get("code") in SERVICE_ERRORS:
+                        db.execute("UPDATE event_entitlements SET state='queued',next_check=0 "
+                                   "WHERE device_id=? AND content_id=?", (device_id, row["content_id"]))
+                self.db.set_meta(db, "entitlement_service_repaired:" + device_id, True)
+        await self.playback_work(repair_dependency)
         return True
 
     def entitlement_queue(self, db, device, items):
@@ -406,30 +414,36 @@ class EntitlementChecks:
         workflow = self.executor
         if not await self.entitlement_service_ready(workflow, device["id"]):
             return
-        with self.db.transaction() as db:
-            current = db.execute("SELECT * FROM event_entitlements WHERE device_id=? AND content_id=?",
-                                 (device["id"], row["content_id"])).fetchone()
-            if (not current or current["state"] not in {"queued", "retry"}
-                    or current["check_id"] != row["check_id"]
-                    or not self.entitlement_idle(db, self.db.device(db, device["id"]))):
-                return
-            row = dict(current)
-            now = time.time()
-            row.update(check_id=uuid4().hex, started_at=now)
-            db.execute(
-                "UPDATE event_entitlements SET state='checking',check_id=?,started_at=?,next_check=NULL,manual=0 "
-                "WHERE device_id=? AND content_id=?", (row["check_id"], now, device["id"], row["content_id"]),
-            )
-            self.db.set_meta(db, "entitlement_dispatch_after", now + DISPATCH_INTERVAL)
-            self.db.set_meta(db, "entitlement_last_retry:" + device["id"], row["failures"] > 0)
-            self.entitlement_progress(db, "searching", content_id=row["content_id"])
+        def claim(row):
+            with self.db.transaction() as db:
+                current = db.execute("SELECT * FROM event_entitlements WHERE device_id=? AND content_id=?",
+                                     (device["id"], row["content_id"])).fetchone()
+                if (not current or current["state"] not in {"queued", "retry"}
+                        or current["check_id"] != row["check_id"]
+                        or not self.entitlement_idle(db, self.db.device(db, device["id"]))):
+                    return
+                row = dict(current)
+                now = time.time()
+                row.update(check_id=uuid4().hex, started_at=now)
+                db.execute(
+                    "UPDATE event_entitlements SET state='checking',check_id=?,started_at=?,next_check=NULL,manual=0 "
+                    "WHERE device_id=? AND content_id=?", (row["check_id"], now, device["id"], row["content_id"]),
+                )
+                self.db.set_meta(db, "entitlement_dispatch_after", now + DISPATCH_INTERVAL)
+                self.db.set_meta(db, "entitlement_last_retry:" + device["id"], row["failures"] > 0)
+                self.entitlement_progress(db, "searching", content_id=row["content_id"])
+            return row
+
+        row = await self.playback_work(claim, row)
+        if row is None:
+            return
         evidence = {"identity": identity(item)}
         request = {"content_snapshot": item["snapshot"], "allowed_viewing_options": item["viewing_options"]}
         context = {"source": "schedule_entitlement", "device_id": device["id"],
                    "content_id": item["content_id"], "check_id": row["check_id"]}
 
         def check_priority():
-            with self.db.transaction() as db:
+            with self.db.snapshot() as db:
                 current_check = db.execute(
                     "SELECT check_id FROM event_entitlements WHERE device_id=? AND content_id=?",
                     (device["id"], row["content_id"]),
@@ -445,27 +459,29 @@ class EntitlementChecks:
             with self.db.transaction() as db:
                 self.entitlement_progress(db, phase, content_id=row["content_id"], reason=reason)
 
-        def before_match():
-            check_priority()
-            progress("matching", "Matching fetched catalogue results; playback monitoring can continue")
+        async def before_match():
+            await self.playback_work(check_priority)
+            await self.playback_work(progress, "matching", "Matching fetched catalogue results; playback monitoring can continue")
 
         async def search(query):
             # Keep earlier search/matching progress while a routine monitor runs.
             # Launch, manual control and recovery still defer the entire job.
             waiting = False
             while True:
-                check_priority()
-                with self.db.transaction() as db:
-                    blocker = self.entitlement_blocker(db, self.db.device(db, device["id"]))
+                await self.playback_work(check_priority)
+                def read_blocker():
+                    with self.db.snapshot() as db:
+                        return self.entitlement_blocker(db, self.db.device(db, device["id"]))
+                blocker = await self.playback_work(read_blocker)
                 if not blocker:
                     break
                 if not waiting:
-                    progress("waiting", blocker)
+                    await self.playback_work(progress, "waiting", blocker)
                     waiting = True
                 # The whole job's deadline bounds this wait. A slow ordinary
                 # monitor must not reset otherwise valid matching progress.
                 await asyncio.sleep(0.25)
-            progress("searching", "Reading Prime catalogue data")
+            await self.playback_work(progress, "searching", "Reading Prime catalogue data")
             async with workflow.input_lock:
                 health = await workflow.player.health()
                 if health.get("serial") != self.settings.screen_adb_serial:
@@ -495,7 +511,7 @@ class EntitlementChecks:
                                        before_match=before_match),
                         exhaust_denials=True,
                     )
-                check_priority()
+                await self.playback_work(check_priority)
                 if selected:
                     status = {"ENTITLED": "entitled", "UNENTITLED": "unentitled"}.get(
                         selected.get("entitlement_status"), "unknown")
@@ -509,8 +525,7 @@ class EntitlementChecks:
         except ExecutorError as exc:
             if exc.code in SERVICE_ERRORS:
                 deferred = "Prime search unavailable: " + str(exc)
-                with self.db.transaction() as db:
-                    self.entitlement_service_failure(db, device["id"], exc)
+                await self.playback_work(self.entitlement_write, self.entitlement_service_failure, device["id"], exc)
             else:
                 evidence.update(reason="Entitlement check failed; retry scheduled", error=exc.detail())
         except asyncio.CancelledError:
@@ -520,22 +535,24 @@ class EntitlementChecks:
             evidence.update(reason="Entitlement check failed; retry scheduled",
                             error=exc.detail() if isinstance(exc, ExecutorError) else {"code": type(exc).__name__})
         finally:
-            with self.db.transaction() as db:
-                current_item = next((i for i in self.items(db, device["id"]) if i["content_id"] == item["content_id"]), None)
-                if current_item and identity(current_item) != evidence["identity"]:
-                    status = "unknown"
-                    evidence["reason"] = "Event details changed during the check"
-                    evidence.pop("audit", None)
-                if current_item and current_item["lifecycle"]["state"] in {"ended", "cancelled"}:
-                    db.execute("UPDATE event_entitlements SET state='stopped',next_check=NULL WHERE check_id=?", (row["check_id"],))
-                elif deferred:
-                    retained = json.loads(row["evidence"])
-                    retained["last_deferral"] = {"reason": deferred, "at": datetime.now(UTC).isoformat()}
-                    db.execute("UPDATE event_entitlements SET state='queued',next_check=?,manual=?,evidence=? WHERE check_id=?",
-                               (time.time() + DEFER_SECONDS, row["manual"], encode(retained), row["check_id"]))
-                else:
-                    self.finish_entitlement(db, row, status, evidence)
-                self.entitlement_progress(db, "waiting" if deferred else "idle", reason=deferred)
+            def persist(status):
+                with self.db.transaction() as db:
+                    current_item = next((i for i in self.items(db, device["id"]) if i["content_id"] == item["content_id"]), None)
+                    if current_item and identity(current_item) != evidence["identity"]:
+                        status = "unknown"
+                        evidence["reason"] = "Event details changed during the check"
+                        evidence.pop("audit", None)
+                    if current_item and current_item["lifecycle"]["state"] in {"ended", "cancelled"}:
+                        db.execute("UPDATE event_entitlements SET state='stopped',next_check=NULL WHERE check_id=?", (row["check_id"],))
+                    elif deferred:
+                        retained = json.loads(row["evidence"])
+                        retained["last_deferral"] = {"reason": deferred, "at": datetime.now(UTC).isoformat()}
+                        db.execute("UPDATE event_entitlements SET state='queued',next_check=?,manual=?,evidence=? WHERE check_id=?",
+                                   (time.time() + DEFER_SECONDS, row["manual"], encode(retained), row["check_id"]))
+                    else:
+                        self.finish_entitlement(db, row, status, evidence)
+                    self.entitlement_progress(db, "waiting" if deferred else "idle", reason=deferred)
+            await self.playback_work(persist, status)
 
     def finish_entitlement(self, db, row, status, evidence):
         failures = row["failures"] + 1 if status == "unknown" else 0
@@ -563,6 +580,10 @@ class EntitlementChecks:
                 await self.check_entitlement_once()
             except Exception as exc:
                 log.exception("Schedule entitlement worker failed")
-                with self.db.transaction() as db:
-                    self.entitlement_progress(db, "error", reason=f"Entitlement worker failed: {type(exc).__name__}")
+                reason = f"Entitlement worker failed: {type(exc).__name__}"
+                try:
+                    await self.playback_work(self.entitlement_write,
+                                             lambda db: self.entitlement_progress(db, "error", reason=reason))
+                except Exception:
+                    log.exception("Could not persist entitlement worker failure; will retry")
             await asyncio.sleep(2)
