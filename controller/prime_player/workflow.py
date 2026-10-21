@@ -11,7 +11,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from ..database import encode
+from ..database import encode, is_database_busy
 from ..entitlement_store import record_entitled
 from ..executor.models import ExecutorError
 from ..executor.store import utc
@@ -263,7 +263,9 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     self.store.write(db, token, report, next_check=time.time() + delay)
             else:
                 self.store.fail(token, exc)
-        except Exception:
+        except Exception as exc:
+            if is_database_busy(exc):
+                raise
             self.store.fail(token, ExecutorError("prime_workflow_failed", "Prime playback workflow failed"))
 
     async def select_and_launch(self, token, request):
@@ -787,6 +789,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if is_database_busy(exc):
+                raise
             error = (
                 exc
                 if isinstance(exc, ExecutorError)

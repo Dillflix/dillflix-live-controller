@@ -203,7 +203,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         return self.entitlement_views(db, device_id, items)
 
     def overview(self, device_id="living-room"):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             device = self.db.device(db, device_id)
             items = self.items(db, device_id)
             plan_ids = {p["content_id"] for p in device["plan"]}

@@ -8,8 +8,10 @@ import concurrent.futures
 import fcntl
 import json
 import logging
+import sqlite3
 import time
 
+from ..database import is_database_busy
 from .models import ExecutorError
 from .store import ExecutorStore, utc
 
@@ -24,6 +26,7 @@ class PlaybackWorker:
         self.wake = asyncio.Event()
         self.loop = self.worker = self.active = self.active_token = self.guard = None
         self.stopping = False
+        self.database_status = {"state": "ready", "consecutive_failures": 0}
 
     def recover(self):
         raise NotImplementedError
@@ -57,7 +60,7 @@ class PlaybackWorker:
         # Interrupted navigation remains a durable cleanup obligation if offline.
         pending = []
         if self.guard:
-            with self.db.transaction() as db:
+            with self.db.snapshot() as db:
                 pending = [
                     r[0] for r in db.execute("SELECT token FROM executor_jobs WHERE cancel_requested=1")
                 ]
@@ -99,7 +102,7 @@ class PlaybackWorker:
         self.notify(tokens)
         async with asyncio.timeout(self.config.cancel_timeout):
             while True:
-                with self.db.transaction() as db:
+                with self.db.snapshot() as db:
                     pending = [
                         t
                         for t in tokens
@@ -145,51 +148,65 @@ class PlaybackWorker:
                 "cancel_unconfirmed", "Playback cancellation is still pending; manual input stays disabled"
             ) from error
 
+    def pending_work(self):
+        with self.db.snapshot() as db:
+            cancellations = db.execute(
+                "SELECT token,next_check FROM executor_jobs WHERE cancel_requested=1 ORDER BY intent"
+            ).fetchall()
+            row = (
+                db.execute(
+                    "SELECT * FROM executor_jobs WHERE cancel_requested=0 AND request IS NOT NULL "
+                    "AND state IN ('accepted','navigating','playing_verified') AND next_check<=? "
+                    "ORDER BY CASE state WHEN 'playing_verified' THEN 1 ELSE 0 END,intent DESC LIMIT 1",
+                    (time.time(),),
+                ).fetchone()
+                if not cancellations
+                else None
+            )
+        return cancellations, row
+
+    async def database_call(self, function):
+        # SQLite's busy timeout must not freeze service RPCs or cancellation.
+        # Drain the thread on shutdown so maintenance cannot outlive our guard.
+        task = asyncio.create_task(asyncio.to_thread(function))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await asyncio.gather(task, return_exceptions=True)
+            raise
+
     async def run(self):
         next_prune = 0
         try:
             while not self.stopping:
-                if time.monotonic() >= next_prune:
-                    self.store.prune()
-                    next_prune = time.monotonic() + 3600
-                with self.db.transaction() as db:
-                    cancellations = db.execute(
-                        "SELECT token,next_check FROM executor_jobs WHERE cancel_requested=1 ORDER BY intent"
-                    ).fetchall()
-                    row = (
-                        db.execute(
-                            "SELECT * FROM executor_jobs WHERE cancel_requested=0 AND request IS NOT NULL "
-                            "AND state IN ('accepted','navigating','playing_verified') AND next_check<=? "
-                            "ORDER BY CASE state WHEN 'playing_verified' THEN 1 ELSE 0 END,intent DESC LIMIT 1",
-                            (time.time(),),
-                        ).fetchone()
-                        if not cancellations
-                        else None
-                    )
-                if cancellations:
-                    for cancel in cancellations:
-                        if cancel["next_check"] <= time.time():
-                            try:
-                                await self.cancel_one(cancel["token"])
-                            except ExecutorError as error:
-                                with self.db.transaction() as db:
-                                    job = self.store.get_row(db, cancel["token"])
-                                    report = json.loads(job["report"])
-                                    report["observation_status"].update(
-                                        state="unavailable", checked_at=utc(), error=error.detail()
-                                    )
-                                    self.store.write(db, job["token"], report, next_check=time.time() + 5)
-                elif row:
-                    self.active_token = row["token"]
-                    routine = self.monitor if row["state"] == "playing_verified" else self.navigate
-                    self.active = asyncio.create_task(routine(dict(row)))
-                    try:
-                        await self.active
-                    except asyncio.CancelledError:
-                        if self.stopping or asyncio.current_task().cancelling():
-                            raise
-                    finally:
-                        self.active = self.active_token = None
+                try:
+                    if time.monotonic() >= next_prune:
+                        await self.database_call(self.store.prune)
+                        next_prune = time.monotonic() + 3600
+                    cancellations, row = await self.database_call(self.pending_work)
+                    await self.dispatch_work(cancellations, row)
+                except sqlite3.OperationalError as error:
+                    if not is_database_busy(error):
+                        raise
+                    failures = self.database_status["consecutive_failures"] + 1
+                    delay = min(5, 2 ** min(failures - 1, 3))
+                    self.database_status = {
+                        "state": "waiting", "consecutive_failures": failures,
+                        "last_error": "database_busy", "last_failure_at": utc(),
+                        "retry_at": time.time() + delay,
+                    }
+                    if failures == 1:
+                        log.warning("Playback scheduling waiting for database lock; durable requests retained")
+                    # Reload durable intent and attempt receipts, never retry
+                    # the failed call directly. Workflows reconcile an existing
+                    # attempt or cancellation before considering a new action.
+                    await asyncio.sleep(delay)
+                    continue
+                if self.database_status["state"] != "ready":
+                    log.info("Playback scheduling resumed after database contention")
+                    self.database_status = {"state": "ready", "consecutive_failures": 0,
+                                            "recovered_at": utc()}
+                if row:
                     continue
                 self.wake.clear()
                 try:
@@ -205,3 +222,29 @@ class PlaybackWorker:
             # Fail visibly; no uncontrolled device loop after an internal defect.
             log.exception("Playback executor stopped unexpectedly")
             self.stopping = True
+
+    async def dispatch_work(self, cancellations, row):
+        if cancellations:
+            for cancel in cancellations:
+                if cancel["next_check"] <= time.time():
+                    try:
+                        await self.cancel_one(cancel["token"])
+                    except ExecutorError as error:
+                        with self.db.transaction() as db:
+                            job = self.store.get_row(db, cancel["token"])
+                            report = json.loads(job["report"])
+                            report["observation_status"].update(
+                                state="unavailable", checked_at=utc(), error=error.detail()
+                            )
+                            self.store.write(db, job["token"], report, next_check=time.time() + 5)
+        elif row:
+            self.active_token = row["token"]
+            routine = self.monitor if row["state"] == "playing_verified" else self.navigate
+            self.active = asyncio.create_task(routine(dict(row)))
+            try:
+                await self.active
+            except asyncio.CancelledError:
+                if self.stopping or asyncio.current_task().cancelling():
+                    raise
+            finally:
+                self.active = self.active_token = None

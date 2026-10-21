@@ -11,6 +11,16 @@ def encode(value):
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
 
 
+def is_database_busy(error):
+    """Only lock contention is retryable; corruption and SQL defects are not."""
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return code & 0xff in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    return str(error) in {"database is locked", "database table is locked", "database schema is locked"}
+
+
 class TransactionConnection(sqlite3.Connection):
     """Allow domain code to mark a post-commit wake-up without an early signal."""
 
@@ -199,12 +209,25 @@ class Database:
                 yield db
 
     @contextmanager
+    def snapshot(self):
+        """Consistent WAL read without reserving the single writer slot."""
+        with database_guard(self.path):
+            db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+            try:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA query_only=ON")
+                db.execute("BEGIN")
+                yield db
+            finally:
+                db.close()
+
+    @contextmanager
     def connection_transaction(self):
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None, factory=TransactionConnection)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=10000")
-        db.execute("BEGIN IMMEDIATE")
         try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=10000")
+            db.execute("BEGIN IMMEDIATE")
             yield db
             notify = bool(self.before_commit(db)) if db.total_changes and self.before_commit else False
             db.commit()

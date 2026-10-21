@@ -14,6 +14,15 @@ launch or trigger cancellation, stopping, another play request, or network
 fallback. The original navigation deadline and ownership/cancellation checks
 still apply; successful verification clears the observation error.
 
+Admin/public overviews, executor reports and queue selection use SQLite read-only
+snapshots instead of reserving the writer lock. Executor maintenance and queue reads
+run off the event loop. SQLite BUSY/LOCKED errors defer the worker with 1, 2, 4, then
+5-second backoff, reloading durable intent on each retry. Navigation and monitoring
+do not convert lock contention into playback failure. Existing persisted attempt IDs
+and cancellation receipts control reconciliation; a lost post-launch database write
+does not cause a second Play request. Other database errors still stop the worker
+visibly. Health/diagnostics expose `executor_database` state and the next retry time.
+
 | Module | Responsibility |
 | --- | --- |
 | `controller/teamarr.py` | Fetch a complete paginated Teamarr catalog and cached team rosters; validate provider identities |

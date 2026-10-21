@@ -2,7 +2,7 @@
 
 
 def public_overview(service, actor, device_id="living-room"):
-    with service.db.transaction() as db:
+    with service.db.snapshot() as db:
         device = service.db.device(db, device_id)
         items = service.items(db, device_id)
         planned = {p["content_id"] for p in device["plan"]}
