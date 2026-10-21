@@ -140,7 +140,7 @@ class DeviceInput:
 
     async def expire(self):
         async with self.lock:
-            if self.service.manual_expired():
+            if await self.service.playback_work(self.service.manual_expired):
                 # Keep automation paused until all manual writes and cleanup end.
                 await self.drain(self.revoke_locked())
                 if self.prime:

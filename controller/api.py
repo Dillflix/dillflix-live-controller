@@ -16,6 +16,7 @@ from .config import Settings
 from .current_playback import NowPlaying, current_playback
 from .device_input import DeviceInput, same_origin
 from .diagnostic_log import LogHandler, Recorder, read_logs
+from .loop_watchdog import LoopWatchdog
 from .executor.api import install_executor_api
 from .models import (
     AutomationUpdate,
@@ -47,6 +48,8 @@ def create_app(settings=None, *, start_workers=True):
     async def lifespan(app):
         recorder = Recorder(Path(str(settings.database) + ".diagnostics"))
         app.state.diagnostic_recorder = recorder
+        watchdog = LoopWatchdog(recorder)
+        watchdog.start()
         handler = LogHandler(recorder)
         logger = logging.getLogger("controller")
         previous_level = logger.level
@@ -70,6 +73,7 @@ def create_app(settings=None, *, start_workers=True):
                 logger.removeHandler(handler)
                 server_logger.removeHandler(handler)
                 logger.setLevel(previous_level)
+                await watchdog.close()
                 await asyncio.to_thread(recorder.close)
 
     app = FastAPI(title="Dillflix Controller", version="0.16.1", lifespan=lifespan)

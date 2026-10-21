@@ -19,6 +19,53 @@ from controller.prime_player.entitlement import choose_entitlement
 from controller.service import Controller
 
 
+async def test_queue_lock_wait_does_not_block_health_or_web_loop(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    import sqlite3
+    blocker = sqlite3.connect(controller.db.path, isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+    task = asyncio.create_task(controller.check_entitlement_once())
+    try:
+        started = time.monotonic()
+        await asyncio.sleep(0.1)
+        assert time.monotonic() - started < 1
+        assert not task.done()
+        # A read-only expiry check must work while another writer holds the DB.
+        assert controller.manual_expired() is False
+    finally:
+        blocker.rollback()
+        blocker.close()
+        await asyncio.wait_for(task, 10)
+        await cleanup(controller)
+
+
+async def test_card_projection_does_not_decode_catalogue_evidence(tmp_path, monkeypatch):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    try:
+        with controller.db.transaction() as db:
+            item = controller.items(db, "living-room")[0]
+            evidence = {"identity": identity(item), "reason": "No Prime listing found",
+                        "audit": {"search_queries_exhausted": True, "match_status": "no_match",
+                                  "search_attempts": [{"state": "no_matching_feed", "response": "x" * 1000000}]}}
+            db.execute("UPDATE event_entitlements SET evidence=?", (json.dumps(evidence),))
+        original = json.loads
+
+        def bounded_loads(value, *args, **kwargs):
+            assert len(value) < 1000000, "Card read decoded the full catalogue evidence"
+            return original(value, *args, **kwargs)
+
+        monkeypatch.setattr(json, "loads", bounded_loads)
+        with controller.db.snapshot() as db:
+            view = controller.items(db, "living-room")[0]["entitlement"]
+        assert view["result"] == "no_listing"
+        assert view["reason"] == "No Prime listing found"
+        assert controller.overview()["entitlement_queue"]["failed_jobs"] == 0
+    finally:
+        await cleanup(controller)
+
+
 def seed(controller, count=1):
     snapshot = payload()["content_snapshot"]
     snapshot["source"] = "games"

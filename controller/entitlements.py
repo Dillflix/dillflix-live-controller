@@ -103,7 +103,15 @@ class EntitlementChecks:
 
     def entitlement_views(self, db, device_id, items):
         records = {r["content_id"]: r for r in db.execute(
-            "SELECT * FROM event_entitlements WHERE device_id=? AND content_id IN (SELECT id FROM contents)", (device_id,)
+            """SELECT content_id,status,state,checked_at,next_check,
+                json_extract(evidence,'$.identity','$.reason','$.error','$.audit.error',
+                    '$.audit.search_queries_exhausted','$.audit.match_status') AS summary,
+                (SELECT json_group_array(json_object(
+                    'state',json_extract(value,'$.state'),
+                    'error',json_extract(value,'$.error')))
+                 FROM json_each(evidence,'$.audit.search_attempts')) AS attempts
+                FROM event_entitlements
+                WHERE device_id=? AND content_id IN (SELECT id FROM contents)""", (device_id,)
         )}
         for item in items:
             row = records.get(item["content_id"])
@@ -111,7 +119,14 @@ class EntitlementChecks:
             if not self.executor or not relevant:
                 item["entitlement"] = None
                 continue
-            evidence = json.loads(row["evidence"]) if row else {}
+            # The full evidence can include large catalogue response bodies.
+            # Read only the fields used by cards/planning, not those bodies on every tick.
+            evidence = {}
+            if row:
+                fingerprint, reason, error, audit_error, exhausted, match = json.loads(row["summary"])
+                evidence = {"identity": fingerprint, "reason": reason, "error": error,
+                            "audit": {"error": audit_error, "search_queries_exhausted": exhausted,
+                                      "match_status": match, "search_attempts": json.loads(row["attempts"])}}
             stale = bool(evidence.get("identity") and evidence["identity"] != identity(item))
             status = row["status"] if row and not stale else "unknown"
             # A Prime-only denial cannot disable another permitted application.
@@ -250,22 +265,24 @@ class EntitlementChecks:
         rows, history_rows = [], []
         counts = {s: 0 for s in ("queued", "checking", "retry", "complete", "stopped")}
         failures = 0
-        for r in db.execute("SELECT e.* FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
+        for r in db.execute("SELECT e.content_id,e.state,e.failures,e.started_at,e.next_check,e.manual,"
+                            "json_extract(e.evidence,'$.error','$.last_deferral') AS summary "
+                            "FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
                             "WHERE e.device_id=? ORDER BY "
                             "CASE e.state WHEN 'checking' THEN 0 WHEN 'retry' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,"
                             "e.manual DESC,e.next_check,e.content_id", (device["id"],)):
             item = projected.get(r["content_id"])
             if not item or not item.get("entitlement"):
                 continue
-            evidence = json.loads(r["evidence"])
+            error, last_deferral = json.loads(r["summary"])
             terminal = item["lifecycle"]["state"] in {"ended", "cancelled"}
             eligible = not terminal and bool(item["active"] or r["manual"])
             if eligible:
                 counts[r["state"]] += 1
-                failures += int(r["state"] == "retry" and bool(evidence.get("error")))
+                failures += int(r["state"] == "retry" and bool(error))
             (rows if eligible else history_rows).append({"content_id": r["content_id"], "title": item["title"],
                          "entitlement": item["entitlement"], "failures": r["failures"],
-                         "error": evidence.get("error"), "last_deferral": evidence.get("last_deferral"),
+                         "error": error, "last_deferral": last_deferral,
                          "started_at": datetime.fromtimestamp(r["started_at"], UTC).isoformat()
                          if r["started_at"] else None,
                          "eligible": eligible,
@@ -309,9 +326,8 @@ class EntitlementChecks:
                 if service or dispatch > now else None,
                 "rows": rows, "history_rows": history_rows}
 
-    async def check_entitlement_once(self):
-        workflow = self.executor
-        if not workflow:
+    def prepare_entitlement_check(self):
+        if not self.executor:
             return
         now = time.time()
         with self.db.transaction() as db:
@@ -380,6 +396,14 @@ class EntitlementChecks:
             if not row["manual"] and now < self.db.meta(db, "entitlement_dispatch_after", 0):
                 return
             item = items[row["content_id"]]
+        return row, item, device
+
+    async def check_entitlement_once(self):
+        prepared = await self.playback_work(self.prepare_entitlement_check)
+        if prepared is None:
+            return
+        row, item, device = prepared
+        workflow = self.executor
         if not await self.entitlement_service_ready(workflow, device["id"]):
             return
         with self.db.transaction() as db:

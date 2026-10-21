@@ -11,6 +11,31 @@ from controller.executor.models import ExecutorError
 from controller.prime_player.client import PrimePlayerClient, rpc_context
 
 
+def test_large_health_redaction_scans_environment_once_per_record(monkeypatch):
+    from controller import diagnostic_log
+
+    class Environment(dict):
+        scans = 0
+
+        def items(self):
+            self.scans += 1
+            return super().items()
+
+    environment = Environment(PLAYER_TOKEN="first-private-value")
+    monkeypatch.setattr(diagnostic_log.os, "environ", environment)
+    health = {"modules": [{"name": "module", "value": "first-private-value"}
+                          for _ in range(4000)], "password": "hidden"}
+    result = diagnostic_log.scrub(health)
+    assert environment.scans == 1
+    assert all(m["value"] == "[redacted]" for m in result["modules"])
+    assert result["password"] == "[redacted]"
+    assert health["modules"][0]["value"] == "first-private-value"
+    # Do not cache credentials across records: configuration can change.
+    environment["PLAYER_TOKEN"] = "second-private-value"
+    assert diagnostic_log.scrub(["second-private-value"]) == ["[redacted]"]
+    assert environment.scans == 2
+
+
 def test_persistent_rotation_truncation_and_secrets(tmp_path, monkeypatch):
     monkeypatch.setenv("EXECUTOR_LLM_API_KEY", "test-private-credential")
     monkeypatch.setattr("controller.diagnostic_log.FILE_BYTES", 2000)
