@@ -800,6 +800,18 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 with self.db.transaction() as db:
                     row = self.store.get_row(db, token)
                     report = json.loads(row["report"])
+                    if error.code == "prime_busy":
+                        # Contention did not observe playback. Retain the last
+                        # evidence without extending its timestamp or lifetime;
+                        # store projection still expires it at valid_until.
+                        observation = report.get("observation")
+                        if observation and parse_time(observation["valid_until"]) <= datetime.now(UTC):
+                            observation["verified"] = False
+                        report["observation_status"] = {
+                            "state": "unavailable", "checked_at": utc(), "error": error.detail(),
+                        }
+                        self.store.write(db, token, report, next_check=time.time() + 5)
+                        return
                     if report["observation"] and report["observation"].get("verified"):
                         self.db.log(
                             db,

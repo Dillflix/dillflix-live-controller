@@ -19,7 +19,10 @@ c=sqlite3.connect(Path(os.environ['CONTROLLER_DATABASE']).resolve().as_uri()+'?m
 c.execute('BEGIN')
 d=json.loads(c.execute("SELECT payload FROM devices WHERE id='living-room'").fetchone()[0])
 rows=c.execute("SELECT report FROM executor_jobs WHERE device_id='living-room' ORDER BY rowid DESC LIMIT 5")
-print(json.dumps({'device':d,'reports':[json.loads(r[0]) for r in rows]}))
+reports=[json.loads(r[0]) for r in rows]
+probe=c.execute("SELECT value FROM metadata WHERE key='prime_catalogue_probe:living-room'").fetchone()
+activity=c.execute("SELECT at,message,detail FROM activity WHERE device_id='living-room' AND kind='prime_catalogue' ORDER BY sequence DESC LIMIT 20").fetchall()
+print(json.dumps({'device':d,'reports':reports,'catalogue_probe':json.loads(probe[0]) if probe else None,'catalogue_history':activity}))
 '''
 
 
@@ -85,6 +88,7 @@ def main():
     started = datetime.now(timezone.utc).isoformat()
     verdict = {'passed': False, 'started_at': started, 'fault_injected': False,
                'scope': 'deployed supervisor and persisted adaptation; one Prime process loss, not a future runtime update'}
+    journal = journal_output = None
 
     def save(name, value):
         (out / name).write_text(json.dumps(value, indent=2), encoding='utf-8')
@@ -104,6 +108,15 @@ def main():
         (out / 'controller-commit.txt').write_text(run(['git', 'rev-parse', 'HEAD']))
         (out / 'player-commit.txt').write_text(run(['git', '-C', str(player.parents[2]), 'rev-parse', 'HEAD']))
         (out / 'baseline-pid.txt').write_text(run(['adb', '-s', args.serial, 'shell', 'pidof', 'com.amazon.firebat']))
+        # Open the privileged reader before fault injection, while sudo's cached
+        # authorization is valid. Do not wait 15 minutes to request it again.
+        run(['sudo', '-n', 'true'])
+        journal_output = (out / 'player-journal.log').open('w', encoding='utf-8')
+        journal = subprocess.Popen(
+            ['sudo', '-n', 'timeout', str(args.timeout + 120), 'journalctl', '-u',
+             'dillflix-prime-player', '--since', started, '--no-pager', '-f', '-o', 'short-iso'],
+            stdout=journal_output, stderr=subprocess.STDOUT,
+        )
         fault_at = time.time()
         verdict.update(fault_dispatch='started', fault_at=fault_at, content_id=content_id)
         save('result.json', verdict)
@@ -140,10 +153,21 @@ def main():
     except (Exception, KeyboardInterrupt) as exc:
         verdict['error'] = f'{type(exc).__name__}: {exc}'
     finally:
+        if journal is not None:
+            if journal.poll() is not None:
+                verdict['journal_error'] = f'Journal capture exited early: {journal.returncode}'
+            else:
+                journal.terminate()
+                try:
+                    journal.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    journal.kill()
+                    journal.wait(timeout=5)
+        if journal_output is not None:
+            journal_output.close()
         verdict['finished_at'] = datetime.now(timezone.utc).isoformat()
         save('result.json', verdict)
         for name, command in (
-            ('player-journal.log', ['sudo', '-n', 'journalctl', '-u', 'dillflix-prime-player', '--since', started, '--no-pager', '-o', 'short-iso']),
             ('controller.log', ['docker', 'compose', 'logs', '--since', started, '--tail', '3000', 'controller']),
         ):
             try:

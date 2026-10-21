@@ -28,8 +28,10 @@ seconds. The recovery deadline defaults to 15 minutes. Manual takeover or pause
 invalidates the test. An event ending or changing during the test can prevent a
 pass; inspect evidence rather than interpreting that as a startup defect.
 
-The adjacent archive contains chronological health/controller snapshots, both
-commits, service logs and persisted adaptation artifacts. Capture errors are
+The adjacent archive contains chronological health/controller snapshots, the current
+catalogue probe and recent catalogue decisions, both commits, service logs and
+persisted adaptation artifacts. The privileged journal reader starts before fault
+injection so sudo authorization expiring during the test cannot lose the log. Capture errors are
 retained. The production services remain running after success or failure; the
 test never attempts its own recovery. Do not send remote input while it runs.
 

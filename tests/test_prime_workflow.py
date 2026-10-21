@@ -353,6 +353,35 @@ async def test_service_restart_withdraws_verification_without_replay(tmp_path):
         await cleanup(controller)
 
 
+async def test_busy_monitor_defers_without_withdrawing_or_extending_evidence(tmp_path):
+    from controller.executor.models import ExecutorError
+    import time
+
+    controller, workflow = rig(tmp_path)
+    try:
+        token = await launch(workflow)
+        before = workflow.store.report(token)["observation"]
+        calls = len(workflow.player.calls)
+
+        async def busy(*args):
+            raise ExecutorError("prime_busy", "Another device operation is in progress")
+
+        workflow.player.status = busy
+        await workflow.monitor(row(workflow, token))
+        report = workflow.store.report(token)
+        assert report["observation"] == before
+        assert report["observation_status"]["error"]["code"] == "prime_busy"
+        assert time.time() < row(workflow, token)["next_check"] <= time.time() + 5
+        assert not workflow.player.calls[calls:]
+        with workflow.db.transaction() as db:
+            report["observation"]["valid_until"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+            workflow.store.write(db, token, report)
+        await workflow.monitor(row(workflow, token))
+        assert not workflow.store.report(token)["observation"]["verified"]
+    finally:
+        await cleanup(controller)
+
+
 async def test_restart_reconciles_attempt_and_never_replays_search_or_play(tmp_path):
     controller, workflow = rig(tmp_path)
     try:
