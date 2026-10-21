@@ -48,9 +48,11 @@ def model_decision():
     token = _decision.set(scope)
     validation = {"state": "passed"}
     try:
-        yield
+        yield validation
     except BaseException as exc:
         validation = {"state": "rejected", "error_code": getattr(exc, "code", type(exc).__name__)}
+        if getattr(exc, "validation_reason", None):
+            validation["reason"] = exc.validation_reason
         raise
     finally:
         _decision.reset(token)

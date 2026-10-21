@@ -70,6 +70,32 @@ def test_pending_final_and_validation_upsert_one_durable_record(capture_store):
     assert restarted.status()["last_recorded_at"] == saved[0]["recorded_at"]
 
 
+def test_incident_export_retains_answers_and_prioritizes_current_event(capture_store):
+    incident = trace("incident")
+    incident["validation"] = {"state": "rejected", "reason": "selected_id_not_in_readiness_group"}
+    assert capture_store.record(incident)
+    other = trace("newer")
+    other["context"]["content_id"] = "event:other"
+    assert capture_store.record(other)
+    result = capture_store.diagnostics("living-room", content_id="event:test:1", limit=1)
+    assert result["records"][0]["response"] == incident["response"]
+    assert result["records"][0]["request"] == incident["request"]
+    assert result["records"][0]["validation"] == incident["validation"]
+    assert result["omitted"] == [{"call_id": "newer", "reason": "record_limit"}]
+    assert result["truncated"]
+    assert capture_store.diagnostics("other-device")["records"] == []
+
+
+def test_incident_export_reports_byte_omissions_without_changing_archive(capture_store):
+    assert capture_store.record(trace())
+    before = records(capture_store)
+    result = capture_store.diagnostics("living-room", byte_limit=1)
+    assert result["records"] == [] and result["truncated"]
+    assert result["omitted"][0]["reason"] == "byte_limit"
+    assert result["omitted"][0]["call_id"] == "call-1"
+    assert records(capture_store) == before
+
+
 def test_capture_does_not_invoke_domain_transaction_hooks(capture_store):
     from controller.database import Database
 

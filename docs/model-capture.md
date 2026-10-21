@@ -27,6 +27,17 @@ controller restart; saved calls and their timestamps persist.
 
 ## Status and export
 
+The web diagnostics download includes up to 30 archived model calls (4 MiB total),
+including their redacted prompts, raw response envelopes, validation results,
+timings, and correlation context. It searches the newest 500 calls, prioritizing
+the current catalogue event before other recent calls for the device. Record and
+byte omissions are explicit and retain call IDs; capture write failures remain
+visible. This bounded incident export does not replace the complete JSONL archive.
+Broadcast validation records a specific rejection reason. Missing or non-exact
+explanatory quotes are recorded separately in `quote_audit`; they do not reject
+a selection. Candidate membership, readiness, language and route policy still
+control selection. Quotes are diagnostic explanations, not authorization.
+
 Run these commands on the controller host. They read the configured
 `CONTROLLER_DATABASE`, require no restart, and do not navigate or interrupt playback.
 

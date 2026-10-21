@@ -100,7 +100,7 @@ async def test_model_calls_are_automatically_captured_in_both_workflows(tmp_path
         assert [record["task"] for record in records] == ["event_match", "broadcast_selection"]
         for record, wire in zip(records, exchanged, strict=True):
             assert record["state"] == "returned"
-            assert record["validation"] == {"state": "passed"}
+            assert record["validation"]["state"] == "passed"
             assert record["request"]["json"] == wire["request"]
             assert record["response"]["json"] == wire["response"]
             assert record["http_status"] == 200
@@ -172,7 +172,7 @@ async def test_late_catalogue_answer_is_retained_but_cannot_replace_new_intent(t
         records = captures(controller)
         assert len(records) == 2
         assert records[-1]["state"] == "returned"
-        assert records[-1]["validation"] == {"state": "passed"}
+        assert records[-1]["validation"]["state"] == "passed"
         assert records[-1]["context"]["intent_version"] == probe["intent"]
         assert saved(controller)[1]["state"] == "discarded"
         assert not any(call[0] in {"play", "stop", "cancel"} for call in workflow.player.calls)

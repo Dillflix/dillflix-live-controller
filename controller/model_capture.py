@@ -80,6 +80,47 @@ class ModelCaptureStore:
             result["state"] = "error"
         return result
 
+    def diagnostics(self, device_id, *, content_id=None, limit=30, byte_limit=4 * 1024 * 1024):
+        """Bounded incident evidence; prioritize the current event, then recent calls.
+
+        Project metadata first, so exporting does not load the entire archive.
+        Omitted records remain identifiable and can be retrieved from the JSONL archive.
+        """
+        result = {**self.status(), "records": [], "omitted": [],
+                  "selection": "current event first, then newest calls; newest 500 calls searched",
+                  "limits": {"records": limit, "bytes": byte_limit, "scanned_records": 500}}
+        used = 0
+        try:
+            with closing(connection(self.path, readonly=True)) as db:
+                db.execute("BEGIN")
+                rows = db.execute(
+                    "SELECT call_id,json_extract(payload,'$.context.device_id'),"
+                    "json_extract(payload,'$.context.content_id') FROM "
+                    "(SELECT call_id,payload FROM chooser_captures ORDER BY rowid DESC LIMIT 500)"
+                ).fetchall()
+                rows = [r for r in rows if r[1] == device_id]
+                rows.sort(key=lambda r: not (content_id is not None and r[2] == content_id))
+                for index, (call_id, _, _) in enumerate(rows):
+                    if index >= limit:
+                        result["omitted"].append({"call_id": call_id, "reason": "record_limit"})
+                        continue
+                    size = db.execute(
+                        "SELECT length(CAST(payload AS BLOB)) FROM chooser_captures WHERE call_id=?",
+                        (call_id,),
+                    ).fetchone()[0]
+                    if used + size > byte_limit:
+                        result["omitted"].append({"call_id": call_id, "reason": "byte_limit", "bytes": size})
+                        continue
+                    payload = db.execute("SELECT payload FROM chooser_captures WHERE call_id=?", (call_id,)).fetchone()[0]
+                    result["records"].append(json.loads(payload))
+                    used += size
+                result["searched_records"] = len(rows)
+                result["included_bytes"] = used
+                result["truncated"] = bool(result["omitted"]) or (result.get("count") or 0) > 500
+        except Exception as exc:
+            result.update(state="error", read_error=type(exc).__name__, truncated=True)
+        return result
+
 
 def message_seed(record):
     """Validated examples are review seeds, never claims of correct ground truth."""

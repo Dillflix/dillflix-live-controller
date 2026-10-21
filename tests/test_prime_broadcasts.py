@@ -159,7 +159,7 @@ async def test_model_cannot_choose_locked_english_from_live_entitled_group():
     value["resource"]["containerList"][0]["items"][1]["entitlementMessaging"] = {"a": {"icon": "OFFER_ICON"}}
     items, _, _ = parse(value)
     model = Model(answer(items[1], "en"))
-    with pytest.raises(ExecutorError, match="outside the supplied"):
+    with pytest.raises(ExecutorError, match="selected_id_not_in_readiness_group"):
         await choose(value, model=model)
     assert model.calls[0]["selectable_content_ids"] == [FRENCH]
 
@@ -218,8 +218,6 @@ async def test_provider_language_constraints_are_supplied_to_model():
     "bad",
     [
         "unknown_id",
-        "invented_quote",
-        "missing_quote",
         "other_language",
         "unlabeled_required",
         "abstention_id",
@@ -232,10 +230,6 @@ async def test_invalid_model_answers_cannot_authorize_playback(bad):
     option = None
     if bad == "unknown_id":
         choice["content_id"] = "amzn1.dv.gti.fabricated"
-    if bad == "invented_quote":
-        choice["evidence"][0]["quote"] = "English Broadcast"
-    if bad == "missing_quote":
-        choice["evidence"] = []
     if bad == "other_language":
         choice["language"] = "fr"
     if bad == "unlabeled_required":
@@ -247,6 +241,30 @@ async def test_invalid_model_answers_cannot_authorize_playback(bad):
     with pytest.raises(ExecutorError) as error:
         await choose(response(1), option=option, model=Model(choice))
     assert error.value.code == "prime_broadcast_selection_invalid"
+
+
+@pytest.mark.parametrize("evidence", [[], [{"field": "title", "quote": "Paraphrased title"}],
+                                       [{"field": "unknown_field", "quote": "A quote"}]])
+async def test_explanatory_quotes_do_not_gate_valid_selection(evidence):
+    item = parse(response(1))[0][0]
+    choice = answer(item)
+    choice["evidence"] = evidence
+    selected, audit = await choose(response(1), model=Model(choice))
+    assert selected["content_id"] == item["content_id"]
+    assert audit["quote_audit"]["state"] == ("mismatch" if evidence else "missing")
+
+
+async def test_ningbo_synopsis_nonbreaking_space_does_not_block_playback():
+    synopsis = "Watch Day four of the Ningbo Open Women Single on DAZN.\n\u00a0\n"
+    choice = answer({"content_id": PARENT, "title": "Ningbo Open: Day 3"})
+    choice["evidence"].append({"field": "synopsis", "quote": synopsis.replace("\u00a0", " ")})
+    selected, audit = await select(
+        parent(), {"title": "Ningbo Open: Day 3", "synopsis": synopsis},
+        {**CAPTURE, "resource": {"containerList": []}}, {"id": "prime"},
+        target={"title": "Ningbo Open: Day 3"}, matcher=matcher(Model(choice)),
+    )
+    assert selected["content_id"] == PARENT and selected["readiness"] == "ready"
+    assert audit["quote_audit"] == {"state": "mismatch", "mismatched_evidence_indexes": [1]}
 
 
 async def test_model_failure_does_not_fall_back_to_regex_or_parent():
@@ -332,7 +350,7 @@ async def test_unavailable_child_does_not_hide_available_alternative():
     assert blocked["entitlement_status"] == "ENTITLED" and blocked["event_state"] == "LIVE"
     assert blocked["availability_status"] == "UNAVAILABLE"
     assert model.calls[0]["selectable_content_ids"] == [ENGLISH]
-    with pytest.raises(ExecutorError, match="outside the supplied"):
+    with pytest.raises(ExecutorError, match="selected_id_not_in_readiness_group"):
         await choose(value, model=Model(answer(parse(value)[0][0], "en")))
 
 
