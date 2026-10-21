@@ -37,7 +37,7 @@ class ManualControl:
             return session
 
     def manual_expired(self):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             session = self.db.device(db).get("manual_control")
             return bool(session and parse_time(session["expires_at"]) <= datetime.now(UTC))
 
