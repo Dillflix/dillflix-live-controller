@@ -95,6 +95,84 @@ async def test_first_import_checks_once_and_persists_across_restart(tmp_path):
         await cleanup(controller)
 
 
+@pytest.mark.parametrize("previous_state", ["complete", "retry"])
+async def test_tennis_end_time_update_requeues_stale_evidence_and_restores_entitlement(tmp_path, previous_state):
+    controller, workflow = rig(tmp_path)
+    start = datetime.now(UTC)
+    snapshot = {
+        "id": "broadcast:dazn_tennis%3Aca%3A7dhsv327krvrgcwbhslp6rjlm",
+        "kind": "broadcast", "source": "dazn_tennis", "competition": "tennis",
+        "title": "Ningbo Open: Day 3", "status": "scheduled", "start_time": start.isoformat(),
+        "viewing_options": [{
+            "id": "ningbo-prime", "app": "prime_video", "channel": "DAZN",
+            "stream_title": "Ningbo Open: Day 3", "presentation": "live",
+            "expected_end_time": None, "decision": "review", "reasons": ["end_time_unknown"],
+        }],
+    }
+    original = workflow.player.search
+
+    async def tennis(*args):
+        response = await original(*args)
+        return {**response, **results(tile(snapshot["title"], starts_at=start.isoformat()))}
+
+    workflow.player.search = tennis
+    try:
+        with controller.db.transaction() as db:
+            controller.replace_catalog(db, [snapshot], "teamarr")
+        await controller.check_entitlement_once()
+        old = record(controller, snapshot["id"])
+        assert old["status"] == "entitled"
+        with controller.db.transaction() as db:
+            if previous_state == "retry":
+                db.execute("UPDATE event_entitlements SET state='retry',status='unknown',next_check=?",
+                           (time.time() + 86400,))
+            snapshot["status"] = "live"
+            snapshot["expected_end_time"] = (start + timedelta(hours=9)).isoformat()
+            snapshot["viewing_options"][0].update(
+                expected_end_time=snapshot["expected_end_time"], decision="eligible", reasons=[],
+            )
+            controller.replace_catalog(db, [snapshot], "teamarr")
+        queued = record(controller, snapshot["id"])
+        assert queued["state"] == "queued" and queued["next_check"] == 0
+        assert queued["check_id"] is None and queued["checked_at"] == old["checked_at"]
+        assert queued["evidence"] == old["evidence"]  # Preserve the earlier result for audit.
+        assert controller.overview()["events"][0]["entitlement"]["status"] == "unknown"
+        with controller.db.transaction() as db:
+            controller.replace_catalog(db, [snapshot], "teamarr")
+        assert record(controller, snapshot["id"]) == queued
+        due(controller)
+        await controller.check_entitlement_once()
+        assert controller.overview()["events"][0]["entitlement"]["status"] == "entitled"
+        settled = record(controller, snapshot["id"])
+        assert settled["state"] == "complete" and settled["next_check"] is None
+        with controller.db.transaction() as db:
+            controller.replace_catalog(db, [snapshot], "teamarr")
+        due(controller)
+        await controller.check_entitlement_once()
+        assert record(controller, snapshot["id"]) == settled
+        assert [c[0] for c in workflow.player.calls] == ["search", "search"]
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("state", ["queued", "checking", "stopped"])
+async def test_import_does_not_replace_existing_manual_inflight_or_stopped_work(tmp_path, state):
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    try:
+        await controller.check_entitlement_once()
+        with controller.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET state=?,manual=1,next_check=123,check_id='retained'",
+                       (state,))
+        before = record(controller)
+        entries[0]["title"] = "Corrected event title"
+        with controller.db.transaction() as db:
+            controller.replace_catalog(db, entries, "teamarr")
+        assert record(controller) == before
+    finally:
+        await cleanup(controller)
+
+
 async def test_upcoming_event_is_checked_before_its_start_and_can_be_planned(tmp_path):
     controller, workflow = rig(tmp_path)
     entries = seed(controller)
@@ -893,7 +971,7 @@ async def test_stale_identity_cannot_apply_negative_and_recovery_backs_off(tmp_p
             entries[0]["start_time"] = "2030-01-01T12:00:00+00:00"
             controller.replace_catalog(db, entries, "teamarr")
         assert not controller.overview()["events"][0]["entitlement"]["blocked"]
-        assert record(controller)["state"] == "complete"  # No automatic resweep.
+        assert record(controller)["state"] == "queued"  # Changed identity needs a new check.
         with controller.db.transaction() as db:
             db.execute("UPDATE event_entitlements SET state='checking',check_id='lost',started_at=0")
         await controller.check_entitlement_once()

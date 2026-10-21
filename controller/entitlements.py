@@ -14,7 +14,7 @@ from .database import encode
 from .entitlement_store import identity
 from .executor.models import ExecutorError
 from .model_diagnostics import capture_model_calls
-from .planner import parse_time
+from .planner import allowed_options, parse_time
 from .prime_player.entitlement import choose_entitlement
 from .prime_player.identity_cache import EventMatchCache
 from .prime_player.labels import prime_option, search_queries
@@ -72,9 +72,13 @@ class EntitlementChecks:
     def seed_entitlements(self, db):
         if not self.executor:
             return
-        # INSERT OR IGNORE is the once-per-event boundary, including reimports.
+        # Unchanged entries keep their result, including reimports. Changed
+        # entries must be requeued when the read model invalidates that result.
         # Deduplication lasts for the catalogue retention window, not forever.
         for device in db.execute("SELECT id FROM devices").fetchall():
+            records = {r["content_id"]: r for r in db.execute(
+                "SELECT * FROM event_entitlements WHERE device_id=?", (device["id"],)
+            )}
             for row in db.execute("SELECT id,snapshot FROM contents WHERE active=1 AND source='teamarr'"):
                 snapshot = json.loads(row["snapshot"])
                 if any(prime_option(o) for o in snapshot.get("viewing_options", [])):
@@ -82,6 +86,20 @@ class EntitlementChecks:
                         "INSERT OR IGNORE INTO event_entitlements(device_id,content_id,next_check) VALUES (?,?,0)",
                         (device["id"], row["id"]),
                     )
+                    previous = records.get(row["id"])
+                    if previous is None or previous["state"] not in {"complete", "retry"}:
+                        continue  # Preserve queued/manual, in-flight and stopped work.
+                    evidence = json.loads(previous["evidence"])
+                    fingerprint = identity({"snapshot": snapshot, "viewing_options": allowed_options(snapshot)})
+                    if evidence.get("identity") and evidence["identity"] != fingerprint:
+                        # Keep the old evidence for audit; entitlement_views already
+                        # exposes it as unknown. Never carry an old no-listing delay
+                        # or a completed job's NULL deadline into the new check.
+                        db.execute(
+                            "UPDATE event_entitlements SET state='queued',next_check=0,check_id=NULL "
+                            "WHERE device_id=? AND content_id=?",
+                            (device["id"], row["id"]),
+                        )
 
     def entitlement_views(self, db, device_id, items):
         records = {r["content_id"]: r for r in db.execute(
