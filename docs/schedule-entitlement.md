@@ -3,7 +3,14 @@
 Version 0.18.0 queues one durable entitlement job for each Prime event first imported
 from Teamarr. The existing Teamarr import window is the only discovery boundary.
 The upgrade also seeds currently imported events once. Feed refreshes, changing
-scores, restarts and reimporting the same event ID do not reset completed checks.
+scores, restarts and reimporting unchanged event details do not reset completed checks.
+When event or viewing-option details change enough to invalidate stored evidence,
+the next catalog refresh queues a new check automatically. This includes a DAZN
+tennis broadcast gaining an end time when it goes live. Completed checks and old
+retry deadlines cannot leave such an event permanently Unconfirmed. Earlier
+evidence remains available for diagnostics, but does not authorize a new selection
+until the changed listing has been checked. Queued/manual, in-flight and stopped
+jobs retain their existing handling; playback and manual control still take priority.
 
 Version 0.18.2 also records positive subscription evidence from accepted foreground
 catalogue selections and fresh, attempt-bound playback with an explicitly entitled
