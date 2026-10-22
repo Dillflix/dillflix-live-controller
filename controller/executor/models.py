@@ -101,7 +101,6 @@ class RouteAttempt(Strict):
     attempt: int
     viewing_option_id: str
     phase: str
-    phase_started_at: datetime | None = None
     started_at: datetime
     finished_at: datetime | None
     error: ErrorDetail | None
@@ -124,6 +123,7 @@ class Operation(Strict):
         "no_matching_feed",
     ]
     phase: str
+    phase_started_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     finished_at: datetime | None

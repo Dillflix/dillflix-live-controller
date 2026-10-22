@@ -12,6 +12,7 @@ _sink = ContextVar("model_diagnostic_sink", default=None)
 _archive = ContextVar("model_archive_sink", default=None)
 _context = ContextVar("model_capture_context", default=None)
 _decision = ContextVar("model_decision", default=None)
+_flush = ContextVar("model_capture_flush", default=None)
 log = logging.getLogger(__name__)
 
 
@@ -32,13 +33,18 @@ async def capture_model_calls_async(sink, *, recorder=None, context=None):
                             callback(record)
                         except Exception:
                             log.error("Model capture sink failed for call %s", record.get("call_id"))
-            await asyncio.to_thread(persist)
+            try:
+                await asyncio.to_thread(persist)
+            finally:
+                queue.task_done()
 
     worker = asyncio.create_task(write())
+    flush_token = _flush.set(queue.join)
     try:
         with capture_model_calls(enqueue, context=context):
             yield
     finally:
+        _flush.reset(flush_token)
         queue.put_nowait(None)
         cancelled = False
         while not worker.done():
@@ -49,6 +55,13 @@ async def capture_model_calls_async(sink, *, recorder=None, context=None):
         await worker
         if cancelled:
             raise asyncio.CancelledError
+
+
+async def flush_model_calls():
+    """Preserve the pending-capture-before-dispatch boundary without blocking."""
+    flush = _flush.get()
+    if flush:
+        await flush()
 
 
 async def report_progress(callback, value):

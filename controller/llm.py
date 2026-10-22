@@ -129,6 +129,8 @@ class ChatClient:
         try:
             # Bound queueing plus network plus decoding, not only inactivity per socket read.
             async with asyncio.timeout(self.config.model_timeout):
+                from .model_diagnostics import flush_model_calls
+                await flush_model_calls()
                 async with self.lock:
                     async with self.client.stream("POST", "chat/completions", json=body) as response:
                         trace["http_status"] = response.status_code
