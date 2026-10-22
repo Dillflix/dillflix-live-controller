@@ -1,6 +1,7 @@
 """Bounded query fallback shared by catalogue checks and authorized launches."""
 
 from ..executor.models import ExecutorError
+from ..model_diagnostics import report_progress
 from .broadcasts import choose_broadcast
 from .labels import search_queries
 from .matching import selection_state
@@ -24,13 +25,13 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
         attempt = {"query": query, "state": "pending"}
         attempts.append(attempt)
 
-        def report(audit):
+        async def report(audit):
             attempt["audit"] = audit
             combined = {**audit, "search_attempts": list(attempts)}
-            progress(combined)
+            await report_progress(progress, combined)
             return combined
 
-        report({"match_status": "uncertain", "reason": "Searching Prime event labels"})
+        await report({"match_status": "uncertain", "reason": "Searching Prime event labels"})
         try:
             results = await search(query)
             current = (results.get("session_id"), results.get("generation"))
@@ -54,12 +55,12 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
                 if isinstance(exc, ExecutorError)
                 else {"code": type(exc).__name__, "message": str(exc)[:1000]}
             )
-            report(attempt["audit"])
+            await report(attempt["audit"])
             raise
         state = selection_state(selected, audit)
         attempt["state"] = state
         uncertain |= state == "access_unknown"
-        combined = report(audit)
+        combined = await report(audit)
         if audit.get("error"):
             return results, selected, combined
         if state in {"ready", "waiting_for_feed"}:
@@ -77,12 +78,12 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
             break
     if uncertain:
         selected = None
-        combined = report(
+        combined = await report(
             {**audit, "match_status": "uncertain", "reason": "Some search alternatives remain unresolved"}
         )
     elif denied_outcome:
         results, selected, audit = denied_outcome
         combined = {**audit, "search_attempts": list(attempts), "search_queries_exhausted": True}
-        progress(combined)
+        await report_progress(progress, combined)
     combined = {**combined, "search_queries_exhausted": len(attempts) == len(queries)}
     return results, selected, combined

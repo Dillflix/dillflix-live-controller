@@ -47,6 +47,7 @@ import { VPNSettings } from "./VPNSettings";
 import { PlexSettings } from "./PlexSettings";
 import { DiagnosticsTools } from "./DiagnosticsTools";
 import { ScreenPanel } from "./ScreenPanel";
+import { LaunchProgress } from "./LaunchProgress";
 import type {
   Action,
   ConfigurationDocument,
@@ -923,12 +924,7 @@ function App() {
                       : d.reason}
                 </div>
                 {data.playback_job?.state === "pending" && !playbackOffline && (
-                  <div className="df-playing-detail" aria-live="polite">
-                    {data.playback_job.purpose === "route_handoff"
-                      ? "Updating coverage for the same event"
-                      : `Request ${data.playback_job.progress || "queued"}`}{" "}
-                    · waiting for live verification
-                  </div>
+                  <LaunchProgress job={data.playback_job} serverTime={data.meta.server_time} />
                 )}
                 {d.playback_state === "unverified" && !playbackOffline && (
                   <div className="df-playing-detail" aria-live="polite">

@@ -1,9 +1,11 @@
 """Task-local, bounded model evidence persisted by the calling playback workflow."""
 
 import json
+import asyncio
+import copy
 import logging
 import re
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
 
 _sink = ContextVar("model_diagnostic_sink", default=None)
@@ -11,6 +13,50 @@ _archive = ContextVar("model_archive_sink", default=None)
 _context = ContextVar("model_capture_context", default=None)
 _decision = ContextVar("model_decision", default=None)
 log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def capture_model_calls_async(sink, *, recorder=None, context=None):
+    """Persist ordered snapshots off-loop; finish all queued writes on cancellation."""
+    queue = asyncio.Queue()
+
+    def enqueue(record):
+        queue.put_nowait(copy.deepcopy(record))
+
+    async def write():
+        while (record := await queue.get()) is not None:
+            def persist():
+                for callback in (recorder, sink):
+                    if callback:
+                        try:
+                            callback(record)
+                        except Exception:
+                            log.error("Model capture sink failed for call %s", record.get("call_id"))
+            await asyncio.to_thread(persist)
+
+    worker = asyncio.create_task(write())
+    try:
+        with capture_model_calls(enqueue, context=context):
+            yield
+    finally:
+        queue.put_nowait(None)
+        cancelled = False
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancelled = True
+        await worker
+        if cancelled:
+            raise asyncio.CancelledError
+
+
+async def report_progress(callback, value):
+    """Support asynchronous persistence and existing in-memory chooser callbacks."""
+    import inspect
+    result = callback(value)
+    if inspect.isawaitable(result):
+        await result
 
 
 @contextmanager

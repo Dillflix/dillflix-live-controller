@@ -45,7 +45,7 @@ class PlaybackWorker:
             self.guard = None
             raise RuntimeError("Only one executor process may own this device database") from None
         self.loop = asyncio.get_running_loop()
-        self.recover()
+        await self.database_call(self.recover)
         self.stopping = False
         self.worker = asyncio.create_task(self.run(), name="playback-executor")
 
@@ -60,10 +60,10 @@ class PlaybackWorker:
         # Interrupted navigation remains a durable cleanup obligation if offline.
         pending = []
         if self.guard:
-            with self.db.snapshot() as db:
-                pending = [
-                    r[0] for r in db.execute("SELECT token FROM executor_jobs WHERE cancel_requested=1")
-                ]
+            def read_cancellations():
+                with self.db.snapshot() as db:
+                    return [r[0] for r in db.execute("SELECT token FROM executor_jobs WHERE cancel_requested=1")]
+            pending = await self.database_call(read_cancellations)
         for token in pending:
             try:
                 async with asyncio.timeout(self.config.cancel_timeout):
@@ -98,28 +98,31 @@ class PlaybackWorker:
         return report, created
 
     async def cancel(self, command):
-        tokens = self.store.request_cancel(command)
+        tokens = (await self.database_call(self.store.request_cancel, command))
         self.notify(tokens)
         async with asyncio.timeout(self.config.cancel_timeout):
             while True:
-                with self.db.snapshot() as db:
-                    pending = [
-                        t
-                        for t in tokens
-                        if self.store.get_row(db, t)["cancel_requested"] != 2
-                        and self.store.get_row(db, t)["request"] is not None
-                    ]
-                    outcomes = {
-                        json.loads(self.store.get_row(db, t)["report"])
-                        .get("cancellation", {})
-                        .get("active_playback", "unknown")
-                        for t in tokens
-                        if self.store.get_row(db, t)["request"] is not None
-                    }
-                    active_playback = next(
-                        (s for s in ("unknown", "stopped", "not_current") if s in outcomes),
-                        "already_inactive",
-                    )
+                def read_cancellation():
+                    with self.db.snapshot() as db:
+                        pending = [
+                            t
+                            for t in tokens
+                            if self.store.get_row(db, t)["cancel_requested"] != 2
+                            and self.store.get_row(db, t)["request"] is not None
+                        ]
+                        outcomes = {
+                            json.loads(self.store.get_row(db, t)["report"])
+                            .get("cancellation", {})
+                            .get("active_playback", "unknown")
+                            for t in tokens
+                            if self.store.get_row(db, t)["request"] is not None
+                        }
+                        active_playback = next(
+                            (s for s in ("unknown", "stopped", "not_current") if s in outcomes),
+                            "already_inactive",
+                        )
+                    return pending, active_playback
+                pending, active_playback = await self.database_call(read_cancellation)
                 if not pending:
                     return {
                         "device_id": command.device_id,
@@ -165,10 +168,10 @@ class PlaybackWorker:
             )
         return cancellations, row
 
-    async def database_call(self, function):
+    async def database_call(self, function, *args, **kwargs):
         # SQLite's busy timeout must not freeze service RPCs or cancellation.
         # Drain the thread on shutdown so maintenance cannot outlive our guard.
-        task = asyncio.create_task(asyncio.to_thread(function))
+        task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -230,13 +233,15 @@ class PlaybackWorker:
                     try:
                         await self.cancel_one(cancel["token"])
                     except ExecutorError as error:
-                        with self.db.transaction() as db:
-                            job = self.store.get_row(db, cancel["token"])
-                            report = json.loads(job["report"])
-                            report["observation_status"].update(
-                                state="unavailable", checked_at=utc(), error=error.detail()
-                            )
-                            self.store.write(db, job["token"], report, next_check=time.time() + 5)
+                        def record_cancel_error(error=error):
+                            with self.db.transaction() as db:
+                                job = self.store.get_row(db, cancel["token"])
+                                report = json.loads(job["report"])
+                                report["observation_status"].update(
+                                    state="unavailable", checked_at=utc(), error=error.detail()
+                                )
+                                self.store.write(db, job["token"], report, next_check=time.time() + 5)
+                        await self.database_call(record_cancel_error)
         elif row:
             self.active_token = row["token"]
             routine = self.monitor if row["state"] == "playing_verified" else self.navigate

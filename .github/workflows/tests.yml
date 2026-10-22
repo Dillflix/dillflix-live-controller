@@ -38,4 +38,5 @@ jobs:
           path: |
             frontend/test-results/vpn-*.png
             frontend/test-results/entitlement-*.png
+            frontend/test-results/launch-progress-*.png
           if-no-files-found: ignore

@@ -197,7 +197,7 @@ class ExecutorStore:
             return self.project(self.get_row(db, token), db)
 
     def by_request(self, request_id):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             row = db.execute("SELECT * FROM executor_jobs WHERE request_id=?", (request_id,)).fetchone()
             return self.project(row, db) if row else None
 
@@ -254,6 +254,8 @@ class ExecutorStore:
         with self.db.transaction() as db:
             row = self.allowed(db, token, navigation=True)
             report = json.loads(row["report"])
+            if report["operation"].get("phase") != phase:
+                report["operation"]["phase_started_at"] = utc()
             report["operation"].update(state="navigating", phase=phase, updated_at=utc())
             if attempt:
                 report["operation"]["attempts"].append(attempt)

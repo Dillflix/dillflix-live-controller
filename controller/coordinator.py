@@ -396,21 +396,22 @@ class PlaybackCoordinator(PlaybackRecovery):
                     d["id"],
                 )
             elif report.get("state") in {"accepted", "navigating"}:
-                if report.get("phase", "").startswith("network_"):
-                    d["reason"] = report.get("progress_reason") or "Preparing the configured network for Prime"
+                progress = report.get("phase") or report["state"]
+                if report.get("progress_reason"):
+                    d["reason"] = report["progress_reason"]
                     self.db.save_device(db, d)
-                if job["progress"] != report["state"]:
+                if job["progress"] != progress:
                     self.db.log(
                         db,
                         self.now(db).isoformat(),
-                        "Playback request " + report["state"],
-                        "Awaiting verified live playback",
+                        report.get("progress_reason") or "Playback request " + report["state"],
+                        "Playback verification is pending" if progress == "verifying" else "Preparing the requested live coverage",
                         "navigation",
                         d["id"],
                     )
                 db.execute(
                     "UPDATE jobs SET executor_job_id=?,progress=?,error=NULL WHERE id=?",
-                    (report.get("executor_job_id"), report["state"], request_id),
+                    (report.get("executor_job_id"), progress, request_id),
                 )
             elif report.get("state") == "playing_verified":
                 error = self.observation_error(job, report.get("observation"))

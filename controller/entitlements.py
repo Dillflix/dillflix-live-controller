@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from .database import encode
 from .entitlement_store import identity
 from .executor.models import ExecutorError
-from .model_diagnostics import capture_model_calls
+from .model_diagnostics import capture_model_calls_async
 from .planner import allowed_options, parse_time
 from .prime_player.entitlement import choose_entitlement
 from .prime_player.identity_cache import EventMatchCache
@@ -503,7 +503,7 @@ class EntitlementChecks:
         deferred = None
         try:
             async with asyncio.timeout(CHECK_SECONDS):
-                with capture_model_calls(lambda _: None, recorder=workflow.model_captures.record, context=context):
+                async with capture_model_calls_async(lambda _: None, recorder=workflow.model_captures.record, context=context):
                     _, selected, audit = await choose_search(
                         request, device["preferences"]["timezone"], workflow.matcher, search, None,
                         lambda a: evidence.update(audit=a),

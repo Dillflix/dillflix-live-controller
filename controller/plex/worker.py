@@ -80,37 +80,44 @@ class ArtworkWorker:
 
     async def resolve_in_flight(self, device, attempt):
         """A transmitted request may have succeeded even without an acknowledgement."""
-        client = self.client(attempt["config"])
+        client = (await self.service.playback_work(self.client, attempt["config"]))
         try:
             item = await self.check_target(client, attempt["config"])
             if attempt.get("kind") == "title":
                 matched = item.get("title") == attempt["title"] and field_locked(item, "title")
+                def record_title():
+                    with self.service.db.transaction() as db:
+                        state = runtime(db, device)
+                        if (state.get("in_flight") or {}).get("id") != attempt["id"]:
+                            return
+                        state["in_flight"] = None
+                        if matched and state["generation"] == attempt["generation"]:
+                            state["applied_title"] = self.title_receipt(attempt)
+                        save_runtime(db, device, state)
+                await self.service.playback_work(record_title)
+                return
+            served = await client.image(attempt["config"]["rating_key"], attempt["slot"], item)
+            def read_source():
+                with self.service.db.snapshot() as db:
+                    source = asset_by_id(db, attempt["digest"])
+                return source
+            source = await self.service.playback_work(read_source)
+            matched = (await self.service.playback_work(same_image, source, served))
+            def record_image():
                 with self.service.db.transaction() as db:
                     state = runtime(db, device)
                     if (state.get("in_flight") or {}).get("id") != attempt["id"]:
                         return
                     state["in_flight"] = None
                     if matched and state["generation"] == attempt["generation"]:
-                        state["applied_title"] = self.title_receipt(attempt)
+                        state["applied"][attempt["slot"]] = {
+                            "digest": source.digest,
+                            "served_digest": served.digest,
+                            "content_id": attempt["content_id"],
+                            "at": self.integration.now().isoformat(),
+                        }
                     save_runtime(db, device, state)
-                return
-            served = await client.image(attempt["config"]["rating_key"], attempt["slot"], item)
-            with self.service.db.transaction() as db:
-                source = asset_by_id(db, attempt["digest"])
-            matched = same_image(source, served)
-            with self.service.db.transaction() as db:
-                state = runtime(db, device)
-                if (state.get("in_flight") or {}).get("id") != attempt["id"]:
-                    return
-                state["in_flight"] = None
-                if matched and state["generation"] == attempt["generation"]:
-                    state["applied"][attempt["slot"]] = {
-                        "digest": source.digest,
-                        "served_digest": served.digest,
-                        "content_id": attempt["content_id"],
-                        "at": self.integration.now().isoformat(),
-                    }
-                save_runtime(db, device, state)
+            await self.service.playback_work(record_image)
         finally:
             await client.close()
 
@@ -122,10 +129,10 @@ class ArtworkWorker:
         }
 
     async def deliver_title(self, device, generation, config, desired, client):
-        if not self.current(device, generation):
+        if not (await self.service.playback_work(self.current, device, generation)):
             return
         item = await self.check_target(client, config)
-        if not self.current(device, generation):
+        if not (await self.service.playback_work(self.current, device, generation)):
             return
         attempt = {
             "id": uuid4().hex,
@@ -136,22 +143,28 @@ class ArtworkWorker:
             "content_id": desired["content_id"],
         }
         if item.get("title") != attempt["title"] or not field_locked(item, "title"):
-            with self.service.db.transaction() as db:
-                state = runtime(db, device)
-                if state["generation"] != generation or state["hold"] or state["blocked"]:
-                    return
-                state["in_flight"] = attempt
-                save_runtime(db, device, state)
+            def claim_title():
+                with self.service.db.transaction() as db:
+                    state = runtime(db, device)
+                    if state["generation"] != generation or state["hold"] or state["blocked"]:
+                        return
+                    state["in_flight"] = attempt
+                    save_runtime(db, device, state)
+                return True
+            if not await self.service.playback_work(claim_title):
+                return
             await client.set_title(config["rating_key"], item.get("librarySectionID"), attempt["title"])
             after = await client.metadata(config["rating_key"])
             if after.get("title") != attempt["title"] or not field_locked(after, "title"):
                 raise PlexError("Plex has not served the intended title; verification will retry")
-        with self.service.db.transaction() as db:
-            state = runtime(db, device)
-            state["in_flight"] = None
-            if state["generation"] == generation:
-                state["applied_title"] = self.title_receipt(attempt)
-            save_runtime(db, device, state)
+        def record_title():
+            with self.service.db.transaction() as db:
+                state = runtime(db, device)
+                state["in_flight"] = None
+                if state["generation"] == generation:
+                    state["applied_title"] = self.title_receipt(attempt)
+                save_runtime(db, device, state)
+        await self.service.playback_work(record_title)
 
     async def deliver_slot(self, device, generation, config, desired, slot, client):
         source = desired["sources"][slot]
@@ -161,21 +174,27 @@ class ArtworkWorker:
                 asset = await self.download(source["url"])
             except PlexError as exc:
                 download_error = PlexError(str(exc))  # Source problems remain retryable.
-                with self.service.db.transaction() as db:
-                    applied = runtime(db, device)["applied"].get(slot)
-                    digest = (
-                        applied["digest"]
-                        if applied and applied.get("content_id") == desired["content_id"]
-                        else config["defaults"][slot]
-                    )
-                    asset = asset_by_id(db, digest)
+                def read_fallback():
+                    with self.service.db.snapshot() as db:
+                        applied = runtime(db, device)["applied"].get(slot)
+                        digest = (
+                            applied["digest"]
+                            if applied and applied.get("content_id") == desired["content_id"]
+                            else config["defaults"][slot]
+                        )
+                        asset = asset_by_id(db, digest)
+                    return asset
+                asset = await self.service.playback_work(read_fallback)
         else:
-            with self.service.db.transaction() as db:
-                asset = asset_by_id(db, source.get("asset"))
-        if not self.current(device, generation):
+            def read_source():
+                with self.service.db.snapshot() as db:
+                    asset = asset_by_id(db, source.get("asset"))
+                return asset
+            asset = await self.service.playback_work(read_source)
+        if not (await self.service.playback_work(self.current, device, generation)):
             return None
         item = await self.check_target(client, config)
-        if not self.current(device, generation):
+        if not (await self.service.playback_work(self.current, device, generation)):
             return None
         try:
             served = await client.image(config["rating_key"], slot, item)
@@ -183,9 +202,9 @@ class ArtworkWorker:
             if not str(exc).startswith("Plex has no supported current"):
                 raise
             served = None
-        if not self.current(device, generation):
+        if not (await self.service.playback_work(self.current, device, generation)):
             return None
-        if served is None or not same_image(asset, served):
+        if served is None or not (await self.service.playback_work(same_image, asset, served)):
             attempt = {
                 "id": uuid4().hex,
                 "slot": slot,
@@ -194,52 +213,58 @@ class ArtworkWorker:
                 "config": config,
                 "content_id": desired["content_id"],
             }
-            with self.service.db.transaction() as db:
-                state = runtime(db, device)
-                if state["generation"] != generation or state["hold"] or state["blocked"]:
-                    return None
-                save_asset(db, asset)
-                state["in_flight"] = attempt
-                save_runtime(db, device, state)
+            def claim_image():
+                with self.service.db.transaction() as db:
+                    state = runtime(db, device)
+                    if state["generation"] != generation or state["hold"] or state["blocked"]:
+                        return None
+                    save_asset(db, asset)
+                    state["in_flight"] = attempt
+                    save_runtime(db, device, state)
+                return True
+            if not await self.service.playback_work(claim_image):
+                return
             # Leave the durable attempt intact on cancellation, timeout or read-back failure.
             await client.set_image(config["rating_key"], slot, asset)
             after = await client.metadata(config["rating_key"])
             served = await client.image(config["rating_key"], slot, after)
-            if not same_image(asset, served):
+            if not (await self.service.playback_work(same_image, asset, served)):
                 raise PlexError("Plex has not served the intended artwork; verification will retry")
-        with self.service.db.transaction() as db:
-            state = runtime(db, device)
-            state["in_flight"] = None
-            if state["generation"] == generation:
-                save_asset(db, asset)
-                state["applied"][slot] = {
-                    "digest": asset.digest,
-                    "served_digest": served.digest,
-                    "content_id": desired["content_id"],
-                    "at": self.integration.now().isoformat(),
-                }
-            save_runtime(db, device, state)
+        def record_image():
+            with self.service.db.transaction() as db:
+                state = runtime(db, device)
+                state["in_flight"] = None
+                if state["generation"] == generation:
+                    save_asset(db, asset)
+                    state["applied"][slot] = {
+                        "digest": asset.digest,
+                        "served_digest": served.digest,
+                        "content_id": desired["content_id"],
+                        "at": self.integration.now().isoformat(),
+                    }
+                save_runtime(db, device, state)
+        await self.service.playback_work(record_image)
         return download_error
 
     async def run_once(self, device):
         async with self.lock:
-            config, state = self.snapshot(device)
+            config, state = (await self.service.playback_work(self.snapshot, device))
             if state["blocked"] or (state["retry_at"] and state["retry_at"] > time.time()):
                 return
             generation = state["generation"]
             try:
                 if state["in_flight"]:
                     await self.resolve_in_flight(device, state["in_flight"])
-                    config, state = self.snapshot(device)
+                    config, state = (await self.service.playback_work(self.snapshot, device))
                     generation = state["generation"]
-                if not self.current(device, generation) or not state["desired"]:
+                if not (await self.service.playback_work(self.current, device, generation)) or not state["desired"]:
                     return
-                client = self.client(config)
+                client = (await self.service.playback_work(self.client, config))
                 errors = []
                 try:
                     await self.deliver_title(device, generation, config, state["desired"], client)
                     for slot in ("poster", "background"):
-                        if not self.current(device, generation):
+                        if not (await self.service.playback_work(self.current, device, generation)):
                             return
                         error = await self.deliver_slot(
                             device, generation, config, state["desired"], slot, client
@@ -250,32 +275,34 @@ class ArtworkWorker:
                     await client.close()
                 if errors:
                     raise errors[0]
-                with self.service.db.transaction() as db:
-                    latest = runtime(db, device)
-                    if latest["generation"] == generation:
-                        latest.update(
-                            pending=False,
-                            retry_at=None,
-                            failures=0,
-                            error=None,
-                            last_success=self.integration.now().isoformat(),
-                        )
-                        save_runtime(db, device, latest)
-                        self.service.db.log(
-                            db,
-                            self.integration.now().isoformat(),
-                            "Plex title and artwork updated",
-                            state["desired"]["title"],
-                            "plex",
-                            device,
-                        )
-                    prune_assets(db)
+                def record_delivery():
+                    with self.service.db.transaction() as db:
+                        latest = runtime(db, device)
+                        if latest["generation"] == generation:
+                            latest.update(
+                                pending=False,
+                                retry_at=None,
+                                failures=0,
+                                error=None,
+                                last_success=self.integration.now().isoformat(),
+                            )
+                            save_runtime(db, device, latest)
+                            self.service.db.log(
+                                db,
+                                self.integration.now().isoformat(),
+                                "Plex title and artwork updated",
+                                state["desired"]["title"],
+                                "plex",
+                                device,
+                            )
+                        prune_assets(db)
+                await self.service.playback_work(record_delivery)
             except PlexError as exc:
-                self.fail(device, exc, generation)
+                await self.service.playback_work(self.fail, device, exc, generation)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                self.fail(device, PlexError("Unexpected artwork error; update will retry"), generation)
+                await self.service.playback_work(self.fail, device, PlexError("Unexpected artwork error; update will retry"), generation)
 
     async def run(self):
         integration = self.integration
@@ -293,16 +320,22 @@ class ArtworkWorker:
     async def cycle(self):
         integration = self.integration
         integration.event.clear()
-        with self.service.db.transaction() as db:
-            integration.reconcile(db)
-            devices = [r[0] for r in db.execute("SELECT device_id FROM plex_settings")]
+        def read_devices():
+            with self.service.db.transaction() as db:
+                integration.reconcile(db)
+                devices = [r[0] for r in db.execute("SELECT device_id FROM plex_settings")]
+            return devices
+        devices = await self.service.playback_work(read_devices)
         for device in devices:
             await self.run_once(device)
-        with self.service.db.transaction() as db:
-            states = [runtime(db, d) for d in devices]
-            refs = {configuration(db, d).get("credential_ref") for d in devices}
-            refs.update(s["in_flight"]["config"]["credential_ref"] for s in states if s["in_flight"])
-            integration.credentials.prune(refs)
+        def prune_credentials():
+            with self.service.db.transaction() as db:
+                states = [runtime(db, d) for d in devices]
+                refs = {configuration(db, d).get("credential_ref") for d in devices}
+                refs.update(s["in_flight"]["config"]["credential_ref"] for s in states if s["in_flight"])
+                integration.credentials.prune(refs)
+            return states
+        states = await self.service.playback_work(prune_credentials)
         now = time.time()
         deadlines = []
         immediate = False

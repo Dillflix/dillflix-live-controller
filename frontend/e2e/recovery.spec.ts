@@ -26,7 +26,7 @@ test("navigation timeout shows progress, records the reason and falls back live"
     .getByRole("combobox", { name: "Scenario", exact: true })
     .selectOption("timeout");
   await expect(page.locator(".df-playing")).toContainText(
-    "waiting for live verification",
+    "Preparing playback",
   );
   await page
     .getByRole("button", { name: "Playback details", exact: true })
