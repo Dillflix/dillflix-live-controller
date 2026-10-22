@@ -3,6 +3,7 @@ import { test, expect } from "@playwright/test";
 test("launch stages show network startup and elapsed time before playback verification", async ({ page, request }) => {
   const data = await (await request.get("/api/v1/overview")).json();
   data.device.playback_state = "navigating";
+  data.device.executor_health = { state: "ok" };
   data.device.desired = data.events[0]?.content_id;
   data.device.automation = "active";
   data.device.manual_control = null;
