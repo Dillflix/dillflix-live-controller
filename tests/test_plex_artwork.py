@@ -214,6 +214,37 @@ async def red_image(_url):
     return image_asset(picture("red"))
 
 
+async def test_plex_delivery_with_contended_writer_keeps_loop_responsive(setup, monkeypatch):
+    import sqlite3
+    import threading
+    import time
+    browser, service, plex = setup
+    real_playback(service)
+    enable(browser)
+    service.plex.worker.download = red_image
+    loop_thread = threading.get_ident()
+    original = service.db.transaction
+    def checked():
+        assert threading.get_ident() != loop_thread, "Plex write transaction on event loop"
+        return original()
+    blocker = sqlite3.connect(service.db.path, isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+    monkeypatch.setattr(service.db, "transaction", checked)
+    task = asyncio.create_task(service.plex.worker.run_once("living-room"))
+    try:
+        started = time.monotonic()
+        await asyncio.sleep(.1)
+        assert time.monotonic() - started < 1
+        assert not task.done()
+        blocker.rollback()
+        await asyncio.wait_for(task, 10)
+        assert plex.title_requests and plex.writes()
+    finally:
+        blocker.close()
+        monkeypatch.setattr(service.db, "transaction", original)
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def event_title(service, content_id, title):
     with service.db.transaction() as db:
         snapshot = json.loads(

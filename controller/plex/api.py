@@ -93,8 +93,10 @@ def install_plex_api(app, service):
             if size > MAX_IMAGE_BYTES:
                 raise HTTPException(413, "Default images must be at most 8 MiB")
             chunks.append(chunk)
-        asset = image_asset(b"".join(chunks))
-        return integration.change(device_id, command, "upload", assets={slot: asset})
+        def save_upload():
+            asset = image_asset(b"".join(chunks))
+            return integration.change(device_id, command, "upload", assets={slot: asset})
+        return await service.playback_work(save_upload)
 
     @app.post(prefix + "/{action}")
     def action(

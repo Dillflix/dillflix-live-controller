@@ -358,7 +358,7 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.post("/api/v1/simulation")
     async def simulation(request: SimulationCommand):
-        result = service.simulation(request)
+        result = await service.playback_work(service.simulation, request)
         await service.refresh_status(force=True)
         return result
 
