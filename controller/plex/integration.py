@@ -64,7 +64,7 @@ class PlexIntegration:
             return True  # Worker can recover from durable controller state.
 
     def status(self, device):
-        with self.service.db.transaction() as db:
+        with self.service.db.snapshot() as db:
             self.service.db.device(db, device)
             config = configuration(db, device)
             state = runtime(db, device)
@@ -127,7 +127,7 @@ class PlexIntegration:
             await client.close()
 
     def preflight(self, device, request, payload):
-        with self.service.db.transaction() as db:
+        with self.service.db.snapshot() as db:
             self.service.db.device(db, device)
             return receipt(db, device, request.command_id, request.expected_revision, payload)[1]
 

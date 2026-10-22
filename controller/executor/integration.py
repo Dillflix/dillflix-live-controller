@@ -46,7 +46,7 @@ class IntegratedPlaybackAdapter:
     def submit(self, request):
         body = dict(request)
         if "deadline_at" not in body:
-            with self.executor.db.transaction() as db:
+            with self.executor.db.snapshot() as db:
                 row = db.execute(
                     "SELECT deadline_at FROM jobs WHERE id=?", (request["request_id"],)
                 ).fetchone()
@@ -70,7 +70,7 @@ class IntegratedPlaybackAdapter:
         """Read observation and monitoring outcome from the same durable snapshot."""
         if self.executor.stopping or not self.executor.loop:
             raise ConnectionError("Playback executor is not running")
-        with self.executor.db.transaction() as db:
+        with self.executor.db.snapshot() as db:
             owner = db.execute(
                 "SELECT current_token FROM executor_devices WHERE device_id=?", (device_id,)
             ).fetchone()
@@ -95,7 +95,7 @@ class IntegratedPlaybackAdapter:
         if report:
             command = CancelRequest(device_id=report["device_id"], token=report["token"])
         else:
-            with self.executor.db.transaction() as db:
+            with self.executor.db.snapshot() as db:
                 row = db.execute("SELECT device_id,intent FROM jobs WHERE id=?", (request_id,)).fetchone()
             if not row:
                 return

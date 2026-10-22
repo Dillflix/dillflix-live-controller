@@ -306,7 +306,7 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/devices/{device_id}/vpn-locations")
     async def vpn_locations(device_id: str):
-        service.overview(device_id)  # Validate the device and retain admin auth.
+        await service.playback_work(service.overview, device_id)  # Validate the device and retain admin auth.
         if not service.executor or not hasattr(service.executor, "player"):
             return {"enabled": False, "locations": []}
         try:

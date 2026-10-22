@@ -886,7 +886,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             await asyncio.sleep(self.settings.maintenance_interval)
 
     def maintenance_status(self):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             return {
                 **self.db.meta(db, "maintenance_health", {"state": "starting"}),
                 "policy": policy(self.settings),
