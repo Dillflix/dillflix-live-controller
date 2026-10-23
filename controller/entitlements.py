@@ -478,7 +478,7 @@ class EntitlementChecks:
             await self.playback_work(check_priority)
             await self.playback_work(progress, "matching", "Matching fetched catalogue results; playback monitoring can continue")
 
-        async def search(query):
+        async def wait_for_read():
             # Keep earlier search/matching progress while a routine monitor runs.
             # Launch, manual control and recovery still defer the entire job.
             waiting = False
@@ -496,6 +496,9 @@ class EntitlementChecks:
                 # The whole job's deadline bounds this wait. A slow ordinary
                 # monitor must not reset otherwise valid matching progress.
                 await asyncio.sleep(0.25)
+
+        async def search(query):
+            await wait_for_read()
             await self.playback_work(progress, "searching", "Reading Prime catalogue data")
             async with workflow.input_lock:
                 health = await workflow.player.health()
@@ -519,7 +522,8 @@ class EntitlementChecks:
         async def fetch_broadcasts(results, content_id):
             # Only catalogue reads, fenced just like search. No resolve/play and
             # no network changes are authorized by an entitlement check.
-            await self.playback_work(check_priority)
+            await wait_for_read()
+            await self.playback_work(progress, "searching", "Reading alternate Prime broadcast access")
             async with workflow.input_lock:
                 await self.playback_work(check_priority)
                 health = await workflow.player.health()
@@ -531,7 +535,7 @@ class EntitlementChecks:
                 ownership = workflow.player.ownership(health, automatic=True)
                 workflow.require_catalogue_generation(health, results)
                 cache_key = (results.get("session_id"), results.get("generation"),
-                             results.get("network_context_id"), content_id)
+                             results.get("network_context_id"), content_id, encode(ownership))
                 if cache_key in broadcast_cache:
                     return broadcast_cache[cache_key]
                 response = await workflow.player.broadcasts(content_id, ownership)

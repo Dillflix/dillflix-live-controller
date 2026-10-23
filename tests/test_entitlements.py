@@ -1301,7 +1301,7 @@ async def test_legacy_denials_reschedule_from_original_check_and_stop_when_termi
         await cleanup(controller)
 
 
-@pytest.mark.parametrize("stale", [None, "session_id", "generation", "content_id"])
+@pytest.mark.parametrize("stale", [None, "session_id", "generation", "content_id", "complete"])
 async def test_denied_parent_checks_alternate_broadcast_entitlement(tmp_path, stale):
     from copy import deepcopy
 
@@ -1331,7 +1331,8 @@ async def test_denied_parent_checks_alternate_broadcast_entitlement(tmp_path, st
         assert broadcasts == [GTI]
         if stale:
             assert value["status"] == "unknown"
-            assert evidence["error"]["code"] == "prime_stale_result"
+            assert evidence["error"]["code"] == (
+                "prime_invalid_broadcasts" if stale == "complete" else "prime_stale_result")
         else:
             assert value["status"] == "entitled"
             assert evidence["audit"]["feeds"][0]["content_id"] == ENGLISH
@@ -1370,5 +1371,39 @@ async def test_locked_parent_does_not_hide_entitled_broadcast_of_second_parent(t
         assert record(controller)["status"] == "entitled"
         assert evidence["audit"]["feeds"][0]["content_id"] == ENGLISH
         assert inspected == [GTI, second]
+    finally:
+        await cleanup(controller)
+
+
+async def test_alternate_broadcast_read_yields_to_due_playback_monitor(tmp_path):
+    from copy import deepcopy
+
+    from test_prime_broadcasts import CAPTURE
+
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    try:
+        token = await launch(workflow)
+        workflow.player.calls.clear()
+        original = workflow.player.search
+
+        async def denied(*args):
+            result = await original(*args)
+            with controller.db.transaction() as db:
+                db.execute("UPDATE executor_jobs SET next_check=0 WHERE token=?", (token,))
+            return {**result, **results(tile(entitlement_status="UNENTITLED"))}
+
+        async def alternatives(content_id, ownership):
+            assert workflow.player.calls[-1][0] == "status"
+            workflow.player.calls.append(("broadcasts", content_id))
+            return {**deepcopy(CAPTURE), "session_id": workflow.player.session,
+                    "generation": 1, "content_id": content_id}
+
+        workflow.player.search, workflow.player.broadcasts = denied, alternatives
+        workflow.worker = asyncio.create_task(workflow.run())
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        assert [c[0] for c in workflow.player.calls[:3]] == ["search", "status", "broadcasts"]
+        assert workflow.store.report(token)["observation"]["verified"]
     finally:
         await cleanup(controller)
