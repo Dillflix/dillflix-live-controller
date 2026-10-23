@@ -414,7 +414,7 @@ Detailed entitlement evidence remains capped; its compact index covers all event
 
 A completed catalogue selection is bound to the validated network context used by
 its results, including a context discovered by the probe's initial health request.
-The original signature is retained for diagnostics. A context change after the
+The original signature and network scope are retained for diagnostics. A context change after the
 read invalidates the result, as do existing intent/revision/route/snapshot fences.
 
 Executor operations retain `phase_started_at` across repeated updates of the same phase. Overview projects stored phases and player startup progress without device RPCs. The playback banner distinguishes search, feed selection, broadcast lookup, network switching, Prime initialization and live verification, with elapsed time for the current phase. Activity records phase changes instead of describing every navigating phase as verification.

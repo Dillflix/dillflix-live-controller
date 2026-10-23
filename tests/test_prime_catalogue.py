@@ -96,6 +96,10 @@ async def finish_check(controller):
 async def test_initial_health_scope_refresh_reuses_completed_selection(tmp_path, monkeypatch):
     controller, workflow = rig(tmp_path)
     setup_selection(controller, monkeypatch)
+    with controller.db.transaction() as db:
+        device = controller.db.device(db)
+        device["prime_network_scope"] = {"context_id": "old-context", "policy_revision": workflow.network_policy.revision}
+        controller.db.save_device(db, device)
     original_health, original_search = workflow.player.health, workflow.player.search
 
     async def health():
@@ -113,6 +117,8 @@ async def test_initial_health_scope_refresh_reuses_completed_selection(tmp_path,
         assert finished["state"] == "ready"
         assert finished["initial_signature"] == probe["signature"]
         assert finished["signature"] != probe["signature"]
+        assert finished["initial_network_scope"]["context_id"] == "old-context"
+        assert finished["network_scope"]["context_id"] == "new-context"
         controller.stage_playback()
         device, current = saved(controller)
         assert current["id"] == probe["id"]

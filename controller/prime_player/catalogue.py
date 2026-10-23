@@ -159,6 +159,7 @@ class CatalogueChecks:
         probe = {
             "id": uuid4().hex,
             "signature": token,
+            "initial_network_scope": device.get("prime_network_scope"),
             "state": "pending",
             "device_id": device["id"],
             "content_id": item["content_id"],
