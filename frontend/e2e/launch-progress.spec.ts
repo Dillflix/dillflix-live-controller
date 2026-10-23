@@ -18,6 +18,7 @@ test("launch stages show network startup and elapsed time before playback verifi
   await page.goto("/");
   const banner = page.locator(".df-playing");
   await expect(banner).toContainText("Waiting for Prime initialization");
+  await expect(banner.getByText("Starting Prime on the connected network", { exact: true })).toHaveCount(0);
   await expect(banner).toContainText(/1m \d+s in this stage/);
   await expect(banner).not.toContainText("waiting for live verification");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
