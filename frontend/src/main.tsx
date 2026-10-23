@@ -47,6 +47,7 @@ import { VPNSettings } from "./VPNSettings";
 import { PlexSettings } from "./PlexSettings";
 import { DiagnosticsTools } from "./DiagnosticsTools";
 import { ScreenPanel } from "./ScreenPanel";
+import { LaunchProgress } from "./LaunchProgress";
 import type {
   Action,
   ConfigurationDocument,
@@ -512,6 +513,8 @@ function App() {
     "Entitlement check queued. Playback operations take priority.",
   );
   const playbackOffline = d.executor_health?.state === "offline";
+  const showLaunchProgress = data.playback_job?.state === "pending" &&
+    !playbackOffline && !d.manual_control && d.automation !== "paused";
   const playbackSimulator = data.meta.playback_adapter === "simulator";
   const observedSimulated = d.observed?.simulated ?? playbackSimulator;
   const recoveryWaiting =
@@ -915,20 +918,15 @@ function App() {
                     </Pill>
                   )}
                 </div>
-                <div className="df-playing-detail">
+                {!(showLaunchProgress && data.playback_job?.launch_progress) && <div className="df-playing-detail">
                   {d.manual_control
                     ? "Use the device remote below. Your watch plan is saved."
                     : d.automation === "paused"
                       ? "Your watch plan is saved. Resume when ready."
                       : d.reason}
-                </div>
-                {data.playback_job?.state === "pending" && !playbackOffline && (
-                  <div className="df-playing-detail" aria-live="polite">
-                    {data.playback_job.purpose === "route_handoff"
-                      ? "Updating coverage for the same event"
-                      : `Request ${data.playback_job.progress || "queued"}`}{" "}
-                    · waiting for live verification
-                  </div>
+                </div>}
+                {showLaunchProgress && data.playback_job && (
+                  <LaunchProgress job={data.playback_job} serverTime={data.meta.server_time} />
                 )}
                 {d.playback_state === "unverified" && !playbackOffline && (
                   <div className="df-playing-detail" aria-live="polite">

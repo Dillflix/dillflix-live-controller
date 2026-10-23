@@ -17,9 +17,9 @@ from ..executor.models import ExecutorError
 from ..executor.store import utc
 from ..executor.worker import PlaybackWorker
 from ..model_capture import ModelCaptureStore
-from ..model_diagnostics import capture_model_calls
+from ..model_diagnostics import capture_model_calls_async
 from ..planner import parse_time
-from .catalogue import CatalogueChecks
+from .catalogue import CatalogueChecks, SELECTION_HANDOFF_SECONDS
 from .client import PrimePlayerClient, correlated
 from .matching import EventMatcher, selection_state, unavailable_live_trial
 from .search import choose_search
@@ -120,7 +120,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
 
     async def mutation(self, token, action, function):
         async with self.input_lock:
-            action_id = self.store.journal(token, action)
+            action_id = (await self.database_call(self.store.journal, token, action))
             task = asyncio.create_task(function())
             try:
                 result = await asyncio.shield(task)
@@ -139,15 +139,17 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 await asyncio.gather(cleanup, return_exceptions=True)
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-                self.store.journal_done(action_id, "interrupted_delivery")
+                await self.database_call(self.store.journal_done, action_id, "interrupted_delivery")
                 raise
             except Exception:
-                self.store.journal_done(action_id, "delivery_unconfirmed")
+                await self.database_call(self.store.journal_done, action_id, "delivery_unconfirmed")
                 raise
             else:
-                self.store.journal_done(action_id)
-                with self.db.transaction() as db:
-                    self.store.allowed(db, token, navigation=True)
+                await self.database_call(self.store.journal_done, action_id)
+                def check_navigation():
+                    with self.db.snapshot() as db:
+                        self.store.allowed(db, token, navigation=True)
+                await self.database_call(check_navigation)
                 return result
 
     def record_player_health(self, health):
@@ -239,7 +241,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 raise ExecutorError("navigation_expired", "Playback workflow deadline passed")
             async with asyncio.timeout(budget):
                 while True:
-                    workflow = self.store.report(token).get("prime_player") or {}
+                    workflow = (await self.database_call(self.store.report, token)).get("prime_player") or {}
                     if not workflow.get("attempt_id"):
                         if not await self.select_and_launch(token, request):
                             return
@@ -250,23 +252,25 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         except asyncio.CancelledError:
             raise
         except TimeoutError:
-            self.store.fail(token, ExecutorError("navigation_timeout", "Prime playback workflow timed out"))
+            await self.database_call(self.store.fail, token, ExecutorError("navigation_timeout", "Prime playback workflow timed out"))
         except ExecutorError as exc:
             if exc.code in {"prime_device_recovery", "prime_runtime_recovering"}:
-                with self.db.transaction() as db:
-                    current = self.store.get_row(db, token)
-                    report = json.loads(current["report"])
-                    report.setdefault("prime_player", {})["device_recovery"] = True
-                    report["observation_status"] = {"state": "unavailable", "checked_at": utc(), "error": exc.detail()}
-                    adaptation = self.db.device(db).get("prime_runtime_adaptation") or {}
-                    delay = adaptation.get("retry_after_seconds", 15) if exc.code == "prime_runtime_recovering" else 60
-                    self.store.write(db, token, report, next_check=time.time() + delay)
+                def persist_recovery(exc=exc):
+                    with self.db.transaction() as db:
+                        current = self.store.get_row(db, token)
+                        report = json.loads(current["report"])
+                        report.setdefault("prime_player", {})["device_recovery"] = True
+                        report["observation_status"] = {"state": "unavailable", "checked_at": utc(), "error": exc.detail()}
+                        adaptation = self.db.device(db).get("prime_runtime_adaptation") or {}
+                        delay = adaptation.get("retry_after_seconds", 15) if exc.code == "prime_runtime_recovering" else 60
+                        self.store.write(db, token, report, next_check=time.time() + delay)
+                await self.database_call(persist_recovery)
             else:
-                self.store.fail(token, exc)
+                await self.database_call(self.store.fail, token, exc)
         except Exception as exc:
             if is_database_busy(exc):
                 raise
-            self.store.fail(token, ExecutorError("prime_workflow_failed", "Prime playback workflow failed"))
+            await self.database_call(self.store.fail, token, ExecutorError("prime_workflow_failed", "Prime playback workflow failed"))
 
     async def select_and_launch(self, token, request):
         acquired = await self.acquire_network_catalogue(token, request)
@@ -283,29 +287,27 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             )
         ownership = self.player.ownership(health, automatic=True)
         session = health["session_id"]
-        with self.db.transaction() as db:
-            self.store.allowed(db, token, navigation=True)
-            timezone = self.db.device(db, request["device_id"])["preferences"]["timezone"]
-        self.save_workflow(
-            token, session_id=session, source="prime_player", selection=None, ownership=ownership,
-            network_context_id=health.get("network", {}).get("context_id")
-        )
-        self.store.phase(token, "searching")
-        prepared = acquired or self.prepared_catalogue(
-            request, session, generation=health.get("compatibility", {}).get("generation"),
-            network_context_id=health.get("network", {}).get("context_id"),
-        )
+        def read_timezone():
+            with self.db.snapshot() as db:
+                self.store.allowed(db, token, navigation=True)
+                timezone = self.db.device(db, request["device_id"])["preferences"]["timezone"]
+            return timezone
+        timezone = await self.database_call(read_timezone)
+        await self.database_call(self.save_workflow, token, session_id=session, source="prime_player", selection=None, ownership=ownership,
+            network_context_id=health.get("network", {}).get("context_id"))
+        await self.database_call(self.store.phase, token, "searching")
+        prepared = acquired or (await self.database_call(self.prepared_catalogue, request, session, generation=health.get("compatibility", {}).get("generation"),
+            network_context_id=health.get("network", {}).get("context_id"),))
         if prepared:
             results, selected, audit = prepared["results"], prepared["selected"], prepared["audit"]
-            received = time.monotonic() - (time.time() - prepared["received_at"])
-            self.save_workflow(token, catalogue_probe_id=prepared["id"], catalogue=results, query=prepared["query"])
+            selected_at = time.monotonic() - (time.time() - prepared.get("selected_at", prepared["received_at"]))
+            await self.database_call(self.save_workflow, token, catalogue_probe_id=prepared["id"], catalogue=results, query=prepared["query"])
         else:
             async def search(query):
-                nonlocal received
                 current = await self.check_session(session, capabilities=("search",))
                 receipt = self.player.ownership(current, automatic=True)
-                self.save_workflow(token, query=query)
-                self.store.phase(token, "searching")
+                await self.database_call(self.save_workflow, token, query=query)
+                await self.database_call(self.store.phase, token, "searching")
                 results = await self.mutation(
                     token, "PRIME_SEARCH",
                     lambda: self.player.search(query, self.config.prime_search_timeout, receipt),
@@ -313,21 +315,22 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 if results.get("session_id") != session:
                     raise ExecutorError("prime_stale_result", "Search result belongs to another session")
                 self.require_catalogue_generation(current, results)
-                received = time.monotonic()
-                self.store.phase(token, "matching")
-                self.save_workflow(token, catalogue=results)
+                await self.database_call(self.store.phase, token, "matching")
+                await self.database_call(self.save_workflow, token, catalogue=results)
                 return results
 
             async def fetch_broadcasts(results, content_id):
                 current = await self.check_session(session, capabilities=("broadcasts",))
                 self.require_catalogue_generation(current, results)
                 receipt = self.player.ownership(current, automatic=True)
-                return await self.mutation(
+                await self.database_call(self.store.phase, token, "broadcasts")
+                result = await self.mutation(
                     token, "PRIME_BROADCASTS", lambda: self.player.broadcasts(content_id, receipt)
                 )
+                await self.database_call(self.store.phase, token, "matching")
+                return result
 
-            received = None
-            with capture_model_calls(
+            async with capture_model_calls_async(
                 lambda evidence: self.save_model_call(token, evidence),
                 recorder=self.model_captures.record,
                 context={"source": "playback", "device_id": request["device_id"],
@@ -336,43 +339,40 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             ):
                 results, selected, audit = await choose_search(
                     request, timezone, self.matcher, search, fetch_broadcasts,
-                    lambda audit: self.save_workflow(token, selection=audit),
+                    lambda audit: self.database_call(self.save_workflow, token, selection=audit),
                 )
-        self.save_workflow(
-            token,
+            selected_at = time.monotonic()
+        await self.database_call(self.save_workflow, token,
             selection=audit,
             search_id=results.get("search_id"),
             search_generation=results.get("generation"),
-            search_observed_at=results.get("observed_at"),
-        )
+            search_observed_at=results.get("observed_at"),)
         if not selected:
-            self.complete_search(token, selection_state(selected, audit), error=audit.get("error"))
+            await self.database_call(self.complete_search, token, selection_state(selected, audit), error=audit.get("error"))
             return False
         if selected["readiness"] != "ready":
-            self.complete_search(token, selected["readiness"], selected)
+            await self.database_call(self.complete_search, token, selected["readiness"], selected)
             return False
-        if time.monotonic() - received > 90:
+        if time.monotonic() - selected_at > SELECTION_HANDOFF_SECONDS:
             raise ExecutorError("prime_stale_result", "Catalogue selection is stale; refresh before launch")
         health = await self.check_session(session, capabilities=("play",))
         self.require_catalogue_generation(health, results)
         ownership = self.player.ownership(health, automatic=True)
         attempt = uuid4().hex
-        self.save_workflow(
-            token, attempt_id=attempt, selected=selected, launch_outcome=None, ownership=ownership
-        )
-        self.store.phase(token, "launching")
+        await self.database_call(self.save_workflow, token, attempt_id=attempt, selected=selected, launch_outcome=None, ownership=ownership)
+        await self.database_call(self.store.phase, token, "launching")
         try:
             outcome = await self.mutation(
                 token, "PRIME_PLAY", lambda: self.player.play(selected["content_id"], attempt, ownership)
             )
-            self.validate_outcome(outcome, self.store.report(token)["prime_player"])
-            self.save_workflow(token, launch_outcome=outcome)
+            self.validate_outcome(outcome, (await self.database_call(self.store.report, token))["prime_player"])
+            await self.database_call(self.save_workflow, token, launch_outcome=outcome)
         except ExecutorError as exc:
             # Delivery uncertainty is resolved by read-only inspection, not a
             # fresh request that could replace playback a second time.
             if exc.code not in {"prime_transport_unknown", "prime_operation_unknown"}:
                 raise
-            self.save_workflow(token, launch_error=exc.detail())
+            await self.database_call(self.save_workflow, token, launch_error=exc.detail())
         return True
 
     def complete_search(self, token, state, selected=None, *, error=None):
@@ -414,18 +414,20 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             )
 
     async def verify_launch(self, token):
-        self.store.phase(token, "verifying")
+        await self.database_call(self.store.phase, token, "verifying")
         while True:
-            with self.db.transaction() as db:
-                self.store.allowed(db, token, navigation=True)
-            workflow = self.store.report(token)["prime_player"]
+            def check_navigation():
+                with self.db.snapshot() as db:
+                    self.store.allowed(db, token, navigation=True)
+            await self.database_call(check_navigation)
+            workflow = (await self.database_call(self.store.report, token))["prime_player"]
             try:
                 if workflow.get("network_context_id"):
                     current = await self.check_session(workflow["session_id"], capabilities=("playback_status",))
                     if current.get("network", {}).get("context_id") != workflow["network_context_id"]:
                         raise ExecutorError("prime_network_context_changed", "Playback network changed before verification")
             except ExecutorError as exc:
-                return self.defer_launch_observation(token, exc)
+                return (await self.database_call(self.defer_launch_observation, token, exc))
             cleanup = workflow.get("unavailable_trial_cleanup")
             if cleanup:
                 return await self.finish_unavailable_trial(token, workflow, cleanup["outcome"])
@@ -435,9 +437,9 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     await self.check_session(workflow["session_id"])
                     outcome = await self.player.attempt(workflow["attempt_id"])
             except ExecutorError as exc:
-                return self.defer_launch_observation(token, exc)
+                return (await self.database_call(self.defer_launch_observation, token, exc))
             self.validate_outcome(outcome, workflow)
-            self.save_workflow(token, launch_outcome=outcome)
+            await self.database_call(self.save_workflow, token, launch_outcome=outcome)
             if outcome["state"] == "failed" and unavailable_live_trial(workflow.get("selected") or {}):
                 return await self.finish_unavailable_trial(token, workflow, outcome)
             if (
@@ -448,12 +450,10 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 message = "Prime refused live playback"
                 if isinstance(reason, str) and reason.strip():
                     message += ": " + reason.strip()[:800]
-                self.complete_search(
-                    token,
+                await self.database_call(self.complete_search, token,
                     "access_unknown",
                     workflow.get("selected"),
-                    error=ExecutorError("prime_launch_refused", message).detail(),
-                )
+                    error=ExecutorError("prime_launch_refused", message).detail(),)
                 return
             if outcome["state"] in {"failed", "unknown", "cancelled", "stopped"}:
                 reason = outcome.get("reason")
@@ -467,7 +467,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     raise ExecutorError(
                         "prime_non_live_resolution", "Verified launch lacks live resolution evidence"
                     )
-                self.record_launch(token, outcome)
+                await self.database_call(self.record_launch, token, outcome)
                 return
             await asyncio.sleep(2)
 
@@ -488,7 +488,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
     async def finish_unavailable_trial(self, token, workflow, outcome):
         """Settle a definitive failure before advancing the persisted network plan."""
         cleanup = workflow.get("unavailable_trial_cleanup") or {"outcome": outcome}
-        self.save_workflow(token, unavailable_trial_cleanup=cleanup)
+        await self.database_call(self.save_workflow, token, unavailable_trial_cleanup=cleanup)
         if (outcome.get("evidence", {}).get("launch", {}).get("disposition") != "not_invoked"
                 and not cleanup.get("stopped")):
             health = await self.check_session(workflow["session_id"], capabilities=("stop",))
@@ -498,17 +498,17 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     or stopped.get("attempt_id") != workflow["attempt_id"]):
                 raise ExecutorError("prime_trial_cleanup_unconfirmed", "Failed playback trial has not settled")
             cleanup["stopped"] = stopped
-            self.save_workflow(token, unavailable_trial_cleanup=cleanup)
+            await self.database_call(self.save_workflow, token, unavailable_trial_cleanup=cleanup)
         acquisition = workflow.get("network_acquisition")
         history = list(workflow.get("unavailable_trials") or [])
         if not any(item["attempt_id"] == outcome["attempt_id"] for item in history):
             history.append({"attempt_id": outcome["attempt_id"], "network_context_id": workflow.get("network_context_id"),
                             "selected": workflow["selected"], "outcome": outcome})
         if not acquisition:
-            self.save_workflow(token, unavailable_trials=history, unavailable_trial_cleanup=None)
-            self.complete_search(token, "feeds_unavailable", workflow["selected"])
+            await self.database_call(self.save_workflow, token, unavailable_trials=history, unavailable_trial_cleanup=None)
+            await self.database_call(self.complete_search, token, "feeds_unavailable", workflow["selected"])
             return False
-        self._network_allowed(token, acquisition)
+        await self.database_call(self._network_allowed, token, acquisition)
         health = await self.check_session(workflow["session_id"])
         network = health.get("network", {})
         if network.get("context_id") != workflow.get("network_context_id"):
@@ -518,7 +518,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             acquisition["tried"].append(target)
         acquisition.update(last_state="feeds_unavailable", last_error=None)
         # One durable update prevents a restart from replaying this failed trial.
-        self.save_workflow(token, unavailable_trials=history, network_acquisition=acquisition,
+        await self.database_call(self.save_workflow, token, unavailable_trials=history, network_acquisition=acquisition,
                            attempt_id=None, launch_outcome=None, launch_error=None, unavailable_trial_cleanup=None)
         return True
 
@@ -865,7 +865,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
     @correlated
     async def interrupt(self, token, *, force=False):
         """Fence remote work without waiting on the local mutation lock."""
-        report = self.store.report(token)
+        report = (await self.database_call(self.store.report, token))
         workflow = report.get("prime_player") or {}
         if await self.interrupt_network(token, workflow):
             health = await self.check_session(control=True)
@@ -884,21 +884,24 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             return receipt
         result = await self.player.cancel_work(workflow["session_id"], workflow.get("attempt_id"), receipt)
         acknowledged = self.player.ownership({"session_id": health["session_id"], "ownership": result})
-        self.save_cancellation(token, cancellation_receipt=acknowledged)
+        await self.database_call(self.save_cancellation, token, cancellation_receipt=acknowledged)
         return acknowledged
 
     @correlated
     async def cancel_one(self, token):
         async with self.input_lock:
-            with self.db.transaction() as db:
-                row = self.store.get_row(db, token)
-                if row["cancel_requested"] == 2:
-                    return
-                report = json.loads(row["report"])
-                owner = db.execute(
-                    "SELECT current_token FROM executor_devices WHERE device_id=?", (row["device_id"],)
-                ).fetchone()
-                owns = bool(owner and owner[0] == token and row["touched_device"])
+            def read_cancellation():
+                with self.db.snapshot() as db:
+                    row = self.store.get_row(db, token)
+                    report = json.loads(row["report"])
+                    owner = db.execute(
+                        "SELECT current_token FROM executor_devices WHERE device_id=?", (row["device_id"],)
+                    ).fetchone()
+                    owns = bool(owner and owner[0] == token and row["touched_device"])
+                return row, report, owns
+            row, report, owns = await self.database_call(read_cancellation)
+            if row["cancel_requested"] == 2:
+                return
             active = "not_current" if row["touched_device"] else "already_inactive"
             if owns:
                 workflow = report.get("prime_player") or {}
@@ -910,7 +913,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     # The acknowledged barrier quiesces the old request. The new
                     # launch will replace playback; do not stop it in advance.
                     active = "unknown"
-                    self.save_cancellation(token, playback_preserved_for_replacement=True)
+                    await self.database_call(self.save_cancellation, token, playback_preserved_for_replacement=True)
                 elif (workflow.get("launch_outcome") or {}).get("evidence", {}).get("launch", {}).get(
                     "disposition"
                 ) == "not_invoked":
@@ -920,16 +923,16 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     # Persist before dispatch. A lost response must never replay
                     # a physical Back/stop action after restart or retry.
                     if not workflow.get("stop_dispatched"):
-                        self.save_cancellation(token, stop_dispatched=True)
+                        await self.database_call(self.save_cancellation, token, stop_dispatched=True)
                         try:
                             result = await self.player.stop_attempt(workflow["session_id"], attempt, receipt)
                         except ExecutorError as exc:
-                            self.save_cancellation(token, stop_error=exc.detail())
+                            await self.database_call(self.save_cancellation, token, stop_error=exc.detail())
                             # The preceding barrier is insufficient after a lost
                             # stop response: fence/drain that operation as well.
                             await self.interrupt(token, force=True)
                         else:
-                            self.save_cancellation(token, stop_result=result)
+                            await self.database_call(self.save_cancellation, token, stop_result=result)
                             if result.get("stopped") is True and (
                                 result.get("session_id") == workflow["session_id"]
                                 and result.get("attempt_id") == attempt
@@ -954,4 +957,4 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     # No launch is bound to this token. A catalogue read alone
                     # cannot prove what unrelated content is playing or stopped.
                     active = "unknown"
-            self.store.acknowledge_cancel(token, active)
+            await self.database_call(self.store.acknowledge_cancel, token, active)

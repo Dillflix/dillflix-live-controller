@@ -123,6 +123,7 @@ class Operation(Strict):
         "no_matching_feed",
     ]
     phase: str
+    phase_started_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     finished_at: datetime | None

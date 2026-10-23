@@ -191,7 +191,7 @@ class PlexClient:
             path = next((n.get("url") for n in item.findall("Image") if n.get("type") == kind), None)
         if not path or not re.fullmatch(rf"/library/metadata/{key}/{element}/[0-9]+", path):
             raise PlexError(f"Plex has no supported current {slot} URL", permanent=True)
-        return image_asset(await self._request("GET", path))
+        return await asyncio.to_thread(image_asset, await self._request("GET", path))
 
     async def set_image(self, key, slot, asset):
         # Python PlexAPI's uploadPoster/uploadArt use these plural upload routes.
@@ -239,6 +239,6 @@ async def download_image(url, transport=None):
                         if size > MAX_IMAGE_BYTES:
                             raise PlexError("Image source exceeds 8 MiB")
                         chunks.append(chunk)
-                return image_asset(b"".join(chunks))
+                return await asyncio.to_thread(image_asset, b"".join(chunks))
     except (ValueError, httpx.HTTPError, TimeoutError):
         raise PlexError("Event artwork download failed") from None

@@ -186,6 +186,14 @@ export interface Overview {
     deadline_at: number | null;
     delivery_attempts: number;
     error: string | null;
+    launch_progress?: {
+      phase: string;
+      title: string;
+      detail: string | null;
+      started_at: string | null;
+      updated_at: string | null;
+      startup_elapsed_seconds: number | null;
+    };
   } | null;
   teams: Team[];
   undo: { id: number; description: string; created_at: string } | null;

@@ -21,6 +21,7 @@ from .database import Database, encode
 from .entitlements import EntitlementChecks
 from .fixtures import default_device, fixtures, make_team
 from .leagues import LEAGUE_NAMES
+from .launch_progress import launch_progress
 from .maintenance import policy, prune
 from .manual_control import ManualControl
 from .planner import entitlement_eligible, choose, content_view, ordered_plan, parse_time, preview_plan, priority, team_key
@@ -233,6 +234,10 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             latest_job = dict(latest_job) if latest_job else None
             if latest_job:
                 latest_job["purpose"] = json.loads(latest_job.pop("payload")).get("purpose", "selection")
+                if latest_job["state"] == "pending" and self.executor:
+                    executor_job = db.execute("SELECT report FROM executor_jobs WHERE request_id=?", (latest_job["id"],)).fetchone()
+                    if executor_job:
+                        latest_job["launch_progress"] = launch_progress(json.loads(executor_job[0]), device.get("prime_network"))
             return {
                 "device": device,
                 "playback_job": latest_job,
@@ -755,48 +760,60 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         if self.settings.mode != "teamarr":
             return
         try:
-            with self.db.transaction() as db:
-                leagues = self.requested_leagues(db)
+            def read_leagues():
+                with self.db.snapshot() as db:
+                    leagues = self.requested_leagues(db)
+                return leagues
+            leagues = await self.playback_work(read_leagues)
             # Keep batches compatible with Teamarr's original 20-league limit,
             # then publish all selected and retained leagues atomically.
             entries, schema = {}, None
             for group in [leagues[i : i + 20] for i in range(0, len(leagues), 20)] or [[]]:
                 page, schema = await self.client.fetch_snapshot(leagues=group)
                 entries.update((item["id"], item) for item in page)
-            with self.db.transaction() as db:
-                if leagues != self.requested_leagues(db):
-                    return  # Settings changed in flight; wait for a fresh snapshot.
-                self.replace_catalog(db, list(entries.values()), "teamarr")
-                self.db.set_meta(db, "feed_schema_version", schema)
+            def publish_catalog():
+                with self.db.transaction() as db:
+                    if leagues != self.requested_leagues(db):
+                        return  # Settings changed in flight; wait for a fresh snapshot.
+                    self.replace_catalog(db, list(entries.values()), "teamarr")
+                    self.db.set_meta(db, "feed_schema_version", schema)
+            await self.playback_work(publish_catalog)
         except Exception as exc:
             log.warning("Teamarr refresh failed: %s", type(exc).__name__)
-            with self.db.transaction() as db:
-                health = self.db.meta(db, "feed_health", {})
-                health.update(
-                    {
-                        "state": "degraded",
-                        "error": f"{type(exc).__name__}: feed refresh failed",
-                        "last_attempt": datetime.now(UTC).isoformat(),
-                    }
-                )
-                self.db.set_meta(db, "feed_health", health)
+            def record_refresh_error(exc=exc):
+                with self.db.transaction() as db:
+                    health = self.db.meta(db, "feed_health", {})
+                    health.update(
+                        {
+                            "state": "degraded",
+                            "error": f"{type(exc).__name__}: feed refresh failed",
+                            "last_attempt": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                    self.db.set_meta(db, "feed_health", health)
+            await self.playback_work(record_refresh_error)
 
     async def refresh_team_directory(self):
         if self.settings.mode != "teamarr":
             return
-        with self.db.transaction() as db:
-            primary = set(self.requested_leagues(db)) - {"f1"}
-            leagues = (
-                sorted(primary) + sorted({t["league"] for t in self.db.teams(db)} - primary - {"f1"})[:16]
-            )
-            health = self.db.meta(db, "team_directory_health", {"leagues": {}})
+        def read_directory_request():
+            with self.db.snapshot() as db:
+                primary = set(self.requested_leagues(db)) - {"f1"}
+                leagues = (
+                    sorted(primary) + sorted({t["league"] for t in self.db.teams(db)} - primary - {"f1"})[:16]
+                )
+                health = self.db.meta(db, "team_directory_health", {"leagues": {}})
+            return leagues, health
+        leagues, health = await self.playback_work(read_directory_request)
         for league in leagues:
             try:
                 teams = await self.client.fetch_teams(league)
                 fetched = datetime.now(UTC).isoformat()
-                with self.db.transaction() as db:
-                    for team in teams:
-                        self.db.upsert_team(db, team, fetched)
+                def save_teams():
+                    with self.db.transaction() as db:
+                        for team in teams:
+                            self.db.upsert_team(db, team, fetched)
+                await self.playback_work(save_teams)
                 health["leagues"][league] = {
                     "state": "ok" if teams else "empty",
                     "count": len(teams),
@@ -809,20 +826,22 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     "state": "degraded",
                     "error": f"{type(exc).__name__}: team directory refresh failed",
                 }
-        with self.db.transaction() as db:
-            health["state"] = (
-                "degraded" if any(v["state"] == "degraded" for v in health["leagues"].values()) else "ok"
-            )
-            health["last_attempt"] = datetime.now(UTC).isoformat()
-            health["count"] = db.execute("SELECT COUNT(*) FROM team_directory").fetchone()[0]
-            self.db.set_meta(db, "team_directory_health", health)
-            self.db.log(
-                db,
-                self.now(db).isoformat(),
-                "Team directory refreshed",
-                f"{health['count']} known teams · {health['state']}",
-                "directory",
-            )
+        def save_directory_health():
+            with self.db.transaction() as db:
+                health["state"] = (
+                    "degraded" if any(v["state"] == "degraded" for v in health["leagues"].values()) else "ok"
+                )
+                health["last_attempt"] = datetime.now(UTC).isoformat()
+                health["count"] = db.execute("SELECT COUNT(*) FROM team_directory").fetchone()[0]
+                self.db.set_meta(db, "team_directory_health", health)
+                self.db.log(
+                    db,
+                    self.now(db).isoformat(),
+                    "Team directory refreshed",
+                    f"{health['count']} known teams · {health['state']}",
+                    "directory",
+                )
+        await self.playback_work(save_directory_health)
 
     async def run_worker(self):
         while True:
@@ -858,14 +877,16 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     raise
             except Exception as exc:
                 log.exception("Database retention failed; will retry")
-                with self.db.transaction() as db:
-                    health = self.db.meta(db, "maintenance_health", {})
-                    health.update(state="error", error=f"{type(exc).__name__}: retention failed")
-                    self.db.set_meta(db, "maintenance_health", health)
+                def record_maintenance_error(exc=exc):
+                    with self.db.transaction() as db:
+                        health = self.db.meta(db, "maintenance_health", {})
+                        health.update(state="error", error=f"{type(exc).__name__}: retention failed")
+                        self.db.set_meta(db, "maintenance_health", health)
+                await self.playback_work(record_maintenance_error)
             await asyncio.sleep(self.settings.maintenance_interval)
 
     def maintenance_status(self):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             return {
                 **self.db.meta(db, "maintenance_health", {"state": "starting"}),
                 "policy": policy(self.settings),
@@ -873,8 +894,11 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
 
     async def run_feed(self):
         while True:
-            with self.db.transaction() as db:
-                owns = self.db.lease(db, "catalog", self.owner, time.time(), self.settings.feed_interval + 60)
+            def claim_catalog():
+                with self.db.transaction() as db:
+                    owns = self.db.lease(db, "catalog", self.owner, time.time(), self.settings.feed_interval + 60)
+                return owns
+            owns = await self.playback_work(claim_catalog)
             if owns:
                 await self.refresh_catalog()
             await asyncio.sleep(self.settings.feed_interval)
@@ -882,14 +906,17 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
     async def run_team_directory(self):
         while True:
             try:
-                with self.db.transaction() as db:
-                    owns = self.db.lease(
-                        db,
-                        "team-directory",
-                        self.owner,
-                        time.time(),
-                        self.settings.team_directory_interval + 60,
-                    )
+                def claim_directory():
+                    with self.db.transaction() as db:
+                        owns = self.db.lease(
+                            db,
+                            "team-directory",
+                            self.owner,
+                            time.time(),
+                            self.settings.team_directory_interval + 60,
+                        )
+                    return owns
+                owns = await self.playback_work(claim_directory)
                 if owns:
                     await self.refresh_team_directory()
             except Exception:
@@ -916,7 +943,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         try:
             if self.executor:
                 await self.executor.close()
-            with self.db.transaction() as db:
-                db.execute("DELETE FROM leases WHERE owner=?", (self.owner,))
+            def release_leases():
+                with self.db.transaction() as db:
+                    db.execute("DELETE FROM leases WHERE owner=?", (self.owner,))
+            await self.playback_work(release_leases)
         finally:
             self._database_guard.__exit__(None, None, None)

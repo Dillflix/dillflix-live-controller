@@ -64,7 +64,7 @@ class PlexIntegration:
             return True  # Worker can recover from durable controller state.
 
     def status(self, device):
-        with self.service.db.transaction() as db:
+        with self.service.db.snapshot() as db:
             self.service.db.device(db, device)
             config = configuration(db, device)
             state = runtime(db, device)
@@ -99,13 +99,16 @@ class PlexIntegration:
             return safe
 
     async def inspect(self, device, request):
-        with self.service.db.transaction() as db:
-            self.service.db.device(db, device)
-            config = configuration(db, device)
+        def read_config():
+            with self.service.db.snapshot() as db:
+                self.service.db.device(db, device)
+                config = configuration(db, device)
+            return config
+        config = await self.service.playback_work(read_config)
         token = (
             request.token.get_secret_value()
             if request.token
-            else self.credentials.read(config["credential_ref"])
+            else (await self.service.playback_work(self.credentials.read, config["credential_ref"]))
         )
         url, key = base_url(request.base_url), rating_key(request.rating_key)
         client = self.worker.client_factory(url, token)
@@ -124,7 +127,7 @@ class PlexIntegration:
             await client.close()
 
     def preflight(self, device, request, payload):
-        with self.service.db.transaction() as db:
+        with self.service.db.snapshot() as db:
             self.service.db.device(db, device)
             return receipt(db, device, request.command_id, request.expected_revision, payload)[1]
 
@@ -132,11 +135,11 @@ class PlexIntegration:
         payload = request.model_dump(mode="json")
         if request.token:
             payload["token"] = hashlib.sha256(request.token.get_secret_value().encode()).hexdigest()
-        prior = self.preflight(device, request, payload)
+        prior = (await self.service.playback_work(self.preflight, device, request, payload))
         if prior:
             return prior
         # Removing credentials and disabling must work even if Plex is offline.
-        old = self.status(device)
+        old = (await self.service.playback_work(self.status, device))
         target_changed = (
             base_url(request.base_url) != old["base_url"]
             or rating_key(request.rating_key) != old["rating_key"]
@@ -146,57 +149,59 @@ class PlexIntegration:
         if not request.remove_token and (target_changed or request.token or request.enabled):
             checked, token = await self.inspect(device, request)
             if request.token:
-                ref = self.credentials.write(token)
+                ref = (await self.service.playback_work(self.credentials.write, token))
         try:
-            with self.service.db.transaction() as db:
-                digest, prior = receipt(db, device, request.command_id, request.expected_revision, payload)
-                if prior:
-                    return prior
-                config = configuration(db, device)
-                if request.enabled and (
-                    self.service.settings.mode != "teamarr"
-                    or self.service.settings.executor.mode != "prime-player"
-                ):
-                    raise HTTPException(409, "Automatic Plex artwork requires real Prime Player playback")
-                if request.enabled and (
-                    request.remove_token or set(config["defaults"]) != {"poster", "background"}
-                ):
-                    raise HTTPException(409, "Configure a token and both default images before enabling")
-                config.update(
-                    base_url=base_url(request.base_url),
-                    rating_key=rating_key(request.rating_key),
-                    enabled=request.enabled,
-                    one_shot=False,
-                    revision=config["revision"] + 1,
-                )
-                if checked:
-                    config.update({k: v for k, v in checked.items() if k not in {"base_url", "rating_key"}})
-                if request.remove_token:
-                    config["credential_ref"] = None
-                elif ref:
-                    config["credential_ref"] = ref
-                if request.enabled and not old["enabled"]:
-                    config["enabled_at"] = self.now().timestamp()
-                for row in db.execute("SELECT device_id FROM plex_settings WHERE device_id<>?", (device,)):
-                    other = configuration(db, row[0])
-                    if (
-                        other["machine_id"] == config["machine_id"]
-                        and other["rating_key"] == config["rating_key"]
+            def save_settings():
+                with self.service.db.transaction() as db:
+                    digest, prior = receipt(db, device, request.command_id, request.expected_revision, payload)
+                    if prior:
+                        return prior
+                    config = configuration(db, device)
+                    if request.enabled and (
+                        self.service.settings.mode != "teamarr"
+                        or self.service.settings.executor.mode != "prime-player"
                     ):
-                        raise HTTPException(409, "Another device is already bound to this Plex item")
-                state = runtime(db, device)
-                if target_changed:
-                    state.update(applied={}, applied_title=None, desired=None, last_confirmed_at=None)
-                state.update(blocked=None, error=None, retry_at=None)
-                save_runtime(db, device, state)
-                save_configuration(db, device, config)
-                self.service.db.log(
-                    db, self.now().isoformat(), "Plex artwork settings saved", "", "plex", device
-                )
-                return record_receipt(db, device, request.command_id, digest, config["revision"])
+                        raise HTTPException(409, "Automatic Plex artwork requires real Prime Player playback")
+                    if request.enabled and (
+                        request.remove_token or set(config["defaults"]) != {"poster", "background"}
+                    ):
+                        raise HTTPException(409, "Configure a token and both default images before enabling")
+                    config.update(
+                        base_url=base_url(request.base_url),
+                        rating_key=rating_key(request.rating_key),
+                        enabled=request.enabled,
+                        one_shot=False,
+                        revision=config["revision"] + 1,
+                    )
+                    if checked:
+                        config.update({k: v for k, v in checked.items() if k not in {"base_url", "rating_key"}})
+                    if request.remove_token:
+                        config["credential_ref"] = None
+                    elif ref:
+                        config["credential_ref"] = ref
+                    if request.enabled and not old["enabled"]:
+                        config["enabled_at"] = self.now().timestamp()
+                    for row in db.execute("SELECT device_id FROM plex_settings WHERE device_id<>?", (device,)):
+                        other = configuration(db, row[0])
+                        if (
+                            other["machine_id"] == config["machine_id"]
+                            and other["rating_key"] == config["rating_key"]
+                        ):
+                            raise HTTPException(409, "Another device is already bound to this Plex item")
+                    state = runtime(db, device)
+                    if target_changed:
+                        state.update(applied={}, applied_title=None, desired=None, last_confirmed_at=None)
+                    state.update(blocked=None, error=None, retry_at=None)
+                    save_runtime(db, device, state)
+                    save_configuration(db, device, config)
+                    self.service.db.log(
+                        db, self.now().isoformat(), "Plex artwork settings saved", "", "plex", device
+                    )
+                    return record_receipt(db, device, request.command_id, digest, config["revision"])
+            return await self.service.playback_work(save_settings)
         finally:
             if ref:
-                self.credentials.release(ref)
+                await self.service.playback_work(self.credentials.release, ref)
 
     def change(self, device, request, action, *, assets=None):
         payload = {
@@ -241,12 +246,15 @@ class PlexIntegration:
         # Preflight avoids network work for stale requests; the receipt uses a
         # stable command payload rather than hashes of changing remote images.
         payload = {"action": "capture", **request.model_dump()}
-        prior = self.preflight(device, request, payload)
+        prior = (await self.service.playback_work(self.preflight, device, request, payload))
         if prior:
             return prior
-        with self.service.db.transaction() as db:
-            config = configuration(db, device)
-        client = self.worker.client(config)
+        def read_config():
+            with self.service.db.snapshot() as db:
+                config = configuration(db, device)
+            return config
+        config = await self.service.playback_work(read_config)
+        client = (await self.service.playback_work(self.worker.client, config))
         try:
             item = await self.worker.check_target(client, config)
             assets = {
@@ -255,18 +263,20 @@ class PlexIntegration:
             }
         finally:
             await client.close()
-        with self.service.db.transaction() as db:
-            digest, prior = receipt(db, device, request.command_id, request.expected_revision, payload)
-            if prior:
-                return prior
-            config = configuration(db, device)
-            for slot, asset in assets.items():
-                config["defaults"][slot] = save_asset(db, asset)
-            config["revision"] += 1
-            save_configuration(db, device, config)
-            self.reconcile(db)
-            prune_assets(db)
-            self.service.db.log(
-                db, self.now().isoformat(), "Plex default artwork captured", "", "plex", device
-            )
-            return record_receipt(db, device, request.command_id, digest, config["revision"])
+        def save_defaults():
+            with self.service.db.transaction() as db:
+                digest, prior = receipt(db, device, request.command_id, request.expected_revision, payload)
+                if prior:
+                    return prior
+                config = configuration(db, device)
+                for slot, asset in assets.items():
+                    config["defaults"][slot] = save_asset(db, asset)
+                config["revision"] += 1
+                save_configuration(db, device, config)
+                self.reconcile(db)
+                prune_assets(db)
+                self.service.db.log(
+                    db, self.now().isoformat(), "Plex default artwork captured", "", "plex", device
+                )
+                return record_receipt(db, device, request.command_id, digest, config["revision"])
+        return await self.service.playback_work(save_defaults)

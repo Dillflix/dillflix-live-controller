@@ -392,3 +392,12 @@ are retained while awaiting confirmation, and current playback retains its exist
 check failure must not prevent recovery of already-owned playback. Entitlement does not imply
 availability: entitled/unavailable feeds still use the bounded trial and network
 policy paths. Simulation and non-Prime routes do not require Prime evidence.
+
+
+### Launch latency and progress
+
+Prepared Prime selections have a 60-second handoff window measured from completed matching/selection, not from receipt of the raw search response. Matching may itself take most of a minute. Original search observation timestamps remain intact; the handoff still requires the same intent, content/options snapshot, player session, runtime generation and network context. The final launch uses the same 60-second decision-age limit and resolves the selected ID again; it does not replay a cached playback handle. A changed network still requires new catalogue evidence.
+
+Asynchronous playback, network acquisition, model capture, catalogue refresh, Plex delivery, content-status lookup and manual-control bookkeeping await complete synchronous database units in worker threads. Cancellation drains a started unit before releasing its caller's ownership. Read-only projections use WAL snapshots where no reconciliation or write is required. Model captures enqueue immutable snapshots and drain in order, including on cancellation.
+
+Executor operations retain `phase_started_at` across repeated updates of the same phase. Overview projects stored phases and player startup progress without device RPCs. The playback banner distinguishes search, feed selection, broadcast lookup, network switching, Prime initialization and live verification, with elapsed time for the current phase. Activity records phase changes instead of describing every navigating phase as verification.

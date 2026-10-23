@@ -144,11 +144,14 @@ class DeviceInput:
                 # Keep automation paused until all manual writes and cleanup end.
                 await self.drain(self.revoke_locked())
                 if self.prime:
-                    with self.service.db.transaction() as db:
-                        session = self.service.db.device(db, "living-room").get("manual_control")
+                    def read_session():
+                        with self.service.db.snapshot() as db:
+                            session = self.service.db.device(db, "living-room").get("manual_control")
+                        return session
+                    session = await self.service.playback_work(read_session)
                     if session:
                         await self.prime.release(session["session_id"])
-                self.service.expire_manual()
+                await self.service.playback_work(self.service.expire_manual)
 
     async def watch_expiry(self):
         while True:
@@ -165,27 +168,35 @@ class DeviceInput:
                 if (attached.session_id, attached.owner_token) == (command.session_id, command.owner_token):
                     await self.drain(self.revoke_locked())
             if self.prime and command.action == "release":
-                with self.service.db.transaction() as db:
-                    session = self.service.db.device(db, device_id).get("manual_control")
+                def read_session():
+                    with self.service.db.snapshot() as db:
+                        session = self.service.db.device(db, device_id).get("manual_control")
+                    return session
+                session = await self.service.playback_work(read_session)
                 if session and session["session_id"] == command.session_id:
-                    with self.service.db.transaction() as db:
-                        self.service.check_manual_owner(
-                            db, self.service.db.device(db, device_id), command.session_id, command.owner_token
-                        )
+                    def check_owner():
+                        with self.service.db.snapshot() as db:
+                            self.service.check_manual_owner(
+                                db, self.service.db.device(db, device_id), command.session_id, command.owner_token
+                            )
+                    await self.service.playback_work(check_owner)
                     await self.prime.release(command.session_id)
-            result = self.service.manual_command(device_id, command)
+            result = (await self.service.playback_work(self.service.manual_command, device_id, command))
             task = None
             if self.connection:
                 _, attached = self.connection
                 try:
-                    self.service.manual_authorized(device_id, attached.session_id, attached.owner_token)
+                    await self.service.playback_work(self.service.manual_authorized, device_id, attached.session_id, attached.owner_token)
                 except HTTPException:
                     task = self.revoke_locked()
             await self.drain(task)
             if command.action == "take":
                 # Replaying an old command receipt must not seize a newer session.
-                with self.service.db.transaction() as db:
-                    session = self.service.db.device(db, device_id).get("manual_control")
+                def read_current_session():
+                    with self.service.db.snapshot() as db:
+                        session = self.service.db.device(db, device_id).get("manual_control")
+                    return session
+                session = await self.service.playback_work(read_current_session)
                 if session and session["session_id"] == command.session_id:
                     try:
                         await self.service.playback_work(
@@ -195,7 +206,7 @@ class DeviceInput:
                             command.owner_token,
                         )
                         if self.prime:
-                            self.service.manual_authorized(device_id, command.session_id, command.owner_token)
+                            await self.service.playback_work(self.service.manual_authorized, device_id, command.session_id, command.owner_token)
                             await self.prime.acquire(command.session_id)
                     except HTTPException:
                         raise
@@ -229,7 +240,7 @@ class DeviceInput:
                     raise HTTPException(
                         503, "Playback cancellation is unconfirmed. Reconnect to retry."
                     ) from error
-                self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
+                await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
                 if self.connection:
                     raise HTTPException(
                         409, "This remote is already connected in another tab. Close it first."
@@ -289,12 +300,12 @@ class DeviceInput:
 
     async def send_locked(self, source, packet, device_id, attach):
         """Caller holds the manual gate, including for the initial wake command."""
-        self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
+        await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
         if not self.connection or self.connection[0] is not asyncio.current_task():
             raise HTTPException(409, "Input ownership changed.")
         if self.service.executor:
             async with self.service.executor.input_lock:
-                self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
+                await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
                 await source.send(packet)
         else:
             await source.send(packet)
@@ -318,12 +329,12 @@ class DeviceInput:
                 try:
                     raw = await receive_json(websocket, 1)
                 except TimeoutError:
-                    self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
+                    await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
                     continue
                 message = Input.model_validate(raw)
                 packet = message.encode()
                 async with self.lock:
-                    self.service.manual_authorized(device_id, attach.session_id, attach.owner_token)
+                    await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
                     if not self.connection or self.connection[0] is not asyncio.current_task():
                         raise HTTPException(409, "Input ownership changed.")
                     if message.seq <= last_seq:

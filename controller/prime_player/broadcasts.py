@@ -1,6 +1,7 @@
 """Choose a broadcast of an already matched event from the captured BTF contract."""
 
 from ..executor.models import ExecutorError
+from ..model_diagnostics import report_progress
 from .broadcast_matching import choose as choose_variant
 from .matching import GTI, selection_state
 
@@ -151,14 +152,14 @@ async def choose_broadcast(request, results, timezone, matcher, fetch, progress)
         return {**audit, "parent_selections": list(attempts), **changes}
 
     while True:
-        progress(report(match_status="uncertain", reason="Matching remaining Prime event alternatives"))
+        await report_progress(progress, report(match_status="uncertain", reason="Matching remaining Prime event alternatives"))
         parent, audit = await matcher.choose(request, remaining, timezone)
         if not parent:
             uncertain |= audit.get("match_status") == "uncertain"
             break
         attempt = {"parent": parent, "matching": audit, "state": "pending"}
         attempts.append(attempt)
-        progress(report(match_status="uncertain", reason="Inspecting matched Prime event broadcasts"))
+        await report_progress(progress, report(match_status="uncertain", reason="Inspecting matched Prime event broadcasts"))
         try:
             selected, refined = await refine(request, results, parent, audit, fetch, matcher)
         except ExecutorError as exc:
@@ -177,7 +178,7 @@ async def choose_broadcast(request, results, timezone, matcher, fetch, progress)
         attempt.update(state=state, selected=selected, broadcast_selection=refined.get("broadcast_selection"))
         if refined.get("error"):
             attempt["error"] = refined["error"]
-        progress({**refined, "parent_selections": list(attempts)})
+        await report_progress(progress, {**refined, "parent_selections": list(attempts)})
         if state == "ready" and not selected.get("unavailable_trial"):
             return selected, {**refined, "parent_selections": attempts}
         uncertain |= state == "access_unknown"

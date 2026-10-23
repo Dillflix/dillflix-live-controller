@@ -23,6 +23,12 @@ class IntegratedPlaybackAdapter:
             "state": report["operation"]["state"],
             "phase": report["operation"]["phase"],
             "progress_reason": {
+                "accepted": "Preparing playback",
+                "searching": "Finding this event in Prime",
+                "matching": "Selecting the event feed",
+                "broadcasts": "Checking available broadcasts",
+                "launching": "Opening the live feed",
+                "verifying": "Verifying live playback",
                 "network_pending": "Preparing the configured network change",
                 "network_retiring_prime": "Stopping Prime before changing the network",
                 "network_changing_network": "Connecting to the configured location",
@@ -40,7 +46,7 @@ class IntegratedPlaybackAdapter:
     def submit(self, request):
         body = dict(request)
         if "deadline_at" not in body:
-            with self.executor.db.transaction() as db:
+            with self.executor.db.snapshot() as db:
                 row = db.execute(
                     "SELECT deadline_at FROM jobs WHERE id=?", (request["request_id"],)
                 ).fetchone()
@@ -64,7 +70,7 @@ class IntegratedPlaybackAdapter:
         """Read observation and monitoring outcome from the same durable snapshot."""
         if self.executor.stopping or not self.executor.loop:
             raise ConnectionError("Playback executor is not running")
-        with self.executor.db.transaction() as db:
+        with self.executor.db.snapshot() as db:
             owner = db.execute(
                 "SELECT current_token FROM executor_devices WHERE device_id=?", (device_id,)
             ).fetchone()
@@ -89,7 +95,7 @@ class IntegratedPlaybackAdapter:
         if report:
             command = CancelRequest(device_id=report["device_id"], token=report["token"])
         else:
-            with self.executor.db.transaction() as db:
+            with self.executor.db.snapshot() as db:
                 row = db.execute("SELECT device_id,intent FROM jobs WHERE id=?", (request_id,)).fetchone()
             if not row:
                 return
@@ -112,18 +118,22 @@ class ExecutorContentStatusAdapter:
 
     async def lookup(self, request):
         observation = None
-        with self.executor.db.transaction() as db:
-            # Terminal facts persist after route switches/cancel. Prefer the newest
-            # acquired explicit completion. A cached live feed is weaker evidence.
-            rows = db.execute(
-                "SELECT report FROM executor_jobs WHERE content_id=? AND request IS NOT NULL ORDER BY intent DESC",
-                (request["content_id"],),
-            ).fetchall()
-            for row in rows:
-                candidate = json.loads(row[0])["content_status"]["observation"]
-                if candidate and candidate["state"] in {"ended", "cancelled"}:
-                    observation = candidate
-                    break
+        def read_completion():
+            observation = None
+            with self.executor.db.snapshot() as db:
+                # Terminal facts persist after route switches/cancel. Prefer the newest
+                # acquired explicit completion. A cached live feed is weaker evidence.
+                rows = db.execute(
+                    "SELECT report FROM executor_jobs WHERE content_id=? AND request IS NOT NULL ORDER BY intent DESC",
+                    (request["content_id"],),
+                ).fetchall()
+                for row in rows:
+                    candidate = json.loads(row[0])["content_status"]["observation"]
+                    if candidate and candidate["state"] in {"ended", "cancelled"}:
+                        observation = candidate
+                        break
+            return observation
+        observation = await self.executor.database_call(read_completion)
         if observation is None:
             return await self.feed_status.lookup(request)
         # Do not replace confirmed completion with a cached feed's live/unknown

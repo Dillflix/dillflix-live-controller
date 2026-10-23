@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from ..entitlement_store import record_entitled
 from ..executor.models import ExecutorError
-from ..model_diagnostics import capture_model_calls
+from ..model_diagnostics import capture_model_calls_async
 from .client import (
     COMPATIBILITY_MESSAGES,
     RECOVERING_ADAPTATION_STATES,
@@ -19,6 +19,8 @@ from .client import (
 )
 from .matching import selection_state
 from .search import choose_search
+
+SELECTION_HANDOFF_SECONDS = 60
 
 CATALOGUE_ERROR_MESSAGES = {
     **COMPATIBILITY_MESSAGES,
@@ -80,6 +82,7 @@ class CatalogueChecks:
                     "last_error": operation.get("error") or network.get("last_error"),
                     "checked_at": datetime.now(UTC).isoformat(),
                     "policy_enabled": self.network_policy.enabled,
+                    "startup": health.get("startup"),
                 }
                 scope = {"context_id": network.get("context_id"), "policy_revision": self.network_policy.revision}
                 if device.get("prime_network_scope") != scope:
@@ -226,7 +229,7 @@ class CatalogueChecks:
                         call for call in evidence["model_calls"] if call["call_id"] != value["call_id"]
                     ] + [value]
 
-                with capture_model_calls(
+                async with capture_model_calls_async(
                     diagnostic, recorder=self.model_captures.record,
                     context={"source": "catalogue", "device_id": probe["device_id"],
                              "content_id": probe["content_id"], "catalogue_probe_id": probe["id"],
@@ -298,7 +301,11 @@ class CatalogueChecks:
             evidence.update(
                 state=state,
                 finished_at=now.isoformat(),
-                expires=evidence.get("received_at", time.time()) + 60,
+                # Matching time must not consume the executor's handoff window.
+                # This is a selection decision, not a retained player handle:
+                # Play resolves the ID again under current ownership and network.
+                selected_at=now.timestamp(),
+                expires=now.timestamp() + SELECTION_HANDOFF_SECONDS,
                 retry_at=time.time() + retry_seconds if valid else 0,
             )
             self.db.set_meta(db, key(device["id"]), evidence)
@@ -362,7 +369,7 @@ class CatalogueChecks:
             )
 
     def prepared_catalogue(self, request, session, *, generation=None, network_context_id=None):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             probe = self.db.meta(db, key(request["device_id"]), {})
         if (
             probe.get("state") == "ready"
