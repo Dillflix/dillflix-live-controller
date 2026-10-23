@@ -28,11 +28,13 @@ def successful_report(service, job):
     return service.playback.inspect(job["id"])
 
 
-def issued_launch_with_unknown_status(rig, monkeypatch):
+def issued_launch_with_unknown_status(rig, monkeypatch, phase=None):
     _, service, _ = rig
     job = pending(rig)
     success = successful_report(service, job)
-    assert service.receive_playback_report(job["id"], {**success, "state": "navigating", "observation": None})
+    assert service.receive_playback_report(
+        job["id"], {**success, "state": "navigating", "phase": phase, "observation": None}
+    )
     with service.db.transaction() as db:
         item = next(i for i in service.items(db) if i["content_id"] == job["content_id"])
     item = copy.deepcopy(item)
@@ -42,24 +44,45 @@ def issued_launch_with_unknown_status(rig, monkeypatch):
     return job, success, item
 
 
-def test_issued_launch_survives_unknown_status_and_accepts_verified_result(rig, monkeypatch):
+@pytest.mark.parametrize(
+    "phase",
+    [
+        None, "accepted", "searching", "matching", "broadcasts", "launching", "verifying",
+        "network_pending", "network_retiring_prime", "network_changing_network",
+        "network_reconciling_network", "network_starting_prime", "network_settling_network",
+        "network_recovering", "retrying", "future_launch_phase",
+    ],
+)
+def test_issued_launch_survives_unknown_status_and_accepts_verified_result(rig, monkeypatch, phase):
     client, service, _ = rig
-    job, success, _ = issued_launch_with_unknown_status(rig, monkeypatch)
+    job, success, _ = issued_launch_with_unknown_status(rig, monkeypatch, phase)
     service.stage_playback()
     retained = jobs(client)[0]
     assert retained["id"] == job["id"] and retained["state"] == "pending"
+    assert retained["executor_job_id"] == success["executor_job_id"]
+    assert retained["progress"] == (phase or "navigating")
+    assert retained["intent"] == job["intent"]
+    assert not retained["cancel_sent"]
     assert retained["deadline_at"] == job["deadline_at"]
+    device = overview(client)["device"]
+    assert device["desired"] == job["content_id"]
+    assert device["playback_state"] == "navigating"
+    assert device["observed"] is None
     assert service.receive_playback_report(job["id"], success)
     assert jobs(client)[0]["state"] == "verified"
     assert len(jobs(client)) == 1
 
 
 @pytest.mark.parametrize(
-    "change", ["ended", "cancelled", "route_withdrawn", "expired", "new_intent", "queued"]
+    "change",
+    [
+        "ended", "cancelled", "route_withdrawn", "expired", "new_intent", "queued",
+        "unacknowledged_phase", "paused", "manual_control", "input_handoff",
+    ],
 )
 def test_unknown_status_does_not_preserve_invalid_launch(rig, monkeypatch, change):
     client, service, _ = rig
-    job, success, item = issued_launch_with_unknown_status(rig, monkeypatch)
+    job, success, item = issued_launch_with_unknown_status(rig, monkeypatch, "searching")
     if change in {"ended", "cancelled"}:
         item["lifecycle"]["state"] = change
     elif change == "route_withdrawn":
@@ -68,11 +91,19 @@ def test_unknown_status_does_not_preserve_invalid_launch(rig, monkeypatch, chang
         with service.db.transaction() as db:
             if change == "expired":
                 db.execute("UPDATE jobs SET deadline_at=0 WHERE id=?", (job["id"],))
-            elif change == "queued":
-                db.execute("UPDATE jobs SET progress='queued' WHERE id=?", (job["id"],))
+            elif change in {"queued", "unacknowledged_phase"}:
+                db.execute(
+                    "UPDATE jobs SET progress=?,executor_job_id=NULL WHERE id=?",
+                    ("queued" if change == "queued" else "searching", job["id"]),
+                )
             else:
                 device = service.db.device(db)
-                device["intent_version"] += 1
+                if change == "new_intent":
+                    device["intent_version"] += 1
+                elif change == "paused":
+                    device["automation"] = "paused"
+                else:
+                    device[change] = {"active": True}
                 service.db.save_device(db, device)
     assert not service.receive_playback_report(job["id"], success)
     assert jobs(client)[0]["state"] != "verified"
@@ -80,7 +111,7 @@ def test_unknown_status_does_not_preserve_invalid_launch(rig, monkeypatch, chang
 
 def test_unknown_status_never_substitutes_for_playback_proof(rig, monkeypatch):
     client, service, _ = rig
-    job, success, _ = issued_launch_with_unknown_status(rig, monkeypatch)
+    job, success, _ = issued_launch_with_unknown_status(rig, monkeypatch, "verifying")
     success["observation"]["verified"] = False
     service.receive_playback_report(job["id"], success)
     assert jobs(client)[0]["state"] == "rejected"

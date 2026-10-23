@@ -18,7 +18,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             job
             and item
             and job["state"] == "pending"
-            and job["progress"] in {"accepted", "navigating"}
+            # Acceptance is durable identity; progress is only a display phase.
+            and job["executor_job_id"]
             and job["intent"] == device["intent_version"]
             and job["content_id"] == device.get("desired")
             and job["deadline_at"] is not None
@@ -86,7 +87,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 return True
             if not target and self.keep_pending_launch(d, pending, indexed.get(d.get("desired"))):
                 target = pending["content_id"]
-                d["reason"] = "Verifying the issued live launch; event status temporarily unavailable"
+                d["reason"] = "Continuing the accepted playback request; event status temporarily unavailable"
             observed = d.get("observed") or {}
             if observed.get("verified") and observed.get("content_id") == d.get("retry_playback"):
                 d["retry_playback"] = None
