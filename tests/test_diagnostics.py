@@ -75,6 +75,8 @@ async def test_entitlement_index_covers_events_omitted_by_evidence_limit(tmp_pat
         assert len(summary) == 501
         assert summary["fixture-game"]["status"] == "unentitled"
         assert summary["fixture-game"]["reason"] == "Subscription required"
+        assert summary["fixture-game"]["title"] == "Jets vs. Lions"
+        assert summary["fixture-game"]["active"] == 1 and summary["fixture-game"]["start_time"]
         assert "private_detail" not in json.dumps(summary)
     finally:
         await cleanup(service)
