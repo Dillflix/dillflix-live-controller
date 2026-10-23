@@ -19,11 +19,11 @@ from ..executor.worker import PlaybackWorker
 from ..model_capture import ModelCaptureStore
 from ..model_diagnostics import capture_model_calls_async
 from ..planner import parse_time
-from .catalogue import CatalogueChecks, SELECTION_HANDOFF_SECONDS
+from .catalogue import SELECTION_HANDOFF_SECONDS, CatalogueChecks
 from .client import PrimePlayerClient, correlated
 from .matching import EventMatcher, selection_state, unavailable_live_trial
-from .search import choose_search
 from .network import NetworkAcquisition
+from .search import choose_search
 
 
 class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker):
@@ -218,15 +218,18 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
 
     async def check_session(self, expected=None, *, capabilities=(), control=False):
         health = await (self.player.control_health() if control else self.player.health())
+        if health.get("serial") != self.settings.screen_adb_serial:
+            raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from SCREEN_ADB_SERIAL")
+        # Even an obsolete attempt must publish the replacement runtime's current
+        # network scope. Rejecting it first left recovery and catalogue staging
+        # using the retired context until their next search.
+        await self.database_call(lambda: self.record_runtime_adaptation(health))
         if expected and health["session_id"] != expected:
             raise ExecutorError(
                 "prime_session_changed",
                 "Prime Player restarted; the old attempt must not be replayed",
                 retryable=False,
             )
-        if health.get("serial") != self.settings.screen_adb_serial:
-            raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from SCREEN_ADB_SERIAL")
-        await self.database_call(lambda: self.record_runtime_adaptation(health))
         self.player.require(health, *capabilities)
         if not control and await self.database_call(lambda: self.record_player_health(health)):
             raise ExecutorError("prime_device_recovery", "Player inspection unavailable; waiting for device recovery")

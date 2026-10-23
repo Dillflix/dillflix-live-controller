@@ -118,6 +118,13 @@ Navigation has a persisted wall-clock deadline, normally 120 seconds from stagin
 
 When playback evidence expires but the service remains reachable, a durable recovery grace holds the current live/unknown event if its route is still permitted. The default grace is 60 seconds, then 120, 240, and at most 300 seconds following repeated reopen attempts without sustained recovery. Thirty seconds of fresh healthy observations reset this budget. A brief recovery uses the original request and does not reset viewing timers. After grace, only confirmed live content can be opened again; the planner can choose a confirmed fallback or wait if all candidates are unknown. Manual commitments remain intact. A higher eligible manual choice takes precedence immediately; Play now on an unverified live event explicitly bypasses grace.
 
+A health response confirming that the monitored attempt belongs to a replaced
+player session releases that attempt's grace immediately. The new network/runtime
+scope is recorded even when the old-session check fails. The coordinator still
+reconciles the old attempt and requires current catalogue readiness before another
+launch; temporary unknown/buffering responses in the same session retain grace,
+and replacement never overrides pause or manual control.
+
 For Prime pause, buffering or temporarily unknown status, verification is withdrawn
 immediately but the reopen deadline cannot precede the original five-minute evidence
 expiry. Repeat failures do not renew that deadline. At the deadline the coordinator
@@ -399,5 +406,15 @@ policy paths. Simulation and non-Prime routes do not require Prime evidence.
 Prepared Prime selections have a 60-second handoff window measured from completed matching/selection, not from receipt of the raw search response. Matching may itself take most of a minute. Original search observation timestamps remain intact; the handoff still requires the same intent, content/options snapshot, player session, runtime generation and network context. The final launch uses the same 60-second decision-age limit and resolves the selected ID again; it does not replay a cached playback handle. A changed network still requires new catalogue evidence.
 
 Asynchronous playback, network acquisition, model capture, catalogue refresh, Plex delivery, content-status lookup and manual-control bookkeeping await complete synchronous database units in worker threads. Cancellation drains a started unit before releasing its caller's ownership. Read-only projections use WAL snapshots where no reconciliation or write is required. Model captures enqueue immutable snapshots and drain in order, including on cancellation.
+
+Capture writes tolerate up to five seconds of SQLite writer contention off the
+event loop. Failed writes report their transaction phase, SQLite error code and
+symbolic name without copying SQL or sensitive exception text into diagnostics.
+Detailed entitlement evidence remains capped; its compact index covers all events.
+
+A completed catalogue selection is bound to the validated network context used by
+its results, including a context discovered by the probe's initial health request.
+The original signature and network scope are retained for diagnostics. A context change after the
+read invalidates the result, as do existing intent/revision/route/snapshot fences.
 
 Executor operations retain `phase_started_at` across repeated updates of the same phase. Overview projects stored phases and player startup progress without device RPCs. The playback banner distinguishes search, feed selection, broadcast lookup, network switching, Prime initialization and live verification, with elapsed time for the current phase. Activity records phase changes instead of describing every navigating phase as verification.

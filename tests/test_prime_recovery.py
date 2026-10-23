@@ -80,6 +80,49 @@ async def test_missing_observation_honors_five_minutes_in_refresh_path(live_prim
     assert job_count(controller) == 1
 
 
+@pytest.mark.parametrize("held", [False, True])
+async def test_replaced_session_releases_old_evidence_grace_once(live_prime, held):
+    controller, workflow, token, before = live_prime
+    if held:
+        workflow.player.state = "unknown"
+        await workflow.monitor(row(workflow, token))
+        controller.refresh_playback_observation()
+        assert parse_time(controller.overview()["device"]["recovery"]["retry_after"]) >= parse_time(before["observed"]["valid_until"])
+    workflow.player.session = "replacement-session"
+    await workflow.monitor(row(workflow, token))
+    controller.refresh_playback_observation()
+    device = controller.overview()["device"]
+    retry = parse_time(device["recovery"]["retry_after"])
+    assert retry <= datetime.now(UTC)
+    assert not device["observed"]["verified"]
+    controller.refresh_playback_observation()
+    assert parse_time(controller.overview()["device"]["recovery"]["retry_after"]) == retry
+    # The coordinator still reconciles the old attempt before issuing fresh work.
+    await workflow.monitor(row(workflow, token))
+    controller.tick()
+    await finish_check(controller)
+    controller.tick()
+    assert job_count(controller) == 2
+    assert workflow.store.report(token)["content_status"]["effective_state"] != "ended"
+
+
+@pytest.mark.parametrize("hold", ["pause", "manual"])
+async def test_replaced_session_does_not_override_user_control(live_prime, hold):
+    controller, workflow, token, _ = live_prime
+    workflow.player.session = "replacement-session"
+    await workflow.monitor(row(workflow, token))
+    with controller.db.transaction() as db:
+        device = controller.db.device(db)
+        if hold == "pause":
+            device["automation"] = "paused"
+        else:
+            device["manual_control"] = {"session_id": "manual"}
+        controller.db.save_device(db, device)
+    controller.refresh_playback_observation()
+    controller.stage_playback()
+    assert job_count(controller) == 1
+
+
 async def test_missing_observation_really_expires_after_five_minutes(live_prime, monkeypatch):
     controller, _, _, _ = live_prime
     with controller.db.transaction() as db:

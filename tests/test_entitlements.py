@@ -12,8 +12,8 @@ from playback_fixtures import payload
 from test_prime_matching import GTI, results, tile
 from test_prime_workflow import cleanup, launch, rig
 
-from controller.entitlements import DISPATCH_INTERVAL, identity, retry_delay
 from controller.entitlement_store import record_entitled
+from controller.entitlements import DISPATCH_INTERVAL, identity, retry_delay
 from controller.models import Command, EntitlementCommand
 from controller.prime_player.entitlement import choose_entitlement
 from controller.service import Controller
@@ -572,6 +572,7 @@ async def test_late_background_failure_cannot_replace_foreground_positive(tmp_pa
 ])
 async def test_search_timeout_is_identified_without_exposing_arbitrary_server_text(message, code):
     import httpx
+
     from controller.executor.models import ExecutorError
     from controller.prime_player.client import PrimePlayerClient
 
@@ -901,7 +902,8 @@ async def test_denial_and_unknown_gate_new_actions_without_erasing_plan(tmp_path
     try:
         await controller.check_entitlement_once()
         assert record(controller)["status"] == "unentitled"
-        assert record(controller)["state"] == "complete" and record(controller)["next_check"] is None
+        assert record(controller)["state"] == "retry"
+        assert record(controller)["next_check"] > time.time() + 23 * 3600
         assert workflow.player.calls == [("search", "Jets Lions"), ("search", "New York Jets Detroit Lions")]
         await controller.check_entitlement_once()
         assert len(workflow.player.calls) == 2
@@ -1051,10 +1053,12 @@ async def test_confirmed_completion_stops_retry_and_departed_schedule_is_not_sca
 
 def test_admin_only_recheck_and_public_action_gate(tmp_path):
     from dataclasses import replace
+
     from fastapi.testclient import TestClient
     from playback_fixtures import settings
     from test_prime_workflow import Player
     from test_public_access import ADMIN, USER
+
     from controller.api import create_app
 
     app = create_app(replace(settings(tmp_path), proxy_secret="test-proxy-secret"), start_workers=False)
@@ -1235,5 +1239,171 @@ async def test_current_queue_excludes_history_and_stops_terminal_retries_before_
         assert record(controller, 'event-2')['next_check'] is None
         assert record(controller, 'event-1')['state'] == 'retry'
         assert not workflow.player.calls
+    finally:
+        await cleanup(controller)
+
+
+async def test_denial_retries_daily_and_accepts_later_entitlement(tmp_path):
+    controller, workflow = rig(tmp_path)
+    entries = seed(controller)
+    entries[0]["start_time"] = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+    with controller.db.transaction() as db:
+        controller.replace_catalog(db, entries, "teamarr")
+    original = workflow.player.search
+
+    async def denied(*args):
+        return {**await original(*args), **results(tile(entitlement_status="UNENTITLED"))}
+
+    workflow.player.search = denied
+    try:
+        await controller.check_entitlement_once()
+        value = record(controller)
+        assert value["status"] == "unentitled" and value["state"] == "retry"
+        assert 86390 < value["next_check"] - time.time() <= 86400
+        assert value["failures"] == 0
+        calls = list(workflow.player.calls)
+        await controller.check_entitlement_once()
+        assert workflow.player.calls == calls
+        due(controller)
+        workflow.player.search = original
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        assert record(controller)["state"] == "complete"
+        assert record(controller)["next_check"] is None
+        assert {c[0] for c in workflow.player.calls} == {"search"}
+    finally:
+        await cleanup(controller)
+
+
+async def test_legacy_denials_reschedule_from_original_check_and_stop_when_terminal(tmp_path):
+    controller, workflow = rig(tmp_path)
+    seed(controller, count=3)
+    checked = datetime.now(UTC) - timedelta(hours=25)
+    try:
+        with controller.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET status='unentitled',state='complete',checked_at=?,next_check=NULL",
+                       (checked.isoformat(),))
+            db.execute("UPDATE contents SET active=0 WHERE id='event-1'")
+            device = controller.db.device(db)
+            device["manual_completions"]["event-2"] = datetime.now(UTC).isoformat()
+            device["manual_control"] = {"test": True}
+            controller.db.save_device(db, device)
+        await controller.check_entitlement_once()
+        first = record(controller)
+        assert first["state"] == "retry" and first["next_check"] < time.time()
+        await controller.check_entitlement_once()
+        assert record(controller)["next_check"] == first["next_check"]
+        assert record(controller, "event-1")["state"] == "complete"
+        assert record(controller, "event-2")["state"] == "stopped"
+        assert record(controller, "event-2")["next_check"] is None
+        assert not workflow.player.calls
+    finally:
+        await cleanup(controller)
+
+
+@pytest.mark.parametrize("stale", [None, "session_id", "generation", "content_id", "complete"])
+async def test_denied_parent_checks_alternate_broadcast_entitlement(tmp_path, stale):
+    from copy import deepcopy
+
+    from test_prime_broadcasts import CAPTURE, ENGLISH
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original = workflow.player.search
+    broadcasts = []
+
+    async def denied(*args):
+        return {**await original(*args), **results(tile(entitlement_status="UNENTITLED"))}
+
+    async def alternatives(content_id, ownership):
+        broadcasts.append(content_id)
+        value = {**deepcopy(CAPTURE), "session_id": workflow.player.session,
+                 "generation": 1, "content_id": content_id}
+        if stale:
+            value[stale] = "obsolete"
+        return value
+
+    workflow.player.search = denied
+    workflow.player.broadcasts = alternatives
+    try:
+        await controller.check_entitlement_once()
+        value = record(controller)
+        evidence = json.loads(value["evidence"])
+        assert broadcasts == [GTI]
+        if stale:
+            assert value["status"] == "unknown"
+            assert evidence["error"]["code"] == (
+                "prime_invalid_broadcasts" if stale == "complete" else "prime_stale_result")
+        else:
+            assert value["status"] == "entitled"
+            assert evidence["audit"]["feeds"][0]["content_id"] == ENGLISH
+            assert evidence["audit"]["broadcast_checks"]
+        assert {c[0] for c in workflow.player.calls} == {"search"}
+    finally:
+        await cleanup(controller)
+
+
+async def test_locked_parent_does_not_hide_entitled_broadcast_of_second_parent(tmp_path):
+    from copy import deepcopy
+
+    from test_prime_broadcasts import CAPTURE, ENGLISH
+
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    original_search, original_broadcasts = workflow.player.search, workflow.player.broadcasts
+    inspected = []
+    second = GTI + "-second"
+
+    async def denied(*args):
+        return {**await original_search(*args), **results(
+            tile(entitlement_status="UNENTITLED"), tile(cid=second, entitlement_status="UNENTITLED"))}
+
+    async def alternatives(content_id, ownership):
+        inspected.append(content_id)
+        if content_id == GTI:
+            return await original_broadcasts(content_id, ownership)
+        return {**deepcopy(CAPTURE), "session_id": workflow.player.session,
+                "generation": 1, "content_id": content_id}
+
+    workflow.player.search, workflow.player.broadcasts = denied, alternatives
+    try:
+        await controller.check_entitlement_once()
+        evidence = json.loads(record(controller)["evidence"])
+        assert record(controller)["status"] == "entitled"
+        assert evidence["audit"]["feeds"][0]["content_id"] == ENGLISH
+        assert inspected == [GTI, second]
+    finally:
+        await cleanup(controller)
+
+
+async def test_alternate_broadcast_read_yields_to_due_playback_monitor(tmp_path):
+    from copy import deepcopy
+
+    from test_prime_broadcasts import CAPTURE
+
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    try:
+        token = await launch(workflow)
+        workflow.player.calls.clear()
+        original = workflow.player.search
+
+        async def denied(*args):
+            result = await original(*args)
+            with controller.db.transaction() as db:
+                db.execute("UPDATE executor_jobs SET next_check=0 WHERE token=?", (token,))
+            return {**result, **results(tile(entitlement_status="UNENTITLED"))}
+
+        async def alternatives(content_id, ownership):
+            assert workflow.player.calls[-1][0] == "status"
+            workflow.player.calls.append(("broadcasts", content_id))
+            return {**deepcopy(CAPTURE), "session_id": workflow.player.session,
+                    "generation": 1, "content_id": content_id}
+
+        workflow.player.search, workflow.player.broadcasts = denied, alternatives
+        workflow.worker = asyncio.create_task(workflow.run())
+        await controller.check_entitlement_once()
+        assert record(controller)["status"] == "entitled"
+        assert [c[0] for c in workflow.player.calls[:3]] == ["search", "status", "broadcasts"]
+        assert workflow.store.report(token)["observation"]["verified"]
     finally:
         await cleanup(controller)

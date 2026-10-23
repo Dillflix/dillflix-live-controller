@@ -93,6 +93,58 @@ async def finish_check(controller):
     controller.stage_playback()
 
 
+async def test_initial_health_scope_refresh_reuses_completed_selection(tmp_path, monkeypatch):
+    controller, workflow = rig(tmp_path)
+    setup_selection(controller, monkeypatch)
+    with controller.db.transaction() as db:
+        device = controller.db.device(db)
+        device["prime_network_scope"] = {"context_id": "old-context", "policy_revision": workflow.network_policy.revision}
+        controller.db.save_device(db, device)
+    original_health, original_search = workflow.player.health, workflow.player.search
+
+    async def health():
+        return {**await original_health(), "network": {"enabled": True, "state": "ready", "context_id": "new-context"}}
+
+    async def search(*args):
+        return {**await original_search(*args), "network_context_id": "new-context"}
+
+    workflow.player.health, workflow.player.search = health, search
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        await workflow.observe_catalogue(probe)
+        _, finished = saved(controller)
+        assert finished["state"] == "ready"
+        assert finished["initial_signature"] == probe["signature"]
+        assert finished["signature"] != probe["signature"]
+        assert finished["initial_network_scope"]["context_id"] == "old-context"
+        assert finished["network_scope"]["context_id"] == "new-context"
+        controller.stage_playback()
+        device, current = saved(controller)
+        assert current["id"] == probe["id"]
+        assert current["launch_intent"] == device["intent_version"]
+        assert [c[0] for c in workflow.player.calls].count("search") == 1
+    finally:
+        await cleanup(controller)
+
+
+async def test_context_replaced_after_selection_cannot_be_rebound(tmp_path, monkeypatch):
+    controller, workflow = rig(tmp_path)
+    setup_selection(controller, monkeypatch)
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            device["prime_network_scope"] = {"context_id": "new-context"}
+            controller.db.save_device(db, device)
+        workflow.finish_catalogue(probe, {**probe, "state": "ready", "results": {"network_context_id": "old-context"}})
+        assert saved(controller)[1]["state"] == "discarded"
+        assert not any(c[0] == "play" for c in workflow.player.calls)
+    finally:
+        await cleanup(controller)
+
+
 async def test_upcoming_refresh_then_live_changes_intent_only_after_ready(tmp_path, monkeypatch):
     controller, workflow = rig(tmp_path)
     request, item, intent = setup_selection(controller, monkeypatch)

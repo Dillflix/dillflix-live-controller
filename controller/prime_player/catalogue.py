@@ -159,6 +159,7 @@ class CatalogueChecks:
         probe = {
             "id": uuid4().hex,
             "signature": token,
+            "initial_network_scope": device.get("prime_network_scope"),
             "state": "pending",
             "device_id": device["id"],
             "content_id": item["content_id"],
@@ -283,6 +284,21 @@ class CatalogueChecks:
                 and not device.get("manual_control")
                 and not device.get("input_handoff")
             )
+            result_context = (evidence.get("results") or {}).get("network_context_id")
+            current_scope = device.get("prime_network_scope")
+            if evidence.get("results") and current_scope and result_context != current_scope.get("context_id"):
+                valid = False
+            if valid and evidence.get("results"):
+                # The initial health read may have discovered a replacement
+                # network context. Bind the completed decision to that context,
+                # retaining the original signature for incident analysis.
+                evidence["initial_signature"] = probe["signature"]
+                evidence["signature"] = signature(device, {
+                    "content_id": probe["content_id"],
+                    "snapshot": probe["request"]["content_snapshot"],
+                    "viewing_options": probe["request"]["allowed_viewing_options"],
+                })
+                evidence["network_scope"] = current_scope
             now = datetime.now(UTC)
             state = evidence.get("state", "access_unknown") if valid else "discarded"
             error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}

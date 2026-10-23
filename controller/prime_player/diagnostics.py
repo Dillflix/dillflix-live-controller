@@ -139,6 +139,17 @@ def collect(path, device_id="living-room"):
                 "activity": activity,
                 "controller_jobs": controller_jobs,
                 "catalog_status": catalog,
+                # Evidence bodies remain bounded below; the lightweight index
+                # covers every retained event, including older Sunday checks.
+                "schedule_entitlement_summary": [dict(r) for r in db.execute(
+                    "SELECT e.content_id,e.state,e.status,e.checked_at,e.next_check,e.failures,c.active,"
+                    "json_extract(c.snapshot,'$.title') AS title,"
+                    "json_extract(c.snapshot,'$.start_time') AS start_time,"
+                    "json_extract(e.evidence,'$.reason') AS reason,"
+                    "json_extract(e.evidence,'$.network_context_id') AS network_context_id "
+                    "FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
+                    "WHERE e.device_id=?", (device_id,)
+                )],
                 "schedule_entitlements": [
                     {**dict(r), "evidence": json.loads(r["evidence"])} for r in db.execute(
                         "SELECT * FROM event_entitlements WHERE device_id=? "
