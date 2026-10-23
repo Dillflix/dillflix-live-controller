@@ -373,6 +373,21 @@ class EntitlementChecks:
             ).fetchall():
                 self.finish_entitlement(db, row, "unknown", {"reason": "Check interrupted; retry scheduled"})
             items = {i["content_id"]: i for i in self.items(db, device["id"])}
+            # Completed denials from older releases must also discover listings
+            # added later. Base the deadline on the original check, not restart
+            # time; repeated imports must never push it into the future.
+            for old in db.execute("SELECT * FROM event_entitlements WHERE device_id=? "
+                                  "AND state='complete' AND status='unentitled' AND manual=0",
+                                  (device["id"],)).fetchall():
+                item = items.get(old["content_id"])
+                if not item or not item["active"]:
+                    continue
+                checked = parse_time(old["checked_at"])
+                start = parse_time(item["start_time"])
+                db.execute("UPDATE event_entitlements SET state='retry',next_check=? "
+                           "WHERE device_id=? AND content_id=?",
+                           (no_listing_retry(checked.timestamp(), start.timestamp() if start else None)
+                            if checked else 0, device["id"], old["content_id"]))
             # Completion cleanup is independent of retry deadlines and playback priority.
             for item in items.values():
                 if item["lifecycle"]["state"] in {"ended", "cancelled"}:
@@ -499,6 +514,34 @@ class EntitlementChecks:
                                 network_context_id=result.get("network_context_id"), search_id=result.get("search_id"))
                 return result
 
+        broadcast_cache = {}
+
+        async def fetch_broadcasts(results, content_id):
+            # Only catalogue reads, fenced just like search. No resolve/play and
+            # no network changes are authorized by an entitlement check.
+            await self.playback_work(check_priority)
+            async with workflow.input_lock:
+                await self.playback_work(check_priority)
+                health = await workflow.player.health()
+                workflow.player.require(health, "broadcasts")
+                if health.get("serial") != self.settings.screen_adb_serial:
+                    raise ExecutorError("prime_device_mismatch", "Prime Player device differs")
+                if health["session_id"] != results.get("session_id"):
+                    raise ExecutorError("prime_stale_result", "Prime session changed during broadcast check")
+                ownership = workflow.player.ownership(health, automatic=True)
+                workflow.require_catalogue_generation(health, results)
+                cache_key = (results.get("session_id"), results.get("generation"),
+                             results.get("network_context_id"), content_id)
+                if cache_key in broadcast_cache:
+                    return broadcast_cache[cache_key]
+                response = await workflow.player.broadcasts(content_id, ownership)
+                after = await workflow.player.health()
+                if after["session_id"] != health["session_id"] or workflow.player.ownership(after, automatic=True) != ownership:
+                    raise ExecutorError("prime_stale_result", "Prime ownership changed during broadcast check")
+                workflow.require_catalogue_generation(after, results)
+                broadcast_cache[cache_key] = response
+                return response
+
         status = "unknown"
         deferred = None
         try:
@@ -508,7 +551,8 @@ class EntitlementChecks:
                         request, device["preferences"]["timezone"], workflow.matcher, search, None,
                         lambda a: evidence.update(audit=a),
                         select=partial(choose_entitlement, EventMatchCache(workflow.matcher),
-                                       before_match=before_match),
+                                       before_match=before_match, fetch_broadcasts=fetch_broadcasts,
+                                       broadcast_matcher=workflow.matcher),
                         exhaust_denials=True,
                     )
                 await self.playback_work(check_priority)
@@ -560,8 +604,9 @@ class EntitlementChecks:
         short_failures = previous.get("retry_failures", row["failures"]) + 1 if status == "unknown" else 0
         evidence["retry_failures"] = short_failures
         next_check = time.time() + retry_delay(short_failures) if status == "unknown" else None
-        if status == "unknown" and no_listing(evidence):
-            evidence["reason"] = "No Prime listing found"
+        if status == "unentitled" or (status == "unknown" and no_listing(evidence)):
+            if status == "unknown":
+                evidence["reason"] = "No Prime listing found"
             evidence["retry_failures"] = 0
             content = db.execute("SELECT snapshot FROM contents WHERE id=?", (row["content_id"],)).fetchone()
             start = json.loads(content[0]).get("start_time") if content else None
@@ -569,7 +614,7 @@ class EntitlementChecks:
         db.execute(
             "UPDATE event_entitlements SET state=?,status=?,failures=?,next_check=?,checked_at=?,evidence=? "
             "WHERE device_id=? AND content_id=? AND check_id=?",
-            ("retry" if status == "unknown" else "complete", status, failures,
+            ("retry" if next_check is not None else "complete", status, failures,
              next_check,
              datetime.now(UTC).isoformat(), encode(evidence), row["device_id"], row["content_id"], row["check_id"]),
         )

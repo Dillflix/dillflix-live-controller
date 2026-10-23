@@ -14,10 +14,10 @@ log = logging.getLogger(__name__)
 MAX_CAPTURE_BYTES = 4 * 1024 * 1024
 
 
-def connection(path, *, readonly=False):
+def connection(path, *, readonly=False, timeout=0.1):
     # Never create a second, empty database if the configured path is wrong.
     uri = Path(path).resolve().as_uri() + ("?mode=ro" if readonly else "?mode=rw")
-    return sqlite3.connect(uri, uri=True, timeout=0.1)
+    return sqlite3.connect(uri, uri=True, timeout=timeout)
 
 
 class ModelCaptureStore:
@@ -28,14 +28,20 @@ class ModelCaptureStore:
 
     def record(self, trace):
         """Fail open: capture must never change or prevent a playback decision."""
+        phase = "validate"
         try:
             from .storage_lock import database_guard
 
             call_id = trace.get("call_id")
             if not isinstance(call_id, str) or not call_id or len(call_id) > 128:
                 raise ValueError("Invalid capture identity")
-            with database_guard(self.path), closing(connection(self.path)) as db:
+            # Production callers persist on a worker thread. The old 100ms
+            # allowance dropped answers during ordinary concurrent writes.
+            phase = "connect"
+            with database_guard(self.path), closing(connection(self.path, timeout=5)) as db:
+                phase = "begin"
                 db.execute("BEGIN IMMEDIATE")
+                phase = "read"
                 previous = db.execute(
                     "SELECT payload FROM chooser_captures WHERE call_id=?", (call_id,)
                 ).fetchone()
@@ -45,11 +51,13 @@ class ModelCaptureStore:
                 payload = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
                 if len(payload.encode("utf-8")) > MAX_CAPTURE_BYTES:
                     raise ValueError("Capture exceeds its storage bound")
+                phase = "write"
                 db.execute(
                     "INSERT INTO chooser_captures VALUES (?,?,?) ON CONFLICT(call_id) DO UPDATE SET "
                     "recorded_at=excluded.recorded_at,payload=excluded.payload",
                     (call_id, recorded_at, payload),
                 )
+                phase = "commit"
                 db.commit()
             return True
         except Exception as exc:
@@ -57,10 +65,14 @@ class ModelCaptureStore:
             self.last_error = {
                 "at": datetime.now(UTC).isoformat(),
                 "code": type(exc).__name__,
+                "phase": phase,
+                "sqlite_errorcode": getattr(exc, "sqlite_errorcode", None),
+                "sqlite_errorname": getattr(exc, "sqlite_errorname", None),
                 "message": "Chooser capture could not be saved; playback continues",
             }
             # Exception messages can contain upstream data or SQL payloads.
-            log.warning("Chooser capture could not be saved (%s); playback continues", type(exc).__name__)
+            log.warning("Chooser capture could not be saved (%s, %s, phase=%s); playback continues",
+                        type(exc).__name__, getattr(exc, "sqlite_errorname", None), phase)
             return False
 
     def status(self):

@@ -34,7 +34,7 @@ class PlaybackRecovery:
     def executor_available(self, db):
         return self.db.device(db).get("executor_health", {}).get("state") != "offline"
 
-    def begin_observation_recovery(self, device, now, *, not_before=None, reason=None):
+    def begin_observation_recovery(self, device, now, *, not_before=None, reason=None, session_replaced=False):
         content_id = device["observed"]["content_id"]
         recovery = device.get("recovery") or {}
         if recovery.get("content_id") != content_id:
@@ -49,6 +49,11 @@ class PlaybackRecovery:
         elif not_before and recovery.get("retry_after"):
             # Retained recovery state may have been created by an older version.
             recovery["retry_after"] = max(parse_time(recovery["retry_after"]), not_before).isoformat()
+        if session_replaced and not recovery.get("session_replaced"):
+            # A different service session cannot resume the old bound attempt.
+            # Drop its evidence grace once; normal readiness, intent and manual
+            # ownership checks still gate every replacement launch.
+            recovery.update(session_replaced=True, retry_after=now.isoformat())
         device["recovery"] = recovery
         if reason:
             recovery["reason"] = reason
@@ -63,6 +68,7 @@ class PlaybackRecovery:
         recovery["since"] = None
         recovery["retry_after"] = None
         recovery.pop("reason", None)
+        recovery.pop("session_replaced", None)
         recovery["stable_since"] = recovery.get("stable_since") or now.isoformat()
         if (
             now - parse_time(recovery["stable_since"])
@@ -134,6 +140,8 @@ class PlaybackRecovery:
                         )
             existing = d.get("observed")
             if existing:
+                session_replaced = bool(monitoring.get("session_replaced") and
+                                        monitoring.get("request_id") == existing.get("request_id"))
                 job = db.execute("SELECT * FROM jobs WHERE id=?", (existing.get("request_id"),)).fetchone()
                 item = next((i for i in self.items(db) if i["content_id"] == existing["content_id"]), None)
                 if item and item["lifecycle"]["state"] in {"ended", "cancelled"}:
@@ -195,9 +203,11 @@ class PlaybackRecovery:
                         )
                         and parse_time(observation["observed_at"]) >= parse_time(existing["observed_at"])
                     )
-                    if not route_valid or withdrawn or expiry <= now:
+                    if not route_valid or withdrawn or session_replaced or expiry <= now:
                         if not route_valid:
                             detail = "Coverage changed"
+                        elif session_replaced:
+                            detail = "Prime session was replaced; preparing fresh playback when the runtime is ready"
                         elif expiry <= now:
                             detail = "Playback evidence expired; waiting briefly for recovery"
                         else:
@@ -213,7 +223,7 @@ class PlaybackRecovery:
                         existing["verified"] = False
                         if d["playback_state"] == "verified":
                             d["playback_state"] = "unverified"
-                        temporary = withdrawn and monitoring.get("player_state") in {
+                        temporary = not session_replaced and withdrawn and monitoring.get("player_state") in {
                             "paused", "buffering", "unknown"
                         }
                         reason = detail
@@ -227,5 +237,6 @@ class PlaybackRecovery:
                             now,
                             not_before=expiry if route_valid and temporary else None,
                             reason=reason,
+                            session_replaced=session_replaced,
                         )
             self.db.save_device(db, d)

@@ -57,6 +57,29 @@ def test_redaction_preserves_correlation_ids():
     assert "private" not in json.dumps(value)
 
 
+async def test_entitlement_index_covers_events_omitted_by_evidence_limit(tmp_path):
+    from test_entitlements import seed
+    from test_prime_workflow import cleanup, rig
+    service, _ = rig(tmp_path)
+    seed(service, count=501)
+    try:
+        with service.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET checked_at='2026-10-22T00:00:00Z'")
+            db.execute("UPDATE event_entitlements SET checked_at='2026-10-19T00:00:00Z',"
+                       "status='unentitled',evidence=? WHERE content_id='fixture-game'",
+                       (json.dumps({"reason": "Subscription required", "private_detail": "large body"}),))
+        bundle = collect(service.settings.database)
+        assert len(bundle["schedule_entitlements"]) == 500
+        assert "fixture-game" not in {r["content_id"] for r in bundle["schedule_entitlements"]}
+        summary = {r["content_id"]: r for r in bundle["schedule_entitlement_summary"]}
+        assert len(summary) == 501
+        assert summary["fixture-game"]["status"] == "unentitled"
+        assert summary["fixture-game"]["reason"] == "Subscription required"
+        assert "private_detail" not in json.dumps(summary)
+    finally:
+        await cleanup(service)
+
+
 async def test_manual_handoff_records_failure_and_can_recover(tmp_path):
     app = create_app(Settings(database=str(tmp_path / "state.sqlite")), start_workers=False)
     service = app.state.controller

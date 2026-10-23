@@ -81,6 +81,8 @@ class IntegratedPlaybackAdapter:
             status = (report.get("prime_player") or {}).get("playback_status") or {}
             return {
                 "observation": report["observation"],
+                "request_id": report["request_id"],
+                "session_replaced": error.get("code") == "prime_session_changed",
                 "reason": error.get("message"),
                 "player_state": status.get("state", "unknown")
                 if error.get("code") == "prime_playback_unverified"

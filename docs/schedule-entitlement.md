@@ -47,6 +47,10 @@ changes invalidate reuse; current access flags always come from the new response
 This memory ends with the check, so later retries/manual checks read fresh evidence.
 
 Successful checks exhausting every query with no matching feed retry after 24 hours.
+Confirmed subscription denials use the same schedule, because new entitled feeds
+can appear later. Older completed denials become retryable from their original
+check time; restarts do not postpone the deadline. They remain Unentitled until a
+fresh positive result is accepted. Confirmed ended/cancelled events stop retrying.
 Existing automatic no-listing retries are rescheduled once from their last check
 time when this policy is deployed; deployment does not trigger a new search.
 If the event starts sooner, one check is scheduled at its start (at least one hour
@@ -100,8 +104,13 @@ events within either group are ordered by scheduled start rather than opaque ID.
 Retries keep their long backoff, and neither group can monopolize dispatch.
 The worker waits behind due playback monitoring, launches, cancellation, recovery, manual
 control and foreground catalogue work. It uses only the existing non-navigating
-search API, shared query fallbacks and identity matcher; it never calls broadcasts,
-resolve, play, stop, suspend or network-switch APIs. Model calls retain the existing
+search API, shared query fallbacks and identity matcher. Before accepting a denied
+or unknown matching parent, it also inspects alternate broadcasts through the
+non-navigating broadcasts API. An entitled permitted child establishes subscription
+access even when the parent is locked. Unresolved or incomplete alternatives remain
+unknown. Session, generation, ownership and network context fence these reads;
+responses are reused only within the same check. It never calls resolve, play,
+stop, suspend or network-switch APIs. Model calls retain the existing
 training capture with source `schedule_entitlement`.
 
 Each search has a fifteen-second service budget, with the existing five-second transport
@@ -126,7 +135,9 @@ the five-minute-to-five-hour schedule. Manual checks do not bypass a service out
 Diagnostics include the worker and shared-service waiting state.
 
 Schema 12 stores observations and jobs separately from playback readiness. Diagnostics
-include up to 500 current schedule records. Catalogue retention removes old evidence
+include up to 500 detailed schedule records plus a compact status index of every
+retained event, so older checks omitted from the evidence limit remain visible.
+Catalogue retention removes old evidence
 but retains a compact event marker to prevent rediscovery from creating a new automatic
 check. Schema 11 controllers cannot open this database after migration; back up before
 upgrading if an older binary must be restored.

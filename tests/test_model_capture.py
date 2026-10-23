@@ -117,16 +117,31 @@ def test_capture_contention_fails_open_quickly_and_is_visible(capture_store, cap
         started = time.monotonic()
         assert capture_store.record(value) is False
         elapsed = time.monotonic() - started
-    assert elapsed < 1
+    assert 4.5 <= elapsed < 7
     status = capture_store.status()
     assert status["count"] == 0
     assert status["state"] == "error"
     assert status["failure_count_since_start"] == 1
     assert status["last_error"]["code"] == "OperationalError"
+    assert status["last_error"]["sqlite_errorname"] == "SQLITE_BUSY"
+    assert status["last_error"]["phase"] == "begin"
     assert "NEVER_LOG_THIS_PAYLOAD" not in caplog.text
     assert capture_store.record(trace())
     assert capture_store.status()["state"] == "ok"
     assert capture_store.status()["last_error"] is not None
+
+
+def test_capture_survives_ordinary_writer_contention(capture_store):
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor() as worker, sqlite3.connect(capture_store.path) as db:
+        db.execute("BEGIN IMMEDIATE")
+        pending = worker.submit(capture_store.record, trace())
+        time.sleep(0.25)  # Longer than the former 100ms failure threshold.
+        assert not pending.done()
+        db.rollback()
+        assert pending.result(timeout=3) is True
+    assert records(capture_store)[0]["call_id"] == "call-1"
+    assert capture_store.status()["failure_count_since_start"] == 0
 
 
 def test_invalid_or_excessive_capture_never_escapes(capture_store):
