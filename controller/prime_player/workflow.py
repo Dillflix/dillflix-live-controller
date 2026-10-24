@@ -347,6 +347,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             selected_at = time.monotonic()
         await self.database_call(self.save_workflow, token,
             selection=audit,
+            catalogue=results,
+            query=results.get("query"),
             search_id=results.get("search_id"),
             search_generation=results.get("generation"),
             search_observed_at=results.get("observed_at"),)

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -300,6 +301,38 @@ async def test_unavailable_live_catalogue_allows_trial_without_preflight_play(tm
         assert evidence["selected"]["event_state"] == "LIVE"
         assert device["intent_version"] == intent
         assert any(p["content_id"] == item["content_id"] for p in device["plan"])
+        assert not any(c[0] in {"play", "stop", "cancel"} for c in workflow.player.calls)
+    finally:
+        await cleanup(controller)
+
+
+async def test_catalogue_fallback_retains_selected_response_and_original_receipt(tmp_path, monkeypatch):
+    controller, workflow = rig(tmp_path)
+    setup_selection(controller, monkeypatch)
+    original = workflow.player.search
+    responses, started = [], []
+
+    async def search(*args):
+        started.append(time.time())
+        value = await original(*args)
+        item = (tile(availability_status="UNAVAILABLE") if not responses
+                else tile("Unrelated movie", cid="amzn1.dv.gti.other", content_type="MOVIE"))
+        value = {**value, **results(item), "search_id": str(len(responses) + 1)}
+        responses.append(value)
+        return value
+
+    workflow.player.search = search
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        await workflow.observe_catalogue(probe)
+        device, finished = saved(controller)
+        assert len(responses) == 2
+        assert finished["state"] == "ready" and finished["selected"]["unavailable_trial"]
+        assert finished["results"] == responses[0]
+        assert finished["query"] == responses[0]["query"]
+        assert started[0] <= finished["received_at"] < started[1]
+        assert device["observed"]["content_id"] == "previous-event" and device["observed"]["verified"]
         assert not any(c[0] in {"play", "stop", "cancel"} for c in workflow.player.calls)
     finally:
         await cleanup(controller)

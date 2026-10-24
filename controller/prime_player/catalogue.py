@@ -193,6 +193,7 @@ class CatalogueChecks:
         try:
             async with asyncio.timeout(self.config.prime_search_timeout + self.config.model_timeout + 50):
                 session = None
+                received = {}
 
                 async def search(query):
                     nonlocal session
@@ -211,7 +212,8 @@ class CatalogueChecks:
                     if results.get("session_id") != session:
                         raise ExecutorError("prime_stale_result", "Catalogue result belongs to another session")
                     self.require_catalogue_generation(health, results)
-                    evidence.update(query=query, results=results, session_id=session, received_at=time.time())
+                    received[query] = time.time()
+                    evidence.update(query=query, results=results, session_id=session, received_at=received[query])
                     return results
 
                 async def fetch_broadcasts(results, content_id):
@@ -236,12 +238,13 @@ class CatalogueChecks:
                              "content_id": probe["content_id"], "catalogue_probe_id": probe["id"],
                              "intent_version": probe["intent"]},
                 ):
-                    _, selected, audit = await choose_search(
+                    results, selected, audit = await choose_search(
                         probe["request"], probe["timezone"], self.matcher, search, fetch_broadcasts,
                         lambda audit: evidence.update(audit=audit),
                     )
                 state = selection_state(selected, audit)
-                evidence.update(state=state, selected=selected, audit=audit)
+                evidence.update(state=state, selected=selected, audit=audit, results=results,
+                                query=results["query"], received_at=received[results["query"]])
         except asyncio.CancelledError:
             evidence.update(
                 state="access_unknown", error={"code": "cancelled", "message": "Catalogue check cancelled"}

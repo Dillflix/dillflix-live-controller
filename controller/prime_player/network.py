@@ -1,7 +1,7 @@
 """Durable bounded network acquisition, using the normal feed chooser."""
 import asyncio
-import time
 import sqlite3
+import time
 from uuid import uuid4
 
 from ..executor.models import ExecutorError
@@ -160,6 +160,7 @@ class NetworkAcquisition:
             if prepared:
                 return prepared
             evidence = {"id": "network-" + uuid4().hex, "network_context_id": context}
+            received = {}
 
             async def current(capability):
                 await self.database_call(self._network_allowed, token, acquisition)
@@ -177,7 +178,8 @@ class NetworkAcquisition:
                 self.require_catalogue_generation(value, results)
                 if results.get("session_id") != session:
                     raise ExecutorError("prime_stale_result", "Search belongs to a replaced session")
-                evidence.update(query=query, results=results, received_at=time.time())
+                received[query] = time.time()
+                evidence.update(query=query, results=results, received_at=received[query])
                 await self.database_call(self.store.phase, token, "matching")
                 return results
 
@@ -197,7 +199,8 @@ class NetworkAcquisition:
                                                              lambda a: self.database_call(self.save_workflow, token, selection=a))
             await current("play")
             state = selection_state(selected, audit)
-            evidence.update(results=results, selected=selected, audit=audit, selected_at=time.time())
+            evidence.update(results=results, selected=selected, audit=audit, selected_at=time.time(),
+                            query=results["query"], received_at=received[results["query"]])
             await self.database_call(self.save_workflow, token, selection=audit, catalogue=results)
             reason = state
             acquisition.setdefault("attempts", []).append({"target_id": target, "context_id": context, "state": reason, "audit": audit})

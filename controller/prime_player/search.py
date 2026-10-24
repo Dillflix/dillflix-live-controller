@@ -21,6 +21,7 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
     attempts, identity = [], None
     uncertain = False
     denied_outcome = None
+    trial_outcome = None
     for query in queries:
         attempt = {"query": query, "state": "pending"}
         attempts.append(attempt)
@@ -63,6 +64,21 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
         combined = await report(audit)
         if audit.get("error"):
             return results, selected, combined
+        if trial_outcome:
+            prior = trial_outcome[1]
+            parent_id = prior.get("parent_content_id") or prior["content_id"]
+            if any(item.get("content_id") == parent_id
+                   for container in results["containers"] for item in container["items"]):
+                # A new observation of this parent replaces the earlier trial,
+                # even if its entitlement, lifecycle or broadcast choices changed.
+                trial_outcome = None
+        if state == "ready" and selected.get("unavailable_trial"):
+            # Eligible for a real trial is not evidence of a playable feed.
+            # Prefer an available alternative from the remaining bounded labels.
+            trial_outcome = (results, selected, audit)
+            continue
+        if trial_outcome and state in {"waiting_for_feed", "feeds_locked", "feeds_unavailable"}:
+            continue
         if state in {"ready", "waiting_for_feed"}:
             return results, selected, combined
         if state == "feeds_locked" and exhaust_denials:
@@ -81,8 +97,8 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
         combined = await report(
             {**audit, "match_status": "uncertain", "reason": "Some search alternatives remain unresolved"}
         )
-    elif denied_outcome:
-        results, selected, audit = denied_outcome
+    elif trial_outcome or denied_outcome:
+        results, selected, audit = trial_outcome or denied_outcome
         combined = {**audit, "search_attempts": list(attempts), "search_queries_exhausted": True}
         await report_progress(progress, combined)
     combined = {**combined, "search_queries_exhausted": len(attempts) == len(queries)}
