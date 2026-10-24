@@ -31,6 +31,21 @@ and cancellation receipts control reconciliation; a lost post-launch database wr
 does not cause a second Play request. Other database errors still stop the worker
 visibly. Health/diagnostics expose `executor_database` state and the next retry time.
 
+Controller background loops are supervised independently. An escaping exception
+(including failure to claim the catalog lease or to save an error report) restarts
+that loop with 1, 2, 4, 8, 16, 32, then 60-second backoff. A run lasting a minute
+resets this backoff. Shutdown cancellation still drains in-flight database work
+and never restarts a loop. Worker health is held in memory so a failed database
+write cannot conceal the error or prevent a restart. `/api/health` and diagnostic
+exports include each worker's state, failure count, error type, SQLite error code
+when available, and next retry time. `/healthz` remains web-process liveness.
+
+Schedule health is evaluated at read time: a successful feed older than two refresh
+intervals (at least 60 seconds), or a retrying/stopped feed worker, is degraded.
+The overview's existing schedule warning then appears even if the last persisted
+health record still says successful. Reading health does not renew evidence or
+modify the retained catalog; a fresh complete snapshot clears the overdue warning.
+
 | Module | Responsibility |
 | --- | --- |
 | `controller/teamarr.py` | Fetch a complete paginated Teamarr catalog and cached team rosters; validate provider identities |

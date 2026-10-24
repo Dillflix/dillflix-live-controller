@@ -54,7 +54,8 @@ def test_cancel_stops_active_playback_and_device_fence_survives_restart(rig):
     assert restarted.observe("living-room")["request_id"] == newer["request_id"]
 
 
-async def test_slow_playback_keeps_event_loop_responsive_and_shutdown_drains(tmp_path, monkeypatch):
+@pytest.mark.parametrize("supervised", [False, True])
+async def test_slow_playback_keeps_event_loop_responsive_and_shutdown_drains(tmp_path, monkeypatch, supervised):
     service = Controller(Settings(database=str(tmp_path / "worker.sqlite"), simulation_delay=0))
     entered, release = threading.Event(), threading.Event()
     original = service.playback.observe
@@ -65,7 +66,13 @@ async def test_slow_playback_keeps_event_loop_responsive_and_shutdown_drains(tmp
         return original(device_id)
 
     monkeypatch.setattr(service.playback, "observe", slow_observe)
-    worker = asyncio.create_task(service.run_worker())
+    if supervised:
+        from controller.background import BackgroundWorker
+
+        service.workers = {"playback": BackgroundWorker("playback", service.run_worker)}
+        worker = asyncio.create_task(service.workers["playback"].run())
+    else:
+        worker = asyncio.create_task(service.run_worker())
     service.tasks = [worker]
     stopping = None
     try:

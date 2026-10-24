@@ -16,8 +16,8 @@ from .config import Settings
 from .current_playback import NowPlaying, current_playback
 from .device_input import DeviceInput, same_origin
 from .diagnostic_log import LogHandler, Recorder, read_logs
-from .loop_watchdog import LoopWatchdog
 from .executor.api import install_executor_api
+from .loop_watchdog import LoopWatchdog
 from .models import (
     AutomationUpdate,
     Command,
@@ -135,13 +135,19 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/health")
     def health():
+        workers = service.background_status()
+        with service.db.snapshot() as db:
+            feed = service.feed_health(db)
+        executor_running = bool(service.executor and service.executor.worker and not service.executor.worker.done())
         return {
-            "ok": True,
+            "ok": all(worker["state"] == "running" for worker in workers.values())
+            and feed["state"] != "degraded"
+            and (not service.executor or executor_running),
+            "background_workers": workers,
+            "feed": feed,
             "mode": settings.mode,
             "playback": settings.executor.mode,
-            "executor_running": bool(
-                service.executor and service.executor.worker and not service.executor.worker.done()
-            ),
+            "executor_running": executor_running,
             "executor_database": getattr(service.executor, "database_status", None),
         }
 
@@ -184,7 +190,8 @@ def create_app(settings=None, *, start_workers=True):
         from .prime_player.diagnostics import collect, redact
 
         bundle = await asyncio.to_thread(collect, settings.database, device_id)
-        bundle["controller_health"] = health()
+        bundle["controller_health"] = await asyncio.to_thread(health)
+        bundle["catalog_health"]["feed_health"] = bundle["controller_health"]["feed"]
         bundle["prime_player"] = {"state": "not_configured"}
         recorder = getattr(app.state, "diagnostic_recorder", None)
         bundle["controller_logs"] = await asyncio.to_thread(
