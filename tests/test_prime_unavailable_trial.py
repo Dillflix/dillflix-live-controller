@@ -1,9 +1,9 @@
 import pytest
-
 from playback_fixtures import payload
-from test_prime_workflow import rig, cleanup, row
-from test_prime_network import network_rig, CITY_POLICY
-from test_prime_matching import UNAVAILABLE_BADGE
+from test_prime_matching import GTI, UNAVAILABLE_BADGE, results, tile
+from test_prime_network import CITY_POLICY, network_rig
+from test_prime_workflow import Player, cleanup, rig, row
+
 from controller.prime_player.matching import unavailable_live_trial
 
 
@@ -133,5 +133,62 @@ async def test_failed_trials_exhaust_locations_once_and_report_unavailable(tmp_p
         assert final["prime_player"]["network_acquisition"]["tried"] == ["direct", "calgary"]
         assert len(final["prime_player"]["unavailable_trials"]) == 2
         assert len([v for v in w.player.calls if v[0] == "play"]) == 2
+    finally:
+        await cleanup(c)
+
+
+async def test_alternative_query_launches_on_current_network_without_failed_trial(tmp_path):
+    c, w = network_rig(tmp_path)
+    original_search = w.player.search
+    searches = []
+
+    async def search(*args):
+        value = await original_search(*args)
+        item = (tile(cid=GTI + "-unavailable", availability_status="UNAVAILABLE")
+                if not searches else tile())
+        searches.append(value["query"])
+        return {**value, **results(item)}
+
+    w.player.search = search
+    w.player.outcome = lambda: {**Player.outcome(w.player), "network_context_id": w.player.context}
+    try:
+        report, _ = w.store.submit(payload())
+        await w.navigate(row(w, report["token"]))
+        final = w.store.report(report["token"])
+        assert final["operation"]["state"] == "playing_verified"
+        assert searches == ["Jets Lions", "New York Jets Detroit Lions"]
+        assert not w.player.transitions
+        assert [c[1] for c in w.player.calls if c[0] == "play"] == [GTI]
+        assert not final["prime_player"].get("unavailable_trials")
+    finally:
+        await cleanup(c)
+
+
+@pytest.mark.parametrize("network", [False, True])
+async def test_launch_fallback_preserves_selected_query_and_catalogue(tmp_path, network):
+    c, w = (network_rig if network else rig)(tmp_path)
+    original_search = w.player.search
+    responses = []
+
+    async def search(*args):
+        value = await original_search(*args)
+        item = (tile(availability_status="UNAVAILABLE") if not responses
+                else tile("Unrelated movie", cid=GTI + "-other", content_type="MOVIE"))
+        value = {**value, **results(item), "search_id": str(len(responses) + 1)}
+        responses.append(value)
+        return value
+
+    w.player.search = search
+    try:
+        request = payload()
+        report, _ = w.store.submit(request)
+        assert await w.select_and_launch(report["token"], request)
+        saved = w.store.report(report["token"])["prime_player"]
+        assert len(responses) == 2
+        assert saved["query"] == responses[0]["query"]
+        assert saved["catalogue"] == responses[0]
+        assert saved["search_observed_at"] == responses[0]["observed_at"]
+        assert saved["selected"]["content_id"] == GTI
+        assert [c[1] for c in w.player.calls if c[0] == "play"] == [GTI]
     finally:
         await cleanup(c)

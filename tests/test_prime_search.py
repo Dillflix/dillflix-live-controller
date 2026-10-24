@@ -112,7 +112,7 @@ def matched(**changes):
 
 def irrelevant():
     # The incident's mascot query returned non-event titles of this kind.
-    return results(tile("Rainbow: In Performance", content_type="MOVIE"))
+    return results(tile("Rainbow: In Performance", cid=GTI + "-unrelated", content_type="MOVIE"))
 
 
 @pytest.mark.parametrize("found_at", [0, 1, 2])
@@ -134,6 +134,55 @@ async def test_no_match_requires_exhausting_distinct_fallbacks():
     assert calls == COLLEGE_QUERIES
     assert len(audit["search_attempts"]) == 3
     assert all(a["complete"] is False for a in audit["search_attempts"])
+
+
+async def test_unavailable_trial_does_not_hide_playable_feed_in_later_query():
+    blocked = matched(availability_status="UNAVAILABLE")
+    playable = matched(cid=GTI + "-alternative")
+    (result, selected, audit), calls, _ = await scan([blocked, playable])
+    assert calls == COLLEGE_QUERIES[:2]
+    assert selected["content_id"] == GTI + "-alternative"
+    assert not selected["unavailable_trial"]
+    assert result["query"] == COLLEGE_QUERIES[1]
+    assert audit["search_attempts"][0]["audit"]["broadcast_selection"]["selected"]["unavailable_trial"]
+
+
+async def test_unavailable_trial_retains_its_source_after_other_queries_find_nothing():
+    (result, selected, audit), calls, history = await scan([
+        matched(availability_status="UNAVAILABLE"), irrelevant(), irrelevant(),
+    ])
+    assert calls == COLLEGE_QUERIES
+    assert selected["unavailable_trial"]
+    assert result["query"] == COLLEGE_QUERIES[0]
+    assert result["search_id"] == "1"
+    assert audit["search_queries_exhausted"] is True
+    assert audit["broadcast_selection"]["selected"]["content_id"] == selected["content_id"]
+    assert history[-1] == audit
+
+
+async def test_later_uncertainty_does_not_authorize_retained_unavailable_trial():
+    (_, selected, audit), calls, _ = await scan([
+        matched(availability_status="UNAVAILABLE"),
+        matched(cid=GTI + "-alternative", entitlement_status=None), irrelevant(),
+    ])
+    assert calls == COLLEGE_QUERIES
+    assert selected is None and audit["match_status"] == "uncertain"
+
+
+@pytest.mark.parametrize("change", [
+    {"entitlement_status": "UNENTITLED"}, {"event_state": "UPCOMING"}, {"event_state": "ENDED"},
+])
+async def test_newer_evidence_revokes_trial_for_same_listing(change):
+    (_, selected, _), _, _ = await scan([
+        matched(availability_status="UNAVAILABLE"), matched(**change), irrelevant(),
+    ])
+    assert not selected or not selected.get("unavailable_trial")
+
+
+async def test_trial_does_not_mask_transport_failure_in_later_query():
+    with pytest.raises(ExecutorError, match="Response lost"):
+        await scan([matched(availability_status="UNAVAILABLE"),
+                    ExecutorError("prime_transport_unknown", "Response lost")])
 
 
 @pytest.mark.parametrize("final", [irrelevant(), matched(entitlement_status="UNENTITLED")])

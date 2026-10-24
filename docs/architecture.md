@@ -119,6 +119,14 @@ on a suitable live feed; failed, incomplete or ambiguous alternatives prevent a
 definitive exclusion. Both preflight and direct launches use this loop and retain
 each parent's evidence. See [multiple-parent selection](prime-parent-selection.md).
 
+A LIVE/ENTITLED listing marked UNAVAILABLE is only a fallback trial. It does not
+end the bounded search-label scan: an available matching feed from a later label
+takes priority before Play or network fallback. If no better feed is found, the
+trial retains its original response, query and observation/receipt timestamps.
+New evidence for the same parent replaces that fallback, and uncertainty or a
+failed search cannot silently authorize it. The existing query and deadline
+bounds remain; exhausting labels does not prove catalogue-wide absence.
+
 ## State and recovery
 
 The device record separates configuration revision, manual plan, desired content, monotonically increasing intent version, and observed playback. A configuration edit increments the revision; ordinary status observations do not. A stale client gets HTTP 409 rather than overwriting another browser's changes.
