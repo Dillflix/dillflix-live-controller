@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import HTTPException
 
 from .access import LEGACY_ADMIN
+from .background import BackgroundWorker
 from .content_status import (
     ContentStatusAdapter,
     ContentStatusCoordinator,
@@ -20,11 +21,20 @@ from .coordinator import PlaybackCoordinator
 from .database import Database, encode
 from .entitlements import EntitlementChecks
 from .fixtures import default_device, fixtures, make_team
-from .leagues import LEAGUE_NAMES
 from .launch_progress import launch_progress
+from .leagues import LEAGUE_NAMES
 from .maintenance import policy, prune
 from .manual_control import ManualControl
-from .planner import entitlement_eligible, choose, content_view, ordered_plan, parse_time, preview_plan, priority, team_key
+from .planner import (
+    choose,
+    content_view,
+    entitlement_eligible,
+    ordered_plan,
+    parse_time,
+    preview_plan,
+    priority,
+    team_key,
+)
 from .playback import PlaybackAdapter, SimulatedPlaybackAdapter
 from .storage_lock import database_guard
 from .teamarr import TeamarrClient
@@ -62,6 +72,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             )
             self.owner = str(uuid.uuid4())
             self.tasks = []
+            self.workers = {}
             # Serialize playback calls with manual handoff, never on the event loop.
             self.playback_lock = threading.RLock()
             self.initialize()
@@ -253,7 +264,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 "entitlement_queue": self.entitlement_queue(db, device, items),
                 "plan_preview": preview_plan(device, items, self.now(db)),
                 "activity": activity,
-                "health": self.db.meta(db, "feed_health", {"state": "starting"}),
+                "health": self.feed_health(db),
                 "meta": {
                     "public_auth_mode": self.settings.public_auth_mode,
                     "league_choices": LEAGUE_NAMES,
@@ -923,18 +934,42 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 log.exception("Team directory refresh failed; will retry")
             await asyncio.sleep(self.settings.team_directory_interval)
 
+    def background_status(self):
+        return {name: worker.status() for name, worker in self.workers.items()}
+
+    def feed_health(self, db):
+        health = self.db.meta(db, "feed_health", {"state": "starting"})
+        if self.settings.mode != "teamarr":
+            return health
+        worker = self.background_status().get("catalog")
+        health["worker"] = worker
+        last = parse_time(health.get("last_success"))
+        # Expose missed refreshes without altering or renewing catalog evidence.
+        health["overdue"] = bool(
+            last and (datetime.now(UTC) - last).total_seconds() > max(60, 2 * self.settings.feed_interval)
+        )
+        if worker and worker["state"] in {"retrying", "stopped"}:
+            health.update(state="degraded", error="Schedule worker " + worker["state"])
+        elif health["overdue"]:
+            health.update(state="degraded", error="Schedule refresh overdue; cached event availability is out of date")
+        return health
+
     def start(self):
-        self.tasks = [
-            asyncio.create_task(self.run_worker()),
-            asyncio.create_task(self.plex.worker.run()),
-            asyncio.create_task(self.run_status()),
-            asyncio.create_task(self.run_maintenance()),
-        ]
+        functions = {
+            "playback": self.run_worker,
+            "plex": self.plex.worker.run,
+            "content_status": self.run_status,
+            "maintenance": self.run_maintenance,
+        }
         if self.settings.mode == "teamarr":
-            self.tasks.append(asyncio.create_task(self.run_feed()))
-            self.tasks.append(asyncio.create_task(self.run_team_directory()))
+            functions.update(catalog=self.run_feed, team_directory=self.run_team_directory)
             if self.executor:
-                self.tasks.append(asyncio.create_task(self.run_entitlements()))
+                functions["entitlements"] = self.run_entitlements
+        self.workers = {name: BackgroundWorker(name, function) for name, function in functions.items()}
+        self.tasks = [
+            asyncio.create_task(worker.run(), name="controller:" + name)
+            for name, worker in self.workers.items()
+        ]
 
     async def stop(self):
         for task in self.tasks:
