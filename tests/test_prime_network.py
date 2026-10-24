@@ -1,6 +1,6 @@
-from dataclasses import replace
 import json
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,7 +10,6 @@ from test_prime_workflow import Player, cleanup, rig, row
 from controller.executor.models import ExecutorError
 from controller.network_policy import NetworkPolicy
 from controller.prime_player.client import PrimePlayerClient
-
 
 POLICY = {"enabled": True, "routes": {"prime-option": {
     "targets": ["direct", "calgary"], "fallback_on": ["feeds_unavailable"]}}}
@@ -313,9 +312,9 @@ async def test_city_fallback_is_selective_and_never_revisits(tmp_path, monkeypat
             request["content_snapshot"]["event"][side + "_team_details"]["city"] = city
         report, _ = w.store.submit(request)
         visited = []
-        async def choose(*args):
+        async def choose(request, timezone, matcher, search, fetch, progress):
             visited.append(w.player.target)
-            return {}, {"readiness": outcomes[w.player.target]}, {}
+            return await search("Jets Lions"), {"readiness": outcomes[w.player.target]}, {}
         monkeypatch.setattr("controller.prime_player.network.choose_search", choose)
         await w.acquire_network_catalogue(report["token"], request)
         assert visited == [initial] + expected
@@ -338,8 +337,8 @@ async def test_unqualified_city_does_not_prevent_direct_fallback(tmp_path, monke
         request = payload()
         request["content_snapshot"]["event"]["home_team_details"]["city"] = "Montreal"
         report, _ = w.store.submit(request)
-        async def choose(*args):
-            return {}, {"readiness": "ready" if w.player.target == "direct" else "feeds_locked"}, {}
+        async def choose(request, timezone, matcher, search, fetch, progress):
+            return await search("Jets Lions"), {"readiness": "ready" if w.player.target == "direct" else "feeds_locked"}, {}
         monkeypatch.setattr("controller.prime_player.network.choose_search", choose)
         await w.acquire_network_catalogue(report["token"], request)
         assert [v["target_id"] for v in w.player.transitions] == ["direct"]
