@@ -101,6 +101,27 @@ evidence on both, independent manual takeover and independent network recovery.
 Restarting the second player must leave the first stick playing. The services
 share the host ADB server, so do not kill that server to restart one stream.
 
+To exercise automatic recovery on a qualified stream that already has fresh
+verified live playback and ready managed networking, target its controller ID
+and matching serial explicitly:
+
+```bash
+cd /appdata/dillflix-live-controller
+sudo -v
+python3 tools/production_recovery_acceptance.py \
+  --device-id stream-2 --serial 192.168.0.164:5555 \
+  --interrupt-playback \
+  --output "$HOME/prime-stream-2-recovery-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+This deliberately stops Prime once on the selected stick, then observes recovery
+without further device inputs. Preflight must match the configured stream,
+player health serial and native playback session before injecting the fault.
+The script captures that stream's database records, player journal and adaptation
+directory. Use `--player-state /absolute/host/instance-directory` or
+`--player-service custom-player.service` for nonstandard instance paths/units.
+Omitting `--device-id` retains the legacy `living-room` target.
+
 Plex publication/capture is a separate output integration. Adding a Fire TV does
 not automatically provision a second capture path or Plex stream.
 
