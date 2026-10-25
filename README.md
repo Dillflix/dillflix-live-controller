@@ -24,6 +24,8 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
   driven by accepted playback with durable five-minute fallback and narrow, verified API writes.
 - A read-only [now-playing diagnostic endpoint](docs/now-playing.md), including
   matchup thumbnails and provider artwork for tennis coverage.
+- A compact [LED display API](docs/display-api.md) with verified playback,
+  startup/status labels, entitled schedule entries, scores and team artwork.
 
 - Live Prime playback using service results, deterministic or LLM label matching, durable tokens, scoped cancellation/stop, and current attempt monitoring.
 
@@ -272,6 +274,7 @@ Interactive request schemas are available at `/docs`; the generated OpenAPI docu
 | `GET /api/v1/events` | Catalog cards, lifecycle observations, options, and metadata |
 | `GET /api/v1/teams?league=nhl` | Persistent team directory and independent refresh health |
 | `GET /api/v1/devices/{id}/state` | Plan, configuration revision, desired target, and observed playback |
+| `GET /api/v1/devices/{id}/display` | Read-only compact playback and entitled schedule for LED displays |
 | `GET /api/v1/devices/{id}/screen` | Screen configuration and capture status; no device contact |
 | `WS /api/v1/devices/{id}/screen/stream` | On-demand view-only H.264 stream over the authenticated origin |
 | `POST /api/v1/devices/{id}/control` | Take, explicitly take over, extend, or end manual control |

@@ -16,6 +16,7 @@ from .config import Settings
 from .current_playback import NowPlaying, current_playback
 from .device_input import DeviceInput, same_origin
 from .diagnostic_log import LogHandler, Recorder, read_logs
+from .display import DisplayView, display_view
 from .executor.api import install_executor_api
 from .loop_watchdog import LoopWatchdog
 from .models import (
@@ -275,6 +276,11 @@ def create_app(settings=None, *, start_workers=True):
         with service.db.transaction() as db:
             view = current_playback(service, db, device_id)
         return JSONResponse(view.model_dump(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v1/devices/{device_id}/display", response_model=DisplayView)
+    def display(device_id: str):
+        """Compact read-only LED display state; never contacts a playback device."""
+        return JSONResponse(display_view(service, device_id).model_dump(), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/devices/{device_id}/watch-plan")
     def plan(device_id: str):
