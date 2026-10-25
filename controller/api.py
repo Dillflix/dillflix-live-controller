@@ -18,6 +18,7 @@ from .device_input import DeviceInput, same_origin
 from .diagnostic_log import LogHandler, Recorder, read_logs
 from .display import DisplayView, display_view
 from .executor.api import install_executor_api
+from .fleet import select_for_stream
 from .loop_watchdog import LoopWatchdog
 from .models import (
     AutomationUpdate,
@@ -32,7 +33,7 @@ from .models import (
     SimulationCommand,
     UndoCommand,
 )
-from .planner import choose, priority, team_priority
+from .planner import priority, team_priority
 from .plex.api import install_plex_api
 from .public import public_overview
 from .screen import ScreenStream, serve_screen
@@ -42,8 +43,9 @@ from .service import Controller
 def create_app(settings=None, *, start_workers=True):
     settings = settings or Settings.from_env()
     service = Controller(settings)
-    screen = ScreenStream(settings)
-    control = DeviceInput(service)
+    screens = {key: ScreenStream(runtime.settings, device_id=key) for key, runtime in service.runtimes.items()}
+    controls = {key: DeviceInput(runtime) for key, runtime in service.runtimes.items()}
+    screen, control = screens[service.device_id], controls[service.device_id]
 
     @asynccontextmanager
     async def lifespan(app):
@@ -59,17 +61,27 @@ def create_app(settings=None, *, start_workers=True):
         server_logger = logging.getLogger("uvicorn.error")
         server_logger.addHandler(handler)
         try:
-            if service.executor:
-                await service.executor.start()
-            control.start()
+            runtimes = list(service.runtimes.values())
+            starts = await asyncio.gather(
+                *(runtime.executor.start() for runtime in runtimes if runtime.executor),
+                return_exceptions=True,
+            )
+            for runtime, result in zip((r for r in runtimes if r.executor), starts):
+                if isinstance(result, BaseException):
+                    logger.error("Executor startup failed for %s: %s", runtime.device_id, type(result).__name__)
+            for device_control in controls.values():
+                device_control.start()
             if start_workers:
                 service.start()
             yield
         finally:
             try:
-                await control.stop()
-                await screen.stop()
-                await service.stop()
+                # Always drain every stream, even if another stream's cleanup fails.
+                try:
+                    await asyncio.gather(*(item.stop() for item in controls.values()), return_exceptions=True)
+                    await asyncio.gather(*(item.stop() for item in screens.values()), return_exceptions=True)
+                finally:
+                    await service.stop()
             finally:
                 logger.removeHandler(handler)
                 server_logger.removeHandler(handler)
@@ -87,6 +99,8 @@ def create_app(settings=None, *, start_workers=True):
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
+    app.state.screens = screens
+    app.state.controls = controls
     install_executor_api(app, service)
     install_plex_api(app, service)
 
@@ -110,25 +124,28 @@ def create_app(settings=None, *, start_workers=True):
     async def manual_control(device_id: str, command: ManualControlCommand, request: Request):
         if "origin" in request.headers and not same_origin(request.headers):
             raise HTTPException(403, "Manual control requires the same origin.")
-        return await control.command(device_id, command)
+        service.runtime(device_id)
+        return await controls[device_id].command(device_id, command)
 
     @app.websocket("/api/v1/devices/{device_id}/control/input")
     async def manual_input(websocket: WebSocket, device_id: str):
-        await control.serve(websocket, device_id)
+        if device_id not in controls:
+            await websocket.close(code=1008)
+            return
+        await controls[device_id].serve(websocket, device_id)
 
     @app.get("/api/v1/devices/{device_id}/screen")
     def screen_status(device_id: str):
-        with service.db.transaction() as db:
-            service.db.device(db, device_id)
-        return screen.status()
+        service.runtime(device_id)
+        return screens[device_id].status()
 
     @app.websocket("/api/v1/devices/{device_id}/screen/stream")
     async def screen_stream(websocket: WebSocket, device_id: str):
-        # One configured device today. Never let a browser select an ADB target.
-        if device_id != "living-room":
+        # Only server-configured bindings can choose a physical ADB target.
+        if device_id not in screens:
             await websocket.close(code=1008)
             return
-        await serve_screen(websocket, screen)
+        await serve_screen(websocket, screens[device_id])
 
     @app.exception_handler(KeyError)
     async def missing(_request, _error):
@@ -140,16 +157,28 @@ def create_app(settings=None, *, start_workers=True):
         with service.db.snapshot() as db:
             feed = service.feed_health(db)
         executor_running = bool(service.executor and service.executor.worker and not service.executor.worker.done())
+        devices = {}
+        for device_id, runtime in service.runtimes.items():
+            running = bool(runtime.executor and runtime.executor.worker and not runtime.executor.worker.done())
+            devices[device_id] = {
+                "background_workers": runtime.background_status(),
+                "executor_running": running,
+                "executor_database": getattr(runtime.executor, "database_status", None),
+                "playback": runtime.settings.executor.mode,
+            }
         return {
             "ok": all(worker["state"] == "running" for worker in workers.values())
             and feed["state"] != "degraded"
-            and (not service.executor or executor_running),
+            and all(worker["state"] == "running" for value in devices.values()
+                    for worker in value["background_workers"].values())
+            and all(not service.runtime(key).executor or value["executor_running"] for key, value in devices.items()),
             "background_workers": workers,
             "feed": feed,
             "mode": settings.mode,
             "playback": settings.executor.mode,
             "executor_running": executor_running,
             "executor_database": getattr(service.executor, "database_status", None),
+            "devices": devices,
         }
 
     @app.get("/healthz", include_in_schema=False)
@@ -157,23 +186,29 @@ def create_app(settings=None, *, start_workers=True):
         return {"ok": True}
 
     @app.get("/api/v1/overview")
-    def overview():
+    def overview(device_id: str | None = None):
         # This synchronous endpoint runs in FastAPI's thread pool. Render here
         # too, rather than returning a large object for event-loop serialization.
-        return JSONResponse(service.overview())
+        return JSONResponse(service.runtime(device_id).overview())
+
+    @app.get("/api/v1/devices")
+    def devices():
+        with service.db.snapshot() as db:
+            return {"items": service.stream_summaries(db)}
 
     @app.get("/api/public/v1/overview")
-    def viewer_overview(request: Request):
+    def viewer_overview(request: Request, device_id: str | None = None):
         return JSONResponse(
-            public_overview(service, request.state.actor), headers={"Cache-Control": "no-store"}
+            public_overview(service.runtime(device_id), request.state.actor), headers={"Cache-Control": "no-store"}
         )
 
     @app.post("/api/public/v1/watch-plan")
-    def viewer_command(command: PublicCommand, request: Request):
+    def viewer_command(command: PublicCommand, request: Request, device_id: str | None = None):
         # Source is the public interface even when the signed-in viewer is an admin.
         actor = {**request.state.actor, "type": "user"}
-        return service.plan_command(
-            "living-room",
+        runtime = service.runtime(device_id)
+        return runtime.plan_command(
+            runtime.device_id,
             Command(
                 command_id=command.command_id,
                 expected_revision=command.expected_revision,
@@ -184,12 +219,13 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.put("/api/v1/devices/{device_id}/public-access")
     def public_access(device_id: str, command: PublicAccessUpdate):
-        return service.public_access_command(device_id, command)
+        return service.runtime(device_id).public_access_command(device_id, command)
 
     @app.get("/api/v1/devices/{device_id}/diagnostics")
     async def diagnostics(device_id: str):
         from .prime_player.diagnostics import collect, redact
 
+        runtime = service.runtime(device_id)
         bundle = await asyncio.to_thread(collect, settings.database, device_id)
         bundle["controller_health"] = await asyncio.to_thread(health)
         bundle["catalog_health"]["feed_health"] = bundle["controller_health"]["feed"]
@@ -198,9 +234,9 @@ def create_app(settings=None, *, start_workers=True):
         bundle["controller_logs"] = await asyncio.to_thread(
             recorder.snapshot if recorder else lambda: read_logs(str(settings.database) + ".diagnostics")
         )
-        if service.executor:
-            bundle["model_capture"].update(await asyncio.to_thread(service.executor.model_captures.status))
-            player = service.executor.player
+        if runtime.executor:
+            bundle["model_capture"].update(await asyncio.to_thread(runtime.executor.model_captures.status))
+            player = runtime.executor.player
             bundle["prime_player"] = {"state": "unavailable"}
             # Collect independently: a failed health call must not hide evidence.
             for method, key in (("health", "health"), ("diagnostics", "service_diagnostics")):
@@ -215,7 +251,7 @@ def create_app(settings=None, *, start_workers=True):
                     }
             if "service_diagnostics" not in bundle["prime_player"]:
                 bundle["prime_player"]["persisted_logs"] = await asyncio.to_thread(
-                    read_logs, Path(settings.executor.prime_socket).parent / "diagnostics"
+                    read_logs, Path(runtime.settings.executor.prime_socket).parent / "diagnostics"
                 )
         return await asyncio.to_thread(
             JSONResponse, await asyncio.to_thread(redact, bundle),
@@ -230,8 +266,8 @@ def create_app(settings=None, *, start_workers=True):
         return service.maintenance_status()
 
     @app.get("/api/v1/events")
-    def events():
-        data = service.overview()
+    def events(device_id: str | None = None):
+        data = service.runtime(device_id).overview()
         return JSONResponse({
             "items": data["events"],
             "meta": data["meta"],
@@ -252,39 +288,40 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.post("/api/v1/devices/{device_id}/undo")
     def undo(device_id: str, command: UndoCommand):
-        return service.undo_command(device_id, command)
+        return service.runtime(device_id).undo_command(device_id, command)
 
     @app.get("/api/v1/devices/{device_id}/configuration")
     def configuration(device_id: str):
-        return service.export_configuration(device_id)
+        return service.runtime(device_id).export_configuration(device_id)
 
     @app.post("/api/v1/devices/{device_id}/configuration/import/preview")
     def import_preview(device_id: str, command: ConfigurationImport):
-        return service.import_preview(device_id, command)
+        return service.runtime(device_id).import_preview(device_id, command)
 
     @app.post("/api/v1/devices/{device_id}/configuration/import")
     def import_configuration(device_id: str, command: ConfigurationImport):
-        return service.import_configuration(device_id, command)
+        return service.runtime(device_id).import_configuration(device_id, command)
 
     @app.get("/api/v1/devices/{device_id}/state")
     def state(device_id: str):
-        return service.overview(device_id)["device"]
+        return service.runtime(device_id).overview()["device"]
 
     @app.get("/api/v1/devices/{device_id}/now-playing", response_model=NowPlaying)
     def now_playing(device_id: str):
         """Expose accepted playback for diagnostics without polling the player."""
-        with service.db.transaction() as db:
-            view = current_playback(service, db, device_id)
+        runtime = service.runtime(device_id)
+        with service.db.snapshot() as db:
+            view = current_playback(runtime, db, device_id)
         return JSONResponse(view.model_dump(), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/devices/{device_id}/display", response_model=DisplayView)
     def display(device_id: str):
         """Compact read-only LED display state; never contacts a playback device."""
-        return JSONResponse(display_view(service, device_id).model_dump(), headers={"Cache-Control": "no-store"})
+        return JSONResponse(display_view(service.runtime(device_id), device_id).model_dump(), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/devices/{device_id}/watch-plan")
     def plan(device_id: str):
-        data = service.overview(device_id)
+        data = service.runtime(device_id).overview()
         return {
             "revision": data["device"]["revision"],
             "entries": data["device"]["plan"],
@@ -293,18 +330,18 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.post("/api/v1/devices/{device_id}/watch-plan/preview")
     def plan_preview(device_id: str, command: Command):
-        return service.preview(device_id, command)
+        return service.runtime(device_id).preview(device_id, command)
 
     @app.post("/api/v1/devices/{device_id}/watch-plan")
     @app.patch("/api/v1/devices/{device_id}/watch-plan")
     def plan_command(device_id: str, command: Command, request: Request):
-        return service.plan_command(
+        return service.runtime(device_id).plan_command(
             device_id, command, actor=request.state.actor if settings.proxy_secret else None
         )
 
     @app.delete("/api/v1/devices/{device_id}/watch-plan/{entry_id}")
     def remove(device_id: str, entry_id: str, command_id: str, expected_revision: int):
-        return service.plan_command(
+        return service.runtime(device_id).plan_command(
             device_id,
             Command(
                 command_id=command_id,
@@ -315,41 +352,42 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.post("/api/v1/devices/{device_id}/entitlement-checks")
     def entitlement_check(device_id: str, command: EntitlementCommand):
-        return service.entitlement_command(device_id, command)
+        return service.runtime(device_id).entitlement_command(device_id, command)
 
     @app.get("/api/v1/devices/{device_id}/vpn-locations")
     async def vpn_locations(device_id: str):
-        await service.playback_work(service.overview, device_id)  # Validate the device and retain admin auth.
-        if not service.executor or not hasattr(service.executor, "player"):
+        runtime = service.runtime(device_id)
+        if not runtime.executor or not hasattr(runtime.executor, "player"):
             return {"enabled": False, "locations": []}
         try:
-            return await service.executor.player.vpn_locations()
+            return await runtime.executor.player.vpn_locations()
         except Exception as exc:
             raise HTTPException(503, "Prime Player VPN locations are unavailable") from exc
 
     @app.get("/api/v1/devices/{device_id}/rules")
     def rules(device_id: str):
-        d = service.overview(device_id)["device"]
+        d = service.runtime(device_id).overview()["device"]
         return {k: d[k] for k in ("rules", "team_ranks", "preferences", "revision")}
 
     @app.put("/api/v1/devices/{device_id}/rules")
     def save_rules(device_id: str, update: RulesUpdate):
-        return service.rules_command(device_id, update)
+        return service.runtime(device_id).rules_command(device_id, update)
 
     @app.post("/api/v1/devices/{device_id}/automation")
     def automation(device_id: str, update: AutomationUpdate):
-        return service.automation_command(device_id, update)
+        return service.runtime(device_id).automation_command(device_id, update)
 
     @app.post("/api/v1/devices/{device_id}/completions")
     def complete_event(device_id: str, command: CompletionCommand):
-        return service.completion_command(device_id, command)
+        return service.runtime(device_id).completion_command(device_id, command)
 
     @app.post("/api/v1/devices/{device_id}/simulate")
     def simulate(device_id: str):
-        with service.db.transaction() as db:
-            d, items = service.db.device(db, device_id), service.items(db, device_id)
+        runtime = service.runtime(device_id)
+        with service.db.snapshot() as db:
+            d, items = service.db.device(db, device_id), runtime.items(db, device_id)
             d["force_switch"] = True
-            decision = choose(d, items, service.now(db), datetime.now(UTC))
+            decision = select_for_stream(runtime, db, d, items, service.now(db), datetime.now(UTC), reserve=False)
             alternatives = [
                 {
                     "content_id": item["content_id"],
@@ -377,10 +415,11 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/devices/{device_id}/activity")
     def activity(device_id: str):
-        return {"items": service.overview(device_id)["activity"]}
+        return {"items": service.runtime(device_id).overview()["activity"]}
 
     @app.get("/api/v1/devices/{device_id}/jobs")
     def jobs(device_id: str):
+        service.runtime(device_id)
         with service.db.transaction() as db:
             service.db.device(db, device_id)
             return {

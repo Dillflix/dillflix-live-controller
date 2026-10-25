@@ -30,7 +30,9 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
     def __init__(self, database, settings, *, player=None, matcher=None):
         super().__init__(database, settings)
         self.model_captures = ModelCaptureStore(database.path)
-        self.player = player or PrimePlayerClient(self.config.prime_socket)
+        self.player = player or PrimePlayerClient(
+            self.config.prime_socket, expected_serial=settings.screen_adb_serial, device_id=self.device_id
+        )
         self.matcher = matcher or EventMatcher(self.config)
 
     async def close_resources(self):
@@ -48,22 +50,24 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
 
     def recover(self):
         with self.db.transaction() as db:
-            db.execute("DELETE FROM metadata WHERE key LIKE 'prime_catalogue_probe:%'")
-            if self.db.meta(db, "prime_catalogue_contract") != 15:
-                for row in db.execute("SELECT id FROM devices").fetchall():
-                    device = self.db.device(db, row[0])
-                    device["prime_access"] = {}
-                    self.db.save_device(db, device)
+            db.execute("DELETE FROM metadata WHERE key=?", ("prime_catalogue_probe:" + self.device_id,))
+            device = self.db.device(db, self.device_id)
+            contract_key = "prime_catalogue_contract:" + self.device_id
+            legacy_contract = self.db.meta(db, "prime_catalogue_contract") if self.device_id == "living-room" else None
+            if self.db.meta(db, contract_key, legacy_contract) != 15:
+                device["prime_access"] = {}
+                self.db.save_device(db, device)
+                self.db.set_meta(db, contract_key, 15)
+            if self.device_id == "living-room":
                 self.db.set_meta(db, "prime_catalogue_contract", 15)
-            for device_row in db.execute("SELECT id FROM devices").fetchall():
-                device = self.db.device(db, device_row[0])
-                scope = device.get("prime_network_scope")
-                if scope and (not self.network_policy.enabled or scope.get("policy_revision") != self.network_policy.revision):
-                    device["prime_access"] = {}
-                    device.pop("prime_network_scope", None)
-                    self.db.save_device(db, device)
+            scope = device.get("prime_network_scope")
+            if scope and (not self.network_policy.enabled or scope.get("policy_revision") != self.network_policy.revision):
+                device["prime_access"] = {}
+                device.pop("prime_network_scope", None)
+                self.db.save_device(db, device)
             for row in db.execute(
-                "SELECT * FROM executor_jobs WHERE request IS NOT NULL AND cancel_requested=0"
+                "SELECT * FROM executor_jobs WHERE device_id=? AND request IS NOT NULL AND cancel_requested=0",
+                (self.device_id,),
             ).fetchall():
                 report = json.loads(row["report"])
                 workflow = report.get("prime_player") or {}
@@ -95,7 +99,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 else:
                     self.store.write(db, row["token"], report, next_check=0)
             db.execute(
-                "UPDATE executor_actions SET state='uncertain',error='process_restart' WHERE state='dispatching'"
+                "UPDATE executor_actions SET state='uncertain',error='process_restart' WHERE state='dispatching' "
+                "AND token IN (SELECT token FROM executor_jobs WHERE device_id=?)", (self.device_id,),
             )
 
     def save_workflow(self, token, **fields):
@@ -156,7 +161,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         inspection = health.get("playback_inspection") or {}
         degraded = inspection.get("state") == "degraded"
         with self.db.transaction() as db:
-            device = self.db.device(db)
+            device = self.db.device(db, self.device_id)
             previous = device.get("player_recovery")
             if not degraded and not previous:
                 return False
@@ -185,6 +190,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         return degraded
 
     def player_recovery_ready(self, db, device):
+        self.store.require_device(device["id"])
         recovery = device.get("player_recovery")
         adaptation = device.get("prime_runtime_adaptation") or {}
         task = getattr(self, "player_recovery_task", None)
@@ -219,7 +225,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
     async def check_session(self, expected=None, *, capabilities=(), control=False):
         health = await (self.player.control_health() if control else self.player.health())
         if health.get("serial") != self.settings.screen_adb_serial:
-            raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from SCREEN_ADB_SERIAL")
+            raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from the configured device",
+                                retryable=False)
         # Even an obsolete attempt must publish the replacement runtime's current
         # network scope. Rejecting it first left recovery and catalogue staging
         # using the retired context until their next search.
@@ -264,7 +271,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                         report = json.loads(current["report"])
                         report.setdefault("prime_player", {})["device_recovery"] = True
                         report["observation_status"] = {"state": "unavailable", "checked_at": utc(), "error": exc.detail()}
-                        adaptation = self.db.device(db).get("prime_runtime_adaptation") or {}
+                        adaptation = self.db.device(db, self.device_id).get("prime_runtime_adaptation") or {}
                         delay = adaptation.get("retry_after_seconds", 15) if exc.code == "prime_runtime_recovering" else 60
                         self.store.write(db, token, report, next_check=time.time() + delay)
                 await self.database_call(persist_recovery)
@@ -850,6 +857,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         existing worker; never cancel an in-flight monitor or perform RPC here.
         """
         row = db.execute("SELECT * FROM executor_jobs WHERE request_id=?", (request_id,)).fetchone()
+        if row:
+            self.store.require_device(row["device_id"])
         if not row or row["cancel_requested"] or row["state"] != "playing_verified":
             return True
         report = json.loads(row["report"])

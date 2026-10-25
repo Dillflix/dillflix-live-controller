@@ -48,6 +48,7 @@ import { PlexSettings } from "./PlexSettings";
 import { DiagnosticsTools } from "./DiagnosticsTools";
 import { ScreenPanel } from "./ScreenPanel";
 import { LaunchProgress } from "./LaunchProgress";
+import { Streams, streamAssignment, useStreamSelection } from "./Streams";
 import type {
   Action,
   ConfigurationDocument,
@@ -198,7 +199,7 @@ function Timeline({
       <div className="df-timeline">
         {preview.segments.slice(0, 6).map((s, i) => (
           <div className="df-time-entry" key={i}>
-            <time>{time(s.start)}</time>
+            <time>{time(s.start)}{s.device_name && <small className="df-timeline-stream">{s.device_name}</small>}</time>
             <div className={`df-time-label ${s.content_id ? "manual" : ""}`}>
               <strong>
                 {find(s.content_id)?.title || "Automatic live selection"}
@@ -374,9 +375,19 @@ function RuleForm({
 }
 
 function App() {
+  const [deviceId, selectDevice] = useStreamSelection();
+  const [view, setView] = useState<View>("events");
+  return <DeviceWorkspace key={deviceId || "default"} deviceId={deviceId} selectDevice={selectDevice} view={view} setView={setView} />;
+}
+
+function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
+  deviceId: string | null;
+  selectDevice: (id: string) => void;
+  view: View;
+  setView: (view: View) => void;
+}) {
   const [scheduleView, setScheduleView] = useScheduleView();
   const [data, setData] = useState<Overview | null>(null),
-    [view, setView] = useState<View>("events"),
     [tab, setTab] = useState("live"),
     [sport, setSport] = useState("all"),
     [query, setQuery] = useState("");
@@ -387,28 +398,33 @@ function App() {
     [busy, setBusy] = useState(false),
     [connected, setConnected] = useState(true);
   const fetchVersion = useRef(0);
+  const mounted = useRef(true);
   const load = useCallback(async () => {
+    if (!mounted.current) return;
     const serial = ++fetchVersion.current;
     try {
-      const next = await api<Overview>("/overview");
-      if (serial === fetchVersion.current) {
+      const next = await api<Overview>("/overview" + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""));
+      if (mounted.current && serial === fetchVersion.current) {
         setData(next);
         setConnected(true);
       }
     } catch (e) {
-      if (serial === fetchVersion.current) {
+      if (mounted.current && serial === fetchVersion.current) {
         setConnected(false);
         setError((e as Error).message);
       }
     }
-  }, []);
+  }, [deviceId]);
   useEffect(() => {
+    mounted.current = true;
     void load();
     const source = new EventSource("/api/v1/updates");
     source.addEventListener("update", () => void load());
     source.onerror = () => setConnected(false);
     const poll = setInterval(() => void load(), 10000);
     return () => {
+      mounted.current = false;
+      ++fetchVersion.current;
       source.close();
       clearInterval(poll);
     };
@@ -424,10 +440,12 @@ function App() {
     setError("");
     try {
       await fn();
+      if (!mounted.current) return;
       setNotice(message);
       if (closeAfter) setModal(null);
       await load();
     } catch (e) {
+      if (!mounted.current) return;
       setError((e as Error).message);
       if (e instanceof ApiError && e.status === 409) await load();
     } finally {
@@ -447,8 +465,11 @@ function App() {
       </div>
     );
   const d = data.device,
-    devicePath = `/devices/${d.id}`,
+    devicePath = `/devices/${encodeURIComponent(d.id)}`,
     find = (id: string | null) => data.events.find((e) => e.content_id === id);
+  const streams = data.streams || [];
+  const sharedPlan = !!data.shared_plan;
+  const assignment = (id: string) => sharedPlan ? streamAssignment(streams, id) : null;
   const time = (s: string | null) =>
     s
       ? new Intl.DateTimeFormat(undefined, {
@@ -586,6 +607,7 @@ function App() {
         expected_revision: d.revision,
         action: { type: "add", content_id: e.content_id },
       });
+      if (!mounted.current) return;
       if (preview.conflicts.some((pair) => pair.includes(e.content_id))) {
         setModal({
           type: "conflict",
@@ -730,6 +752,7 @@ function App() {
               {eventSchedule(e.start_time, e.expected_end_time, d.preferences.timezone)}
             </span>
           </div>
+          {assignment(e.content_id) && <p className="df-assignment">{assignment(e.content_id)}</p>}
         </div>
         <div className="df-event-footer">
           <div className="df-event-status">
@@ -876,6 +899,8 @@ function App() {
             </div>
           </aside>
           <main className="df-main">
+            <Streams streams={streams} selected={d.id} select={selectDevice} events={data.events} />
+            {streams.length > 1 && <div className="df-section-head df-stream-workspace"><h2>{d.name}</h2><span>Playback and device controls</span></div>}
             <section className="df-playing" aria-label="Now playing">
               <div>
                 <div className="df-playing-top">
@@ -1135,8 +1160,8 @@ function App() {
               <>
                 {heading(
                   "Reserved for you",
-                  "Watch plan",
-                  "Manual choices take priority over automatic selection.",
+                  sharedPlan ? "Shared watch plan" : "Watch plan",
+                  sharedPlan ? "Available streams take different eligible events in this order. Manual choices come first." : "Manual choices take priority over automatic selection.",
                   <Button onClick={browse}>
                     <Plus size={16} />
                     Add event
@@ -1155,6 +1180,7 @@ function App() {
                           <span className="df-order">{i + 1}</span>
                           <div className="df-row-copy">
                             <strong>{event?.title || entry.content_id}</strong>
+                            {assignment(entry.content_id) && <p className="df-assignment">{assignment(entry.content_id)}</p>}
                             <p>
                               {entry.actor?.type === "user" ? "User" : "Admin"}:{" "}
                               {entry.actor?.name || "Admin"}
@@ -1212,7 +1238,7 @@ function App() {
                     })}
                     <section className="df-panel df-spacer">
                       <div className="df-section-head">
-                        <h2>Expected viewing</h2>
+                        <h2>{sharedPlan ? "Expected viewing across streams" : "Expected viewing"}</h2>
                         <Pill>Estimated</Pill>
                       </div>
                       <Timeline
@@ -1239,7 +1265,7 @@ function App() {
                 {heading(
                   "Make it your broadcast",
                   "Priorities",
-                  "The first matching rule wins. Manual choices always come first.",
+                  sharedPlan ? "Shared across all streams. The first matching rule wins; manual choices come first." : "The first matching rule wins. Manual choices always come first.",
                   <Button
                     onClick={() =>
                       setModal({
@@ -1451,7 +1477,7 @@ function App() {
                 {heading(
                   "Keep the coverage moving",
                   "Settings",
-                  "Behavior for your living room.",
+                  sharedPlan ? `Schedule and switching preferences are shared. Network, Plex and device controls apply to ${d.name}.` : `Behavior for ${d.name}.`,
                 )}
                 <section className="df-panel df-spacer">
                   <h2>Public app</h2>
@@ -1464,7 +1490,7 @@ function App() {
                     requests.
                   </p>
                   <p>
-                    <a href="/public/" target="_blank" rel="noreferrer">
+                    <a href={sharedPlan ? `/public/?device=${encodeURIComponent(d.id)}` : "/public/"} target="_blank" rel="noreferrer">
                       Open public app
                     </a>
                   </p>
@@ -1659,11 +1685,13 @@ function App() {
                   </div>
                 </section>
                 <VPNSettings
+                  key={`vpn-${d.id}`}
                   deviceId={d.id}
                   value={d.preferences.vpn_policy}
                   save={(vpn_policy) => preference({ vpn_policy })}
                 />
                 <PlexSettings
+                  key={`plex-${d.id}`}
                   deviceId={d.id}
                   refreshKey={data.meta.server_time}
                 />
@@ -1874,7 +1902,7 @@ function App() {
             modal.type === "import"
               ? "Review configuration import"
               : modal.type === "conflict"
-                ? "Two good games. One TV."
+                ? sharedPlan ? "Overlapping live events" : "Two good games. One TV."
                 : modal.type === "rule"
                   ? "Edit priority"
                   : modal.type === "teams"
@@ -1895,8 +1923,7 @@ function App() {
           {modal.type === "conflict" && (
             <>
               <p>
-                {modalEvent?.title} overlaps with another manual choice. Both
-                retain their non-overlapping live time.
+                {sharedPlan ? `${modalEvent?.title} overlaps with another manual choice. Plan order determines allocation when the available streams are occupied.` : `${modalEvent?.title} overlaps with another manual choice. Both retain their non-overlapping live time.`}
               </p>
               {(["last", "first"] as const).map((p) => (
                 <label className="df-choice" key={p}>
@@ -1917,6 +1944,7 @@ function App() {
                   </span>
                 </label>
               ))}
+              {sharedPlan && <p className="df-subtitle">Estimated allocation across available streams.</p>}
               <Timeline
                 preview={modal.preview}
                 find={find}

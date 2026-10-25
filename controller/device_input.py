@@ -105,6 +105,7 @@ async def receive_json(socket, timeout):
 class DeviceInput:
     def __init__(self, service, source_factory=AdbInput):
         self.service = service
+        self.device_id = getattr(service, "device_id", "living-room")
         self.source_factory = source_factory
         self.lock = asyncio.Lock()
         self.connection = None
@@ -146,7 +147,7 @@ class DeviceInput:
                 if self.prime:
                     def read_session():
                         with self.service.db.snapshot() as db:
-                            session = self.service.db.device(db, "living-room").get("manual_control")
+                            session = self.service.db.device(db, self.device_id).get("manual_control")
                         return session
                     session = await self.service.playback_work(read_session)
                     if session:
@@ -162,6 +163,8 @@ class DeviceInput:
             await asyncio.sleep(0.25)
 
     async def command(self, device_id, command):
+        if device_id != self.device_id:
+            raise HTTPException(404, "Device not found")
         async with self.lock:
             if command.action == "release" and self.connection:
                 _, attached = self.connection
@@ -219,7 +222,7 @@ class DeviceInput:
         return result
 
     async def serve(self, websocket: WebSocket, device_id):
-        if device_id != "living-room" or not same_origin(websocket.headers):
+        if device_id != self.device_id or not same_origin(websocket.headers):
             await websocket.close(code=1008)
             return
         await websocket.accept()

@@ -14,6 +14,59 @@ html {
 #df-app .df-public-permissions {
   margin-bottom: 16px;
 }
+#df-app .df-streams {
+  margin-bottom: 24px;
+}
+#df-app .df-stream-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+}
+#df-app .df-stream-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--df-line);
+  border-radius: 12px;
+  background: var(--df-surface);
+  text-align: left;
+}
+#df-app .df-stream-card[aria-pressed="true"] {
+  border-color: var(--df-accent);
+  box-shadow: inset 3px 0 var(--df-accent);
+}
+#df-app .df-stream-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: .85rem;
+}
+#df-app .df-stream-status {
+  margin-left: auto;
+  color: var(--df-muted);
+  font-size: .75rem;
+}
+#df-app .df-stream-action {
+  color: var(--df-muted);
+  font-size: .75rem;
+}
+#df-app .df-stream-workspace {
+  margin-bottom: 12px;
+}
+#df-app .df-assignment {
+  color: var(--df-success);
+  font-size: .8rem;
+  margin-top: 8px;
+}
+#df-app .df-timeline-stream {
+  display: block;
+  color: var(--df-muted);
+  overflow-wrap: anywhere;
+}
 #df-app .df-public-event-footer {
   flex-wrap: wrap;
   gap: 12px;

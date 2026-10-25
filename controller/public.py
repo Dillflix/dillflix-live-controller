@@ -1,10 +1,12 @@
 """Small allowlisted public read model; never serialize admin state or routes."""
 
 
-def public_overview(service, actor, device_id="living-room"):
+def public_overview(service, actor, device_id=None):
+    service = service.runtime(device_id)
+    device_id = service.device_id
     with service.db.snapshot() as db:
         device = service.db.device(db, device_id)
-        items = service.items(db, device_id)
+        items = service.planning_items(db)
         planned = {p["content_id"] for p in device["plan"]}
         observed = device.get("observed") or {}
         current_id = observed.get("content_id")
@@ -60,6 +62,14 @@ def public_overview(service, actor, device_id="living-room"):
             and not service.observation_error(job, observed)
         )
         return {
+            "device": {"id": device["id"], "name": device["name"]},
+            "shared_plan": len(service.root.runtimes) > 1,
+            "streams": [
+                {key: summary[key] for key in (
+                    "id", "name", "playback_state", "automation", "status", "verified", "current_event", "target_event"
+                ) if key in summary}
+                for summary in service.root.stream_summaries(db)
+            ],
             "revision": device["revision"],
             "now": service.now(db).isoformat(),
             "viewer": {"name": actor["name"], "guest": actor["id"] == "guest:anonymous"},

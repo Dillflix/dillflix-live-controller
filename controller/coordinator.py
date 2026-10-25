@@ -42,9 +42,9 @@ class PlaybackCoordinator(PlaybackRecovery):
     def stage_playback(self):
         real = datetime.now(UTC)
         with self.db.transaction() as db:
-            if not self.db.lease(db, "device:living-room", self.owner, time.time()):
+            if not self.db.lease(db, "device:" + self.device_id, self.owner, time.time()):
                 return False
-            d = self.db.device(db)
+            d = self.db.device(db, self.device_id)
             self.prune_completed_plan(db, d)
             if d.get("manual_control") or d.get("input_handoff") or d["automation"] == "paused":
                 return True
@@ -58,7 +58,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             items = self.items(db, d["id"])
             indexed = {i["content_id"]: i for i in items}
             now = self.now(db)
-            decision = choose(d, items, now, real)
+            from .fleet import select_for_stream
+            decision = select_for_stream(self, db, d, items, now, real)
             d["force_switch"] = False
             target = decision["content_id"]
             d["reason"] = decision["reason"]
@@ -225,7 +226,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                         }
                     )
                     d["playback_state"] = "navigating"
-                    self.db.log(
+                    self.log(
                         db,
                         now.isoformat(),
                         f"Opening {item['title']}",
@@ -238,7 +239,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                     )
                 else:
                     d["playback_state"], d["observed"] = "waiting", None
-                    self.db.log(db, now.isoformat(), "Waiting for live sports", decision["reason"])
+                    self.log(db, now.isoformat(), "Waiting for live sports", decision["reason"])
             self.db.save_device(db, d)
             return True
 
@@ -259,7 +260,7 @@ class PlaybackCoordinator(PlaybackRecovery):
         }
         db.execute("UPDATE jobs SET state=?,progress=?,error=? WHERE id=?", (state, state, reason, job["id"]))
         d["playback_state"] = "failed"
-        self.db.log(
+        self.log(
             db,
             self.now(db).isoformat(),
             f"Playback {state.replace('_', ' ')}",
@@ -315,7 +316,8 @@ class PlaybackCoordinator(PlaybackRecovery):
                 return False
             d = self.db.device(db, job["device_id"])
             items = self.items(db, d["id"])
-            decision = choose(d, items, self.now(db), datetime.now(UTC))
+            from .fleet import select_for_stream
+            decision = select_for_stream(self, db, d, items, self.now(db), datetime.now(UTC), reserve=False)
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)
             holding = not decision["content_id"] and self.keep_pending_launch(d, job, item)
             if (
@@ -388,7 +390,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                     "UPDATE jobs SET state=?,progress=?,executor_job_id=?,error=NULL WHERE id=?",
                     (readiness, readiness, report.get("executor_job_id"), request_id),
                 )
-                self.db.log(
+                self.log(
                     db,
                     self.now(db).isoformat(),
                     reason,
@@ -402,7 +404,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                     d["reason"] = report["progress_reason"]
                     self.db.save_device(db, d)
                 if job["progress"] != progress:
-                    self.db.log(
+                    self.log(
                         db,
                         self.now(db).isoformat(),
                         report.get("progress_reason") or "Playback request " + report["state"],
@@ -433,7 +435,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                         "UPDATE jobs SET state='verified',progress='playing_verified',executor_job_id=?,error=NULL WHERE id=?",
                         (report.get("executor_job_id"), request_id),
                     )
-                    self.db.log(
+                    self.log(
                         db,
                         self.now(db).isoformat(),
                         "Live playback verified" if self.executor else "Simulated live playback verified",
@@ -456,7 +458,7 @@ class PlaybackCoordinator(PlaybackRecovery):
         with self.db.transaction() as db:
             jobs = [
                 dict(r)
-                for r in db.execute("SELECT * FROM jobs WHERE state='pending' AND device_id='living-room'")
+                for r in db.execute("SELECT * FROM jobs WHERE state='pending' AND device_id=?", (self.device_id,))
             ]
         for job in jobs:
             with self.db.transaction() as db:
@@ -521,12 +523,12 @@ class PlaybackCoordinator(PlaybackRecovery):
 
     def cancel_obsolete(self):
         with self.db.transaction() as db:
-            if not self.owns_device(db, "living-room") or not self.executor_available(db):
+            if not self.owns_device(db, self.device_id) or not self.executor_available(db):
                 return
             jobs = [
                 dict(r)
                 for r in db.execute(
-                    "SELECT * FROM jobs WHERE device_id='living-room' AND state IN ('cancelled','superseded','failed','timed_out','rejected','waiting_for_feed','access_unknown','feeds_unavailable','feeds_locked','no_matching_feed') AND cancel_sent=0"
+                    "SELECT * FROM jobs WHERE device_id=? AND state IN ('cancelled','superseded','failed','timed_out','rejected','waiting_for_feed','access_unknown','feeds_unavailable','feeds_locked','no_matching_feed') AND cancel_sent=0", (self.device_id,)
                 )
             ]
         for job in jobs:
@@ -543,7 +545,7 @@ class PlaybackCoordinator(PlaybackRecovery):
 
     def _tick(self):
         with self.db.transaction() as db:
-            if not self.db.lease(db, "device:living-room", self.owner, time.time()):
+            if not self.db.lease(db, "device:" + self.device_id, self.owner, time.time()):
                 return
         self.reconcile_input_handoff()
         self.refresh_playback_observation()

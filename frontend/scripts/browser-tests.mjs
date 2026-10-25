@@ -137,12 +137,16 @@ try {
   process.exitCode = 1;
 } finally {
   if (server && server.exitCode === null) {
-    server.kill("SIGTERM");
+    // A Windows venv launcher owns a Python child. Killing only the launcher
+    // leaves the API running and its SQLite file locked after the tests finish.
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/PID", String(server.pid), "/T", "/F"], { stdio: "ignore" });
+    } else server.kill("SIGTERM");
     await Promise.race([
       new Promise((done) => server.once("exit", done)),
       new Promise((done) => setTimeout(done, 4000)),
     ]);
     if (server.exitCode === null) server.kill("SIGKILL");
   }
-  rmSync(scratch, { recursive: true, force: true });
+  rmSync(scratch, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
 }

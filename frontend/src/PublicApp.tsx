@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
 import { commandId } from "./api";
+import { Streams, streamAssignment, useStreamSelection } from "./Streams";
+import type { StreamSummary } from "./types";
 import { EntitlementStatus, entitlementConfirmed, type Entitlement } from "./EntitlementStatus";
 import "./styles.css";
 
@@ -33,6 +35,10 @@ interface PublicEvent {
   }[];
 }
 interface PublicOverview {
+  device?: { id: string; name: string };
+  device_id?: string;
+  streams?: StreamSummary[];
+  shared_plan?: boolean;
   now: string;
   revision: number;
   viewer: { name: string; guest: boolean };
@@ -107,6 +113,14 @@ async function publicApi<T>(path: string, body?: unknown): Promise<T> {
 }
 
 function PublicApp() {
+  const [deviceId, selectDevice] = useStreamSelection();
+  return <PublicWorkspace key={deviceId || "default"} deviceId={deviceId} selectDevice={selectDevice} />;
+}
+
+function PublicWorkspace({ deviceId, selectDevice }: {
+  deviceId: string | null;
+  selectDevice: (id: string) => void;
+}) {
   const [scheduleView, setScheduleView] = useScheduleView();
   const [data, setData] = useState<PublicOverview | null>(null);
   const [tab, setTab] = useState("live");
@@ -118,26 +132,31 @@ function PublicApp() {
   const [busy, setBusy] = useState(false);
   const [detailsId, setDetailsId] = useState<string | null>(null);
   const loading = useRef(0);
+  const mounted = useRef(true);
   const submitting = useRef(false);
+  const deviceQuery = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
   const load = useCallback(async () => {
+    if (!mounted.current) return;
     const serial = ++loading.current;
     try {
-      const next = await publicApi<PublicOverview>("/overview");
-      if (serial === loading.current) {
+      const next = await publicApi<PublicOverview>("/overview" + deviceQuery);
+      if (mounted.current && serial === loading.current) {
         setData(next);
         setConnected(true);
       }
     } catch (e) {
-      if (serial === loading.current) {
+      if (mounted.current && serial === loading.current) {
         setConnected(false);
         setError((e as Error).message);
       }
     }
-  }, []);
+  }, [deviceQuery]);
   useEffect(() => {
+    mounted.current = true;
     void load();
     const timer = setInterval(() => void load(), 5000);
     return () => {
+      mounted.current = false;
       clearInterval(timer);
       ++loading.current;
     };
@@ -149,18 +168,20 @@ function PublicApp() {
     setError("");
     setNotice("");
     try {
-      await publicApi("/watch-plan", {
+      await publicApi("/watch-plan" + deviceQuery, {
         command_id: commandId(),
         expected_revision: data.revision,
         action,
         content_id: event.content_id,
       });
+      if (!mounted.current) return;
       setNotice(
         action === "add"
           ? `${event.title} added to the shared watch plan.`
           : `Play request saved for ${event.title}. Admin selections take priority.`,
       );
     } catch (e) {
+      if (!mounted.current) return;
       setError((e as Error).message);
     } finally {
       await load();
@@ -202,6 +223,9 @@ function PublicApp() {
   const upcomingEvents = filteredEvents.filter((e) => e.state !== "live" && !e.playable);
   const visible = scheduleView === "calendar" ? filteredEvents : tab === "live" ? liveEvents : upcomingEvents;
   const now = data.now_playing;
+  const streams = data.streams || [];
+  const selected = data.device?.id || data.device_id || deviceId || streams[0]?.id || "";
+  const selectedName = data.device?.name || streams.find((stream) => stream.id === selected)?.name;
   const details = data.events.find((event) => event.content_id === detailsId);
   const disabled = busy || !connected;
   const card = (e: PublicEvent) => {
@@ -271,6 +295,7 @@ function PublicApp() {
               {eventSchedule(e.start_time, e.expected_end_time, data.timezone)}
             </span>
           </div>
+          {data.shared_plan && streamAssignment(streams, e.content_id) && <p className="df-assignment">{streamAssignment(streams, e.content_id)}</p>}
         </div>
         <div className="df-event-footer df-public-event-footer">
           <div className="df-event-status">
@@ -328,12 +353,13 @@ function PublicApp() {
         </span>
       </header>
       <main className="df-public-main">
+        <Streams streams={streams} selected={selected} select={selectDevice} events={data.events} publicView />
         <section className="df-playing" aria-label="Now playing">
           <div className="df-playing-copy">
             <div className="df-playing-top">
               <Radio size={15} />
               <span>
-                {now.event && !now.verified ? "Last observed" : "Now playing"}
+                {now.event && !now.verified ? "Last observed" : "Now playing"}{streams.length > 1 && selectedName ? ` · ${selectedName}` : ""}
               </span>
               {now.event && (
                 <span className="df-pill">

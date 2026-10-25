@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased - shared plan across multiple streams
+
+- Configure multiple Fire TVs with separate player sockets and ADB identities while retaining the existing living-room stream.
+- Share plan and priorities atomically, allocate distinct eligible events, and keep playback, recovery, network, manual ownership and entitlement evidence device-scoped.
+- Show stream summaries and selected-device controls in both interfaces, with previews accounting for concurrent capacity.
+- Add a preparation-first instance setup helper. Physical two-stick acceptance and second-model root/runtime qualification remain required.
+- Schema 15 marks shared-plan ownership semantics; older releases cannot reopen the upgraded database.
+
 ## 0.19.0 - Expanded sports discovery
 
 - Add 25 competitions across soccer, basketball, hockey, rugby, Australian football and lacrosse using existing Teamarr providers, with readable names in both apps.

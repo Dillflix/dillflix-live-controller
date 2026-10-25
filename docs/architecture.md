@@ -8,6 +8,35 @@ Prime completion is written atomically to the executor report and durable conten
 
 ## Responsibilities
 
+### Shared plan and independent streams
+
+The optional server-side device registry binds stable IDs to player sockets and
+ADB serials. A controller runtime and executor worker belong to exactly one
+binding; serial mismatches are rejected before player mutations. Coordinator
+leases, worker locks, attempts, manual ownership, entitlement evidence and network
+state remain device-scoped. Feed discovery, lifecycle lookup and database
+maintenance run once for the shared catalogue.
+
+Schema 15 adds a canonical `fleet_plan` metadata record. Plan, rules, team ranks,
+manual completions, public permissions and global preferences are projected to
+device payloads in the same transaction; revisions advance on affected streams.
+VPN policy, automation mode and actual playback are independent. Existing clients
+can still address `living-room`; selected-device overviews include safe stream
+summaries, and the shared schedule may use access confirmed on any stream.
+Execution still requires that stream's own access and network evidence.
+
+Allocation reserves an event within the coordinator's write transaction before
+catalogue work starts. Other streams exclude pending assignments and retained
+physical attempts. Existing playback keeps its claim through uncertain monitoring
+or pause; it is not safe to launch a duplicate merely because observation is late.
+Idle streams are assigned eligible unclaimed events using shared priorities and
+their individual access. Forecasts account for the number of active streams but
+cannot promise future provider access or device availability.
+
+Player services use independent state/socket directories and hold a per-serial
+host lease before provisioning. Adding a stream never provisions another capture
+output automatically. See [setup and acceptance](multiple-streams.md).
+
 Catalogue work is scheduled only after its staging transaction commits. WAL
 readers must never reject a newly queued probe because its own transaction is
 still uncommitted. Rollback does not dispatch the probe.
@@ -250,7 +279,7 @@ This screen feed does not write to the catalog, watch plan, jobs, observed playb
 - Verify the implemented coverage handoff and prolonged-outage policies against real provider route changes, executor navigation, and device heartbeat evidence.
 - Add richer tournament/session/major filters.
 - Validate implemented retention and backup/restore on the target filesystem/container deployment, and run real-time endurance trials. Confirmed completed-plan cleanup is automatic; unresolved commitments remain protected.
-- Implement multiple devices and explicit per-device executor ownership later. Natural-language actions can eventually translate into the same previewable API commands.
+- Validate simultaneous physical-device playback, recovery and account concurrency for each added model. Natural-language actions can eventually translate into the same previewable API commands.
 - Build and exercise the Docker image on the target host; test Safari, physical touch devices, and deployment restart behavior.
 
 Application authentication is intentionally delegated to the existing nginx proxy. The initial deployment uses a single process and local SQLite on persistent storage. No Fire TV credentials, screenshots, or manual input text are stored. Manual ownership is stored separately from event playback intent.

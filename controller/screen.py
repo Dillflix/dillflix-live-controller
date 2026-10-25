@@ -4,6 +4,7 @@ import asyncio
 import logging
 from contextlib import suppress
 from urllib.parse import urlsplit
+from urllib.parse import quote
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -46,8 +47,9 @@ class Viewer:
 
 
 class ScreenStream:
-    def __init__(self, settings, source_factory=AdbCapture):
+    def __init__(self, settings, source_factory=AdbCapture, *, device_id="living-room"):
         self.settings = settings
+        self.device_id = device_id
         self.source_factory = source_factory
         self.lock = asyncio.Lock()
         self.viewers = set()
@@ -71,7 +73,7 @@ class ScreenStream:
             "max_size": self.settings.screen_max_size,
             "max_fps": self.settings.screen_max_fps,
             "bit_rate": self.settings.screen_bit_rate,
-            "stream_path": "/api/v1/devices/living-room/screen/stream" if self.enabled else None,
+            "stream_path": f"/api/v1/devices/{quote(self.device_id, safe='')}/screen/stream" if self.enabled else None,
         }
 
     async def subscribe(self):

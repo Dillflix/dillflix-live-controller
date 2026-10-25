@@ -68,6 +68,7 @@ class IntegratedPlaybackAdapter:
 
     def observe_report(self, device_id):
         """Read observation and monitoring outcome from the same durable snapshot."""
+        self.executor.store.require_device(device_id)
         if self.executor.stopping or not self.executor.loop:
             raise ConnectionError("Playback executor is not running")
         with self.executor.db.snapshot() as db:

@@ -69,11 +69,11 @@ def test_body_limits_validation_and_token_errors(api):
     assert client.get("/v1/playbacks/absent", headers=HEADERS).status_code == 404
     for change in (
         {"mode": "replay"},
-        {"device_id": "different"},
         {"intent_version": -1},
         {"content_id": "different"},
     ):
         assert client.post("/v1/playbacks", headers=HEADERS, json={**payload(), **change}).status_code == 422
+    assert client.post("/v1/playbacks", headers=HEADERS, json={**payload(), "device_id": "different"}).status_code == 404
     assert (
         client.post("/v1/playbacks/cancel", headers=HEADERS, json={"device_id": "living-room"}).status_code
         == 422

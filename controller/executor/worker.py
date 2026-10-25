@@ -6,6 +6,7 @@ Owns tokens, worker scheduling and cancellation obligations, never app navigatio
 import asyncio
 import concurrent.futures
 import fcntl
+import hashlib
 import json
 import logging
 import sqlite3
@@ -21,6 +22,7 @@ log = logging.getLogger(__name__)
 class PlaybackWorker:
     def __init__(self, database, settings):
         self.db, self.settings, self.config = database, settings, settings.executor
+        self.device_id = getattr(settings, "device_id", "living-room")
         self.store = ExecutorStore(database, settings)
         self.input_lock = asyncio.Lock()
         self.wake = asyncio.Event()
@@ -37,17 +39,33 @@ class PlaybackWorker:
     async def start(self):
         if self.worker:
             return
-        self.guard = open(str(self.db.path) + ".executor.lock", "a")
+        self.stopping = True
         try:
-            fcntl.flock(self.guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            self.guard.close()
-            self.guard = None
-            raise RuntimeError("Only one executor process may own this device database") from None
-        self.loop = asyncio.get_running_loop()
-        await self.database_call(self.recover)
-        self.stopping = False
-        self.worker = asyncio.create_task(self.run(), name="playback-executor")
+            # Stable opaque suffix prevents device IDs from becoming filesystem paths.
+            scope = "" if self.device_id == "living-room" else "." + hashlib.sha256(self.device_id.encode()).hexdigest()[:24]
+            self.guard = open(str(self.db.path) + ".executor" + scope + ".lock", "a")
+            try:
+                fcntl.flock(self.guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                raise RuntimeError("Only one executor process may own this device") from None
+            self.loop = asyncio.get_running_loop()
+            await self.database_call(self.recover)
+            self.worker = asyncio.create_task(self.run(), name="playback-executor:" + self.device_id)
+            self.stopping = False
+        except BaseException:
+            # Other streams may still start. A partially initialized executor
+            # must not accept requests or masquerade as a healthy idle player.
+            self.stopping = True
+            self.loop = self.worker = None
+            try:
+                await self.close_resources()
+            except Exception:
+                log.exception("Failed to close resources after executor startup failure for %s", self.device_id)
+            finally:
+                if self.guard:
+                    self.guard.close()
+                    self.guard = None
+            raise
 
     async def close(self):
         self.stopping = True
@@ -62,7 +80,9 @@ class PlaybackWorker:
         if self.guard:
             def read_cancellations():
                 with self.db.snapshot() as db:
-                    return [r[0] for r in db.execute("SELECT token FROM executor_jobs WHERE cancel_requested=1")]
+                    return [r[0] for r in db.execute(
+                        "SELECT token FROM executor_jobs WHERE cancel_requested=1 AND device_id=?",
+                        (self.device_id,))]
             pending = await self.database_call(read_cancellations)
         for token in pending:
             try:
@@ -70,11 +90,15 @@ class PlaybackWorker:
                     await self.cancel_one(token)
             except (ExecutorError, TimeoutError):
                 pass
-        await self.close_resources()
-        if self.guard:
-            self.guard.close()
-            self.guard = None
-        self.loop = self.worker = None
+        try:
+            await self.close_resources()
+        finally:
+            # Worker and device operations above have settled. Client teardown
+            # failure must not leave a dead runtime holding its process lock.
+            if self.guard:
+                self.guard.close()
+                self.guard = None
+            self.loop = self.worker = None
 
     def notify(self, tokens=None, *, replace=False):
         if self.loop and self.loop.is_running():
@@ -154,14 +178,15 @@ class PlaybackWorker:
     def pending_work(self):
         with self.db.snapshot() as db:
             cancellations = db.execute(
-                "SELECT token,next_check FROM executor_jobs WHERE cancel_requested=1 ORDER BY intent"
+                "SELECT token,next_check FROM executor_jobs WHERE cancel_requested=1 AND device_id=? ORDER BY intent",
+                (self.device_id,),
             ).fetchall()
             row = (
                 db.execute(
-                    "SELECT * FROM executor_jobs WHERE cancel_requested=0 AND request IS NOT NULL "
+                    "SELECT * FROM executor_jobs WHERE device_id=? AND cancel_requested=0 AND request IS NOT NULL "
                     "AND state IN ('accepted','navigating','playing_verified') AND next_check<=? "
                     "ORDER BY CASE state WHEN 'playing_verified' THEN 1 ELSE 0 END,intent DESC LIMIT 1",
-                    (time.time(),),
+                    (self.device_id, time.time()),
                 ).fetchone()
                 if not cancellations
                 else None

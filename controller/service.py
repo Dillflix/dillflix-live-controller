@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -48,11 +49,24 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
     def __init__(
         self, settings, playback: PlaybackAdapter | None = None, status: ContentStatusAdapter | None = None
     ):
+        settings = settings.for_device(settings.configured_devices[0]) if settings.devices else settings
         self.settings = settings
+        self.device_id = settings.device_id
+        self.root = self
+        self.runtimes = {self.device_id: self}
         self._database_guard = database_guard(settings.database)
         self._database_guard.__enter__()
         try:
             self.db = Database(settings.database)
+            if settings.devices:
+                with self.db.snapshot() as db:
+                    saved = {row[0] for row in db.execute("SELECT id FROM devices")}
+                if saved and self.device_id not in saved:
+                    existing = next((binding for binding in settings.devices if binding.id in saved), None)
+                    if existing:
+                        settings = settings.for_device(existing)
+                        self.settings, self.device_id = settings, existing.id
+                        self.runtimes = {self.device_id: self}
             self.executor = None
             settings.executor.validate()
             if settings.executor.mode != "simulator":
@@ -76,14 +90,93 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             # Serialize playback calls with manual handoff, never on the event loop.
             self.playback_lock = threading.RLock()
             self.initialize()
+            self.configure_runtimes()
             from .plex.integration import PlexIntegration
 
             self.plex = PlexIntegration(self)
-            self.db.before_commit = self.plex.before_commit
+            for runtime in self.runtimes.values():
+                runtime.plex = self.plex
+            self.db.before_commit = self.before_commit
             self.db.after_commit = self.plex.wake
         except BaseException:
             self._database_guard.__exit__(None, None, None)
             raise
+
+    def runtime(self, device_id=None):
+        return self.root.runtimes[device_id or self.device_id]
+
+    def log(self, db, now, message, detail="", kind="decision", device=None):
+        self.db.log(db, now, message, detail, kind, device or self.device_id)
+
+    def configure_runtimes(self):
+        from .fleet import apply_planning, planning_fields
+        with self.db.transaction() as db:
+            primary = self.db.device(db, self.device_id)
+            fields = self.db.meta(db, "fleet_plan", planning_fields(primary))
+            configured = {device.id for device in self.settings.configured_devices}
+            existing = {row[0] for row in db.execute("SELECT id FROM devices")}
+            if existing - configured:
+                raise ValueError("Device configuration omits saved streams; retain their IDs and pause them instead")
+            for binding in self.settings.configured_devices:
+                if binding.id not in existing:
+                    device = default_device(self.settings.mode)
+                    device.update(id=binding.id, name=binding.name)
+                    apply_planning(device, fields)
+                    self.db.save_device(db, device)
+                elif self.settings.devices:
+                    device = self.db.device(db, binding.id)
+                    device["name"] = binding.name
+                    if self.executor and device.get("observed"):
+                        device["observed"]["verified"] = False
+                        device["playback_state"] = "unverified"
+                    self.db.save_device(db, device)
+                if binding.id != self.device_id:
+                    runtime = copy.copy(self)
+                    runtime.settings = self.settings.for_device(binding)
+                    runtime.device_id = binding.id
+                    runtime.owner = str(uuid.uuid4())
+                    runtime.tasks, runtime.workers = [], {}
+                    runtime.playback_lock = threading.RLock()
+                    runtime.executor = None
+                    if self.executor:
+                        from .executor.integration import IntegratedPlaybackAdapter
+                        from .prime_player.workflow import PrimePlaybackWorkflow
+                        runtime.settings.executor.validate()
+                        runtime.executor = PrimePlaybackWorkflow(self.db, runtime.settings)
+                        runtime.playback = IntegratedPlaybackAdapter(runtime.executor)
+                    else:
+                        runtime.playback = SimulatedPlaybackAdapter(self.db, self.settings.observation_ttl)
+                    self.runtimes[binding.id] = runtime
+            if len(self.runtimes) > 1:
+                self.db.set_meta(db, "fleet_plan", fields)
+            self.seed_entitlements(db)
+
+    def before_commit(self, db):
+        from .fleet import synchronize_plan
+        synchronize_plan(self, db)
+        return self.plex.before_commit(db)
+
+    def stream_summaries(self, db):
+        from .fleet import stream_summaries
+        return stream_summaries(self, db)
+
+    def planning_items(self, db, device_id=None):
+        """Shared browsing may use access on any stream; execution still checks its own."""
+        items = self.items(db, device_id or self.device_id)
+        if len(self.root.runtimes) < 2:
+            return items
+        indexed = {item["content_id"]: item for item in items}
+        for runtime in self.root.runtimes.values():
+            for item in runtime.items(db):
+                previous = indexed.get(item["content_id"])
+                if previous is None or ((item.get("entitlement") or {}).get("status") == "entitled"
+                                        and (previous.get("entitlement") or {}).get("status") != "entitled"):
+                    indexed[item["content_id"]] = item
+        return list(indexed.values())
+
+    def planning_preview(self, db, device, items):
+        from .fleet import planning_preview
+        return planning_preview(self, db, device, items, self.now(db))
 
     def initialize(self):
         with self.db.transaction() as db:
@@ -93,6 +186,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             self.db.set_meta(db, "mode", self.settings.mode)
             if not db.execute("SELECT 1 FROM devices").fetchone():
                 device = default_device(self.settings.mode)
+                device["id"] = self.device_id
                 if self.settings.mode == "demo":
                     entries, now = fixtures()
                     self.replace_catalog(db, entries, "demo")
@@ -115,7 +209,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     ).fetchone()
                 ):
                     raise ValueError("Cancel real playback before switching playback adapters")
-                device = self.db.device(db)
+                device = self.db.device(db, self.device_id)
                 device.update(
                     desired=None,
                     observed=None,
@@ -132,7 +226,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 self.db.save_device(db, device)
             self.db.set_meta(db, "playback_adapter", self.settings.executor.mode)
             if self.executor:
-                device = self.db.device(db)
+                device = self.db.device(db, self.device_id)
                 if device.get("observed"):
                     device["observed"]["verified"] = False
                     device["playback_state"] = "unverified"
@@ -189,7 +283,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             },
         )
 
-    def items(self, db, device_id="living-room"):
+    def items(self, db, device_id=None):
+        device_id = device_id or self.device_id
         now, real = self.now(db), datetime.now(UTC)
         checks = {row["content_id"]: row for row in db.execute("SELECT * FROM content_status")}
         pins = self.pinned_content_ids(db, device_id=device_id)
@@ -214,10 +309,13 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         ]
         return self.entitlement_views(db, device_id, items)
 
-    def overview(self, device_id="living-room"):
+    def overview(self, device_id=None):
+        device_id = device_id or self.device_id
+        if device_id != self.device_id:
+            return self.runtime(device_id).overview()
         with self.db.snapshot() as db:
             device = self.db.device(db, device_id)
-            items = self.items(db, device_id)
+            items = self.planning_items(db, device_id)
             plan_ids = {p["content_id"] for p in device["plan"]}
             retained = {device.get("desired"), (device.get("observed") or {}).get("content_id")}
             cards = []
@@ -250,6 +348,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     if executor_job:
                         latest_job["launch_progress"] = launch_progress(json.loads(executor_job[0]), device.get("prime_network"))
             return {
+                "shared_plan": len(self.root.runtimes) > 1,
+                "streams": self.stream_summaries(db),
                 "device": device,
                 "playback_job": latest_job,
                 "status_health": self.status_health(db, items, device_id),
@@ -262,7 +362,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 "undo": self.undo_summary(db, device),
                 "events": cards,
                 "entitlement_queue": self.entitlement_queue(db, device, items),
-                "plan_preview": preview_plan(device, items, self.now(db)),
+                "plan_preview": self.planning_preview(db, device, items),
                 "activity": activity,
                 "health": self.feed_health(db),
                 "meta": {
@@ -423,7 +523,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
     def apply_plan(self, db, device, action, *, preview=False, actor=None):
         actor = actor or LEGACY_ADMIN.copy()
         public = actor["type"] == "user"
-        items = {i["content_id"]: i for i in self.items(db, device["id"])}
+        items = {i["content_id"]: i for i in self.planning_items(db, device["id"])}
         op = action["type"]
         content_id = action.get("content_id")
         if public:
@@ -555,7 +655,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             return {
                 "revision": device["revision"],
                 "entries": device["plan"],
-                **preview_plan(device, self.items(db, device_id), self.now(db)),
+                **self.planning_preview(db, device, self.planning_items(db, device_id)),
             }
 
     def rules_command(self, device_id, update):
@@ -688,7 +788,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         if self.settings.mode != "demo":
             raise HTTPException(409, "Demo scenarios are unavailable in Teamarr mode")
         with self.db.transaction() as db:
-            if request.action == "scenario" and self.db.device(db).get("manual_control"):
+            if request.action == "scenario" and self.db.device(db, self.device_id).get("manual_control"):
                 raise HTTPException(409, "End manual control before resetting the demo scenario.")
             if request.action == "advance":
                 self.db.set_meta(
@@ -706,7 +806,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             elif request.action in {"disconnect", "reconnect"}:
                 self.db.set_meta(db, "simulated_executor_outage", request.action == "disconnect")
                 self.db.set_meta(db, "simulated_executor_disconnect_at", None)
-                d = self.db.device(db)
+                d = self.db.device(db, self.device_id)
                 if d.get("executor_health"):
                     d["executor_health"]["next_probe_at"] = None
                 self.db.save_device(db, d)
@@ -722,7 +822,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 self.replace_catalog(db, entries, "demo")
                 self.db.set_meta(db, "demo_now", now)
                 self.db.set_meta(db, "scenario", request.scenario)
-                d = self.db.device(db)
+                d = self.db.device(db, self.device_id)
                 d.update(
                     {
                         "failures": {},
@@ -938,6 +1038,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         return {name: worker.status() for name, worker in self.workers.items()}
 
     def feed_health(self, db):
+        if self is not self.root:
+            return self.root.feed_health(db)
         health = self.db.meta(db, "feed_health", {"state": "starting"})
         if self.settings.mode != "teamarr":
             return health
@@ -957,30 +1059,46 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
     def start(self):
         functions = {
             "playback": self.run_worker,
-            "plex": self.plex.worker.run,
-            "content_status": self.run_status,
-            "maintenance": self.run_maintenance,
         }
-        if self.settings.mode == "teamarr":
-            functions.update(catalog=self.run_feed, team_directory=self.run_team_directory)
-            if self.executor:
-                functions["entitlements"] = self.run_entitlements
+        if self is self.root:
+            functions.update(plex=self.plex.worker.run, content_status=self.run_status,
+                             maintenance=self.run_maintenance)
+            if self.settings.mode == "teamarr":
+                functions.update(catalog=self.run_feed, team_directory=self.run_team_directory)
+        if self.settings.mode == "teamarr" and self.executor:
+            functions["entitlements"] = self.run_entitlements
         self.workers = {name: BackgroundWorker(name, function) for name, function in functions.items()}
         self.tasks = [
             asyncio.create_task(worker.run(), name="controller:" + name)
             for name, worker in self.workers.items()
         ]
+        if self is self.root:
+            for runtime in self.runtimes.values():
+                if runtime is not self:
+                    runtime.start()
 
     async def stop(self):
+        if self is self.root:
+            results = await asyncio.gather(
+                *(runtime.stop() for runtime in self.runtimes.values() if runtime is not self),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    log.error("Stream shutdown failed after draining its workers",
+                              exc_info=(type(result), result, result.__traceback__))
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         try:
-            if self.executor:
-                await self.executor.close()
-            def release_leases():
-                with self.db.transaction() as db:
-                    db.execute("DELETE FROM leases WHERE owner=?", (self.owner,))
-            await self.playback_work(release_leases)
+            try:
+                if self.executor:
+                    await self.executor.close()
+            finally:
+                def release_leases():
+                    with self.db.transaction() as db:
+                        db.execute("DELETE FROM leases WHERE owner=?", (self.owner,))
+                await self.playback_work(release_leases)
         finally:
-            self._database_guard.__exit__(None, None, None)
+            if self is self.root:
+                self._database_guard.__exit__(None, None, None)

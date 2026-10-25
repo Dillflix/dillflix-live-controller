@@ -69,6 +69,11 @@ class Settled(Exception):
 
 
 class EntitlementChecks:
+    def entitlement_key(self, key, device_id=None):
+        device_id = device_id or self.device_id
+        # Retain the original primary-device history during a single-stream upgrade.
+        return key if device_id == "living-room" else key + ":" + device_id
+
     def seed_entitlements(self, db):
         if not self.executor:
             return
@@ -212,7 +217,7 @@ class EntitlementChecks:
         return self.entitlement_blocker(db, device) is None
 
     def entitlement_progress(self, db, phase, *, content_id=None, reason=None):
-        self.db.set_meta(db, "entitlement_worker", {
+        self.db.set_meta(db, self.entitlement_key("entitlement_worker"), {
             "phase": phase, "content_id": content_id, "reason": reason,
             "updated_at": time.time(),
         })
@@ -298,12 +303,12 @@ class EntitlementChecks:
                          "Outside the imported schedule window" if not eligible else None,
                          "due": r["next_check"] is not None and r["next_check"] <= now,
                          "manual": bool(r["manual"])})
-        worker = self.db.meta(db, "entitlement_worker", {})
+        worker = self.db.meta(db, self.entitlement_key("entitlement_worker", device["id"]), {})
         service = self.db.meta(db, "entitlement_service:" + device["id"], {})
         reason = worker.get("reason")
         phase = worker.get("phase", "starting")
         due = [r for r in rows if r["eligible"] and r["due"] and r["entitlement"]["state"] in {"queued", "retry"}]
-        dispatch = self.db.meta(db, "entitlement_dispatch_after", 0)
+        dispatch = self.db.meta(db, self.entitlement_key("entitlement_dispatch_after", device["id"]), 0)
         if not worker or now - worker["updated_at"] > CHECK_SECONDS + 30:
             phase, reason = "unavailable", "Entitlement worker has not reported progress recently"
         elif counts["checking"] and phase == "idle":
@@ -339,7 +344,7 @@ class EntitlementChecks:
             return
         now = time.time()
         with self.db.transaction() as db:
-            device = self.db.device(db)
+            device = self.db.device(db, self.device_id)
             if not self.db.lease(db, "entitlements:" + device["id"], self.owner, now, CHECK_SECONDS + 60):
                 return
             self.entitlement_progress(db, "idle")
@@ -416,7 +421,7 @@ class EntitlementChecks:
                     break
             if not row or not self.entitlement_idle(db, device):
                 return
-            if not row["manual"] and now < self.db.meta(db, "entitlement_dispatch_after", 0):
+            if not row["manual"] and now < self.db.meta(db, self.entitlement_key("entitlement_dispatch_after"), 0):
                 return
             item = items[row["content_id"]]
         return row, item, device
@@ -444,7 +449,7 @@ class EntitlementChecks:
                     "UPDATE event_entitlements SET state='checking',check_id=?,started_at=?,next_check=NULL,manual=0 "
                     "WHERE device_id=? AND content_id=?", (row["check_id"], now, device["id"], row["content_id"]),
                 )
-                self.db.set_meta(db, "entitlement_dispatch_after", now + DISPATCH_INTERVAL)
+                self.db.set_meta(db, self.entitlement_key("entitlement_dispatch_after"), now + DISPATCH_INTERVAL)
                 self.db.set_meta(db, "entitlement_last_retry:" + device["id"], row["failures"] > 0)
                 self.entitlement_progress(db, "searching", content_id=row["content_id"])
             return row
