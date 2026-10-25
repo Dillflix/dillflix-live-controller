@@ -25,6 +25,23 @@ def apply_planning(device, fields):
                                 if "vpn_policy" in device["preferences"] else {})}
 
 
+def validate_saved_plan(service, db):
+    """Reject ambiguous migration before any startup cleanup can change intent."""
+    devices = {row[0]: service.db.device(db, row[0]) for row in db.execute("SELECT id FROM devices")}
+    configured = {device.id for device in service.settings.configured_devices}
+    if devices.keys() - configured:
+        raise ValueError("Device configuration omits saved streams; retain their IDs and pause them instead")
+    if not devices:
+        return
+    canonical = service.db.meta(db, "fleet_plan", planning_fields(devices[service.device_id]))
+    conflicting = [key for key, device in devices.items() if planning_fields(device) != canonical]
+    if conflicting:
+        raise ValueError(
+            "Saved stream plans differ from the shared plan: " + ", ".join(conflicting)
+            + "; reconcile the saved plans before enabling shared playback. No plan was overwritten."
+        )
+
+
 def synchronize_plan(service, db):
     """Commit shared edits and all projected device revisions atomically.
 

@@ -43,8 +43,23 @@ async def test_cleanup_is_revisioned_idempotent_and_preserves_unfinished_entries
         )
 
 
-async def test_startup_removes_preexisting_confirmed_entries_per_device(rig):
+async def test_startup_removes_preexisting_confirmed_entries(rig):
     _, service, settings = rig
+    with service.db.transaction() as db:
+        device = service.db.device(db)
+        device["plan"] = [service.entry("demo:lions"), service.entry("demo:golf")]
+        device["manual_completions"]["demo:lions"] = datetime.now(UTC).isoformat()
+        service.db.save_device(db, device)
+    await service.stop()
+    restarted = Controller(settings)
+    try:
+        assert restarted.overview()["device"]["plan"] == device["plan"][1:]
+    finally:
+        await restarted.stop()
+
+
+def test_cleanup_only_uses_the_completion_record_of_each_saved_device(rig):
+    _, service, _ = rig
     with service.db.transaction() as db:
         device = service.db.device(db)
         device["plan"] = [service.entry("demo:lions"), service.entry("demo:golf")]
@@ -53,13 +68,9 @@ async def test_startup_removes_preexisting_confirmed_entries_per_device(rig):
         device["manual_completions"]["demo:lions"] = datetime.now(UTC).isoformat()
         service.db.save_device(db, device)
         service.db.save_device(db, other)
-    await service.stop()
-    restarted = Controller(settings)
-    try:
-        assert restarted.overview()["device"]["plan"] == device["plan"][1:]
-        assert restarted.overview("other-device")["device"]["plan"] == other["plan"]
-    finally:
-        await restarted.stop()
+        service.prune_completed_plans(db)
+        assert service.db.device(db)["plan"] == device["plan"][1:]
+        assert service.db.device(db, "other-device")["plan"] == other["plan"]
 
 
 @pytest.mark.parametrize("state", ["final", "cancelled"])

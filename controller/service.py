@@ -179,7 +179,10 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         return planning_preview(self, db, device, items, self.now(db))
 
     def initialize(self):
+        from .fleet import planning_fields, validate_saved_plan
+
         with self.db.transaction() as db:
+            validate_saved_plan(self, db)
             existing = self.db.meta(db, "mode")
             if existing and existing != self.settings.mode:
                 raise ValueError("Use a separate CONTROLLER_DATABASE when changing demo/teamarr mode")
@@ -239,6 +242,10 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 team["key"] = team_key(team, team["league"])
                 self.db.upsert_team(db, team, datetime.now(UTC).isoformat())
             self.prune_completed_plans(db)
+            if self.db.meta(db, "fleet_plan") is not None:
+                # Cleanup changes all identical projections before the normal
+                # commit hook exists. Commit their canonical plan with them.
+                self.db.set_meta(db, "fleet_plan", planning_fields(self.db.device(db, self.device_id)))
             self.seed_entitlements(db)
 
     def remember_teams(self, db, item, fetched):

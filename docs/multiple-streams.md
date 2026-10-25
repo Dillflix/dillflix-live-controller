@@ -6,6 +6,13 @@ attempts, recovery, screen and manual-control ownership. The existing primary
 stream keeps the `living-room` ID and its history. Adding a stream does not create
 a second controller database or a separate watch plan.
 
+The normal upgrade copies the existing stream's plan to the new stream. If an
+older database already contains conflicting independent plans, startup rejects
+the configuration before changing those plans. Reconcile those records with an
+explicit migration first; startup never chooses an arbitrary plan to overwrite
+the others. The same check protects an existing shared plan from stale saved
+device projections.
+
 ## Hardware qualification comes first
 
 Prime Player currently requires available device root, its supported ARM32 native
