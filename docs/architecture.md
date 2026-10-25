@@ -412,6 +412,12 @@ or Plex I/O. Matchup thumbnail derivation takes precedence, then a valid provide
 cover URL is used verbatim (including tennis coverage with no matchup). The
 integration calls the projection directly and never polls its HTTP endpoint.
 
+The device-scoped [display API](display-api.md) combines that accepted-playback
+projection with entitled schedule cards in one read-only WAL snapshot. It keeps
+current, retained and desired identities separate, exposes original evidence
+expiry, and provides bounded presentation fields without device or provider I/O.
+Its authentication remains the existing admin API boundary.
+
 ### Entitlement admission
 
 For real Prime routes, new scheduler selections and Add to plan/Play now commands
