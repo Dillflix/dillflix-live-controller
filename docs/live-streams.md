@@ -61,6 +61,10 @@ This first transport supports the existing relative MPEG-TS HLS media playlists,
 including audio. DASH, encrypted playlists, nested master playlists and arbitrary
 remote URLs are not accepted. The controller rejects redirects and nonlocal
 playlist references. Range requests and HEAD are supported for TS segments.
+Playlist requests ignore `Range` headers and return the complete playlist with
+HTTP 200 (headers only for HEAD), including native browser requests for
+`bytes=0-`. Playlists advertise `Accept-Ranges: none` and remain size-limited,
+validated and uncached.
 
 Public contract:
 
