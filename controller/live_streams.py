@@ -259,8 +259,10 @@ class LiveStreams:
         if not is_playlist and not SEGMENT.fullmatch(filename):
             raise failure(404)
         headers = {}
-        if request.headers.get("range"):
-            if is_playlist or not RANGE.fullmatch(request.headers["range"]):
+        # Native HLS clients can request bytes=0- on the manifest. Ignore ranges
+        # for playlists so their complete, bounded contents can be validated.
+        if not is_playlist and request.headers.get("range"):
+            if not RANGE.fullmatch(request.headers["range"]):
                 raise failure(416)
             headers["Range"] = request.headers["range"]
         response = await self.open(request.method, f"/sessions/{session_id}/hls/{filename}", headers=headers)
@@ -274,9 +276,12 @@ class LiveStreams:
                 raise failure()
             outgoing = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
                         "Content-Type": "application/vnd.apple.mpegurl" if is_playlist else "video/mp2t"}
-            for name in ("content-length", "content-range", "accept-ranges"):
+            forwarded_headers = ("content-length",) if is_playlist else ("content-length", "content-range", "accept-ranges")
+            for name in forwarded_headers:
                 if name in response.headers:
                     outgoing[name] = response.headers[name]
+            if is_playlist:
+                outgoing["Accept-Ranges"] = "none"
             if request.method == "HEAD":
                 return Response(status_code=response.status_code, headers=outgoing)
             if is_playlist:

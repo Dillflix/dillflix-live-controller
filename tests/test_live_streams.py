@@ -221,6 +221,53 @@ def test_nonlocal_or_unsupported_playlist_tags_are_rejected(live_client, tag):
         assert client.get(MEDIA + "index.m3u8").status_code == 502
 
 
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("byte_range", ["bytes=0-", "bytes=0-7", "bytes=-8", "bytes=1-2,4-5"])
+def test_playlist_ranges_return_complete_response(live_client, method, byte_range):
+    body = b"#EXTM3U\n#EXTINF:2,\nmedia-00001.ts\n"
+    stream = TrackedStream([body] if method == "GET" else [])
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert request.method == method
+        assert request.url.path.endswith("/hls/index.m3u8")
+        assert "range" not in request.headers
+        return httpx.Response(200, stream=stream, headers={
+            "Content-Length": str(len(body)), "Accept-Ranges": "bytes"})
+
+    with live_client(handler) as (client, gateway, _):
+        response = client.request(method, MEDIA + "index.m3u8", headers={"Range": byte_range})
+        assert response.status_code == 200
+        assert response.content == (body if method == "GET" else b"")
+        assert response.headers["content-type"] == "application/vnd.apple.mpegurl"
+        assert response.headers["content-length"] == str(len(body))
+        assert response.headers["accept-ranges"] == "none"
+        assert "content-range" not in response.headers
+        assert response.headers["cache-control"] == "no-store"
+        assert len(calls) == 1
+        assert stream.closed and gateway.slots._value == MAX_CONNECTIONS
+
+
+def test_playlist_range_does_not_bypass_authentication_or_validation(live_client):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert "range" not in request.headers
+        return httpx.Response(200, content=b"#EXTM3U\nhttps://private/segment.ts\n")
+
+    with live_client(handler, public_mode="proxy") as (client, gateway, _):
+        path = MEDIA + "index.m3u8"
+        assert client.get(path, headers={"Range": "bytes=0-"}).status_code == 401
+        assert not calls
+        response = client.get(path, headers={**USER, "Range": "bytes=0-"})
+        assert response.status_code == 502
+        assert "private" not in response.text
+        assert len(calls) == 1
+        assert gateway.slots._value == MAX_CONNECTIONS
+
+
 def test_head_and_single_byte_range_are_preserved(live_client):
     streams = []
     def handler(request):
