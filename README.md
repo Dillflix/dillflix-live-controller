@@ -11,6 +11,12 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 
 ## What works
 
+- [Multiple Fire TV streams](docs/multiple-streams.md) with one shared watch plan
+  and priorities. Each stream receives a different eligible event and has its own
+  playback worker, player service, recovery, screen and manual controls. Existing
+  single-stream configuration remains valid; additional hardware requires separate
+  root/runtime qualification before activation.
+
 - A separate [public app with PlexSSO integration](docs/public-app.md) at `/public/`:
   Now playing and Live/Upcoming events, optional public Play now/Add to plan,
   admin-first playback priority, and actor attribution. Choose proxy authentication
@@ -79,6 +85,13 @@ CI builds the Docker image from an owner-only checkout and checks application
 imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
+
+Multi-stream support introduces schema 15 and an optional server-side device
+registry. Existing `living-room` history and player socket remain valid. Do not
+enable a second stream until its player is qualified; see the [additive setup and
+rollback procedure](docs/multiple-streams.md). Schema 15 prevents older controller
+versions from opening a database whose shared-plan/device ownership they do not
+understand. Back up before upgrading.
 
 Version 0.19.0 adds 25 soccer, basketball, hockey, rugby, AFL and PLL competitions.
 Schema 14 expands previous default discovery selections to all 36 supported
@@ -260,7 +273,9 @@ python -m uvicorn controller.api:create_app --factory --host 0.0.0.0 --port 8790
 
 For hot reload, run the API with `--reload`, and run `npm run dev` from `frontend` in a second terminal. Vite proxies API calls to port 8790. The Python server does not automatically load `.env`; export variables in your shell when running outside Compose.
 
-Use **one API worker**. The current release has one logical device, `living-room`. The endpoints and records are device-scoped, but device creation, multiple playback workers, and multi-device coordination are future work.
+Use **one API worker**. It coordinates the shared watch plan and runs an independent
+playback worker for each configured device. Existing installations keep
+`living-room`; use the [add-stream helper](docs/multiple-streams.md) to add devices.
 
 ## API
 

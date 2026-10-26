@@ -32,7 +32,7 @@ def compatible_options(issued, current, selected_id=None):
 
 class PlaybackRecovery:
     def executor_available(self, db):
-        return self.db.device(db).get("executor_health", {}).get("state") != "offline"
+        return self.db.device(db, self.device_id).get("executor_health", {}).get("state") != "offline"
 
     def begin_observation_recovery(self, device, now, *, not_before=None, reason=None, session_replaced=False):
         content_id = device["observed"]["content_id"]
@@ -77,9 +77,9 @@ class PlaybackRecovery:
 
     def refresh_playback_observation(self):
         with self.db.transaction() as db:
-            if not self.owns_device(db, "living-room"):
+            if not self.owns_device(db, self.device_id):
                 return
-            health = self.db.device(db).get("executor_health") or {}
+            health = self.db.device(db, self.device_id).get("executor_health") or {}
             probe_due = (
                 not health.get("next_probe_at")
                 or parse_time(health["next_probe_at"]).timestamp() <= time.time()
@@ -88,16 +88,16 @@ class PlaybackRecovery:
         if probe_due:
             try:
                 if hasattr(self.playback, "observe_report"):
-                    monitoring = self.playback.observe_report("living-room") or {}
+                    monitoring = self.playback.observe_report(self.device_id) or {}
                     observation = monitoring.get("observation")
                 else:
-                    observation = self.playback.observe("living-room")
+                    observation = self.playback.observe(self.device_id)
             except Exception as exc:
                 transport_error = f"{type(exc).__name__}: playback service unavailable"
         with self.db.transaction() as db:
-            if not self.owns_device(db, "living-room"):
+            if not self.owns_device(db, self.device_id):
                 return
-            d = self.db.device(db)
+            d = self.db.device(db, self.device_id)
             now = datetime.now(UTC)
             if probe_due:
                 previous = d.get("executor_health") or {}
@@ -114,7 +114,7 @@ class PlaybackRecovery:
                         "error": transport_error,
                     }
                     if previous.get("state") != "offline":
-                        self.db.log(
+                        self.log(
                             db,
                             self.now(db).isoformat(),
                             "Playback service unavailable",
@@ -131,7 +131,7 @@ class PlaybackRecovery:
                         "error": None,
                     }
                     if previous.get("state") == "offline":
-                        self.db.log(
+                        self.log(
                             db,
                             self.now(db).isoformat(),
                             "Playback service recovered",
@@ -180,7 +180,7 @@ class PlaybackRecovery:
                         d["recovery"]["stable_since"] = None
                     if d["playback_state"] == "unverified" and d.get("desired") == existing["content_id"]:
                         d["playback_state"] = "verified"
-                        self.db.log(
+                        self.log(
                             db,
                             self.now(db).isoformat(),
                             "Playback observation recovered",
@@ -213,7 +213,7 @@ class PlaybackRecovery:
                         else:
                             detail = monitoring.get("reason") or "Current playback is unverified; waiting for recovery"
                         if existing.get("verified"):
-                            self.db.log(
+                            self.log(
                                 db,
                                 self.now(db).isoformat(),
                                 "Playback requires revalidation",

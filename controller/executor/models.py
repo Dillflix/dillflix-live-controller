@@ -15,7 +15,7 @@ class Strict(BaseModel):
 class PlaybackRequest(Strict):
     schema_version: Literal[1] = 1
     request_id: str = Field(min_length=1, max_length=200)
-    device_id: Literal["living-room"]
+    device_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     intent_version: int = Field(strict=True, ge=0, le=9007199254740991)
     content_id: str = Field(min_length=1, max_length=1024)
     mode: Literal["live"]
@@ -62,7 +62,7 @@ class PlaybackRequest(Strict):
 
 
 class CancelRequest(Strict):
-    device_id: Literal["living-room"]
+    device_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     token: str | None = Field(default=None, min_length=1, max_length=200)
     through_intent_version: int | None = Field(default=None, strict=True, ge=0, le=9007199254740991)
 
@@ -133,7 +133,7 @@ class Operation(Strict):
 
 
 class PlaybackObservation(Strict):
-    device_id: Literal["living-room"]
+    device_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     request_id: str
     intent_version: int
     content_id: str
@@ -190,7 +190,7 @@ class PlaybackReport(Strict):
     schema_version: Literal[1]
     token: str
     request_id: str
-    device_id: Literal["living-room"]
+    device_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     content_id: str
     intent_version: int
     revision: int
@@ -204,7 +204,7 @@ class PlaybackReport(Strict):
 
 
 class CancelResult(Strict):
-    device_id: Literal["living-room"]
+    device_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     token: str | None
     through_intent_version: int | None
     input_quiescent: Literal[True]

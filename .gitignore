@@ -21,3 +21,4 @@ backups/
 /build/
 
 *.plex-secrets/
+*.executor.*.lock

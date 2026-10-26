@@ -71,7 +71,7 @@ def install_executor_api(app, service):
 
     async def authorize(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
         configured = service.settings.executor.api_token
-        if not service.executor or not configured:
+        if not any(runtime.executor for runtime in service.runtimes.values()) or not configured:
             raise ExecutorError(
                 "executor_disabled", "Real executor API is not configured", status=503, retryable=False
             )
@@ -80,7 +80,16 @@ def install_executor_api(app, service):
             raise ExecutorError(
                 "unauthorized", "A valid executor service credential is required", status=401, retryable=False
             )
-        return service.executor
+        return True
+
+    def executor_for(device_id):
+        try:
+            runtime = service.runtime(device_id)
+        except KeyError as error:
+            raise ExecutorError("device_not_found", "Device is not configured", status=404, retryable=False) from error
+        if not runtime.executor:
+            raise ExecutorError("executor_disabled", "Real executor API is not configured for this device", status=503, retryable=False)
+        return runtime.executor
 
     errors = {
         code: {
@@ -105,7 +114,7 @@ def install_executor_api(app, service):
         summary="Accept live playback and return a durable token",
     )
     def play(command: PlaybackRequest):
-        report, created = service.executor.submit(command.model_dump(mode="json"))
+        report, created = executor_for(command.device_id).submit(command.model_dump(mode="json"))
         return JSONResponse(
             report,
             status_code=202 if created else 200,
@@ -120,7 +129,7 @@ def install_executor_api(app, service):
     )
     async def cancel(command: CancelRequest):
         try:
-            result = await service.executor.cancel(command)
+            result = await executor_for(command.device_id).cancel(command)
         except TimeoutError as error:
             raise ExecutorError(
                 "cancel_unconfirmed", "Cancellation is retained but input quiescence is not yet confirmed"
@@ -134,7 +143,11 @@ def install_executor_api(app, service):
         summary="Read progress, playback evidence, and event completion by token",
     )
     def status(token: str):
-        return JSONResponse(service.executor.store.report(token), headers={"Cache-Control": "no-store"})
+        with service.db.snapshot() as db:
+            row = db.execute("SELECT device_id FROM executor_jobs WHERE token=?", (token,)).fetchone()
+        if not row:
+            raise ExecutorError("token_not_found", "Unknown playback token", status=404, retryable=False)
+        return JSONResponse(executor_for(row["device_id"]).store.report(token), headers={"Cache-Control": "no-store"})
 
     @app.exception_handler(ExecutorError)
     async def failure(request, error):

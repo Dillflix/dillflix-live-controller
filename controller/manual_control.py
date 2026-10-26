@@ -38,7 +38,7 @@ class ManualControl:
 
     def manual_expired(self):
         with self.db.snapshot() as db:
-            session = self.db.device(db).get("manual_control")
+            session = self.db.device(db, self.device_id).get("manual_control")
             return bool(session and parse_time(session["expires_at"]) <= datetime.now(UTC))
 
     def prepare_manual_input(self, device_id, session_id, owner_token):
@@ -47,12 +47,13 @@ class ManualControl:
                 self.check_manual_owner(db, self.db.device(db, device_id), session_id, owner_token)
             self.reconcile_input_handoff(device_id)
 
-    def reconcile_input_handoff(self, device_id="living-room"):
+    def reconcile_input_handoff(self, device_id=None):
         """Caller holds playback_lock. No DB transaction spans executor I/O.
 
         The fence survives session expiry/release and blocks new playback until
         acknowledged. A failed cancellation never authorizes manual input.
         """
+        device_id = device_id or self.device_id
         with self.db.transaction() as db:
             device = self.db.device(db, device_id)
             handoff = device.get("input_handoff")
@@ -121,7 +122,7 @@ class ManualControl:
 
     def expire_manual(self):
         with self.db.transaction() as db:
-            device = self.db.device(db)
+            device = self.db.device(db, self.device_id)
             session = device.get("manual_control")
             if session and parse_time(session["expires_at"]) <= datetime.now(UTC):
                 self.finish_manual(db, device, session["return_mode"], "Manual control expired")

@@ -19,21 +19,31 @@ def utc():
 class ExecutorStore:
     def __init__(self, database, settings):
         self.db, self.settings = database, settings
+        self.device_id = getattr(settings, "device_id", "living-room")
+
+    def require_device(self, device_id):
+        if device_id != self.device_id:
+            raise ExecutorError(
+                "device_mismatch", "Playback belongs to another device", status=409, retryable=False
+            )
 
     def get_row(self, db, token):
         row = db.execute("SELECT * FROM executor_jobs WHERE token=?", (token,)).fetchone()
         if row is None:
             raise ExecutorError("token_not_found", "Unknown playback token", status=404, retryable=False)
+        self.require_device(row["device_id"])
         return row
 
     def submit(self, request):
         body = PlaybackRequest.model_validate(request).model_dump(mode="json")
+        self.require_device(body["device_id"])
         digest = hashlib.sha256(encode(body).encode()).hexdigest()
         with self.db.transaction() as db:
             prior = db.execute(
                 "SELECT * FROM executor_jobs WHERE request_id=?", (body["request_id"],)
             ).fetchone()
             if prior:
+                self.require_device(prior["device_id"])
                 if prior["request_hash"] != digest:
                     raise ExecutorError(
                         "request_conflict",
@@ -151,6 +161,7 @@ class ExecutorStore:
             return report, True
 
     def project(self, row, db=None):
+        self.require_device(row["device_id"])
         if row["request"] is None:
             raise ExecutorError("token_retired", "Playback token has retired", status=410, retryable=False)
         report = json.loads(row["report"])
@@ -202,6 +213,8 @@ class ExecutorStore:
             return self.project(row, db) if row else None
 
     def write(self, db, token, report, **fields):
+        self.get_row(db, token)
+        self.require_device(report["device_id"])
         report["revision"] += 1
         fields["report"] = encode(report)
         allowed = {
@@ -275,6 +288,7 @@ class ExecutorStore:
             self.write(db, token, report, state=state, cancel_requested=1)
 
     def request_cancel(self, command):
+        self.require_device(command.device_id)
         with self.db.transaction() as db:
             db.execute("INSERT OR IGNORE INTO executor_devices(device_id) VALUES (?)", (command.device_id,))
             if command.token:
@@ -327,7 +341,8 @@ class ExecutorStore:
             until = datetime.now(UTC) + timedelta(days=self.settings.executor.retention_days)
             report["retained_until"] = until.isoformat()
             self.write(db, token, report, state="cancelled", cancel_requested=2, retired_at=time.time())
-            db.execute("UPDATE executor_devices SET current_token=NULL WHERE current_token=?", (token,))
+            db.execute("UPDATE executor_devices SET current_token=NULL WHERE current_token=? AND device_id=?",
+                       (token, self.device_id))
             return active_playback
 
     def journal(self, token, action, evidence_id=None, *, cancelling=False):
@@ -353,16 +368,18 @@ class ExecutorStore:
     def journal_done(self, action_id, error=None):
         with self.db.transaction() as db:
             db.execute(
-                "UPDATE executor_actions SET state=?,error=? WHERE id=?",
-                ("uncertain" if error else "acknowledged", error, action_id),
+                "UPDATE executor_actions SET state=?,error=? WHERE id=? "
+                "AND token IN (SELECT token FROM executor_jobs WHERE device_id=?)",
+                ("uncertain" if error else "acknowledged", error, action_id, self.device_id),
             )
 
     def prune(self):
         with self.db.transaction() as db:
             cutoff = time.time() - self.settings.executor.retention_days * 86400
             rows = db.execute(
-                "SELECT token FROM executor_jobs WHERE retired_at<? AND cancel_requested=2 AND request IS NOT NULL",
-                (cutoff,),
+                "SELECT token FROM executor_jobs WHERE device_id=? AND retired_at<? "
+                "AND cancel_requested=2 AND request IS NOT NULL",
+                (self.device_id, cutoff),
             ).fetchall()
             for row in rows:
                 # Keep the id/hash/token/intent tombstone so expiry cannot cause a relaunch.

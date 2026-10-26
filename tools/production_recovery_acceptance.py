@@ -6,6 +6,7 @@ commands are issued afterwards. Existing automation must restore playback.
 """
 import argparse
 import json
+import re
 import subprocess
 import tarfile
 import time
@@ -13,16 +14,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SNAPSHOT = '''import json,os,sqlite3
+SNAPSHOT = '''import json,os,sqlite3,sys
 from pathlib import Path
+from controller.config import Settings
+device_id=sys.argv[1]
+binding=next((d for d in Settings.from_env().configured_devices if d.id==device_id),None)
+if binding is None:
+    raise RuntimeError('Device is not configured')
 c=sqlite3.connect(Path(os.environ['CONTROLLER_DATABASE']).resolve().as_uri()+'?mode=ro',uri=True,timeout=2)
 c.execute('BEGIN')
-d=json.loads(c.execute("SELECT payload FROM devices WHERE id='living-room'").fetchone()[0])
-rows=c.execute("SELECT report FROM executor_jobs WHERE device_id='living-room' ORDER BY rowid DESC LIMIT 5")
+d=json.loads(c.execute("SELECT payload FROM devices WHERE id=?",(device_id,)).fetchone()[0])
+rows=c.execute("SELECT report FROM executor_jobs WHERE device_id=? ORDER BY rowid DESC LIMIT 5",(device_id,))
 reports=[json.loads(r[0]) for r in rows]
-probe=c.execute("SELECT value FROM metadata WHERE key='prime_catalogue_probe:living-room'").fetchone()
-activity=c.execute("SELECT at,message,detail FROM activity WHERE device_id='living-room' AND kind='prime_catalogue' ORDER BY sequence DESC LIMIT 20").fetchall()
-print(json.dumps({'device':d,'reports':reports,'catalogue_probe':json.loads(probe[0]) if probe else None,'catalogue_history':activity}))
+probe=c.execute("SELECT value FROM metadata WHERE key=?",('prime_catalogue_probe:'+device_id,)).fetchone()
+activity=c.execute("SELECT at,message,detail FROM activity WHERE device_id=? AND kind='prime_catalogue' ORDER BY sequence DESC LIMIT 20",(device_id,)).fetchall()
+print(json.dumps({'device':d,'configured_serial':binding.adb_serial,'reports':reports,'catalogue_probe':json.loads(probe[0]) if probe else None,'catalogue_history':activity}))
 '''
 
 
@@ -45,10 +51,13 @@ def verified(snapshot, content_id, since, session_id):
     if device.get('automation') != 'active' or device.get('manual_control') or device.get('input_handoff'):
         return False
     observed = device.get('observed') or {}
-    if not observed.get('verified') or observed.get('content_id') != content_id:
+    if (not device.get('id') or observed.get('device_id') != device['id']
+            or not observed.get('verified') or observed.get('content_id') != content_id):
         return False
     return any(
-        (r.get('observation') or {}).get('content_id') == content_id
+        r.get('device_id') == device['id']
+        and (r.get('observation') or {}).get('device_id') == device['id']
+        and (r.get('observation') or {}).get('content_id') == content_id
         and (r.get('observation') or {}).get('verified') is True
         and (r.get('observation') or {}).get('simulated') is False
         and (r.get('observation') or {}).get('presentation') == 'live'
@@ -70,9 +79,30 @@ def ready(health, old_session=None):
     )
 
 
+def instance_paths(device_id, state=None, service=None):
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', device_id):
+        raise ValueError('Device ID must match a configured lowercase stream ID')
+    default = Path.home() / '.local/state/dillflix-prime-player'
+    if device_id != 'living-room':
+        default = default / 'instances' / device_id
+    unit = service or ('dillflix-prime-player' + ('' if device_id == 'living-room' else '@' + device_id) + '.service')
+    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.@-]*\.service', unit):
+        raise ValueError('Player service must be a literal systemd .service unit name')
+    return Path(state).resolve() if state is not None else default, unit
+
+
+def require_target(snapshot, health, device_id, serial):
+    if (snapshot.get('device', {}).get('id') != device_id
+            or snapshot.get('configured_serial') != serial or health.get('serial') != serial):
+        raise RuntimeError('Device registry, player socket and requested serial disagree; no fault authorized')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial', required=True)
+    parser.add_argument('--device-id', default='living-room', help='Configured controller stream ID')
+    parser.add_argument('--player-state', type=Path, help='Host state directory if it differs from the standard instance path')
+    parser.add_argument('--player-service', help='Journal unit if it differs from the standard instance service')
     parser.add_argument('--interrupt-playback', action='store_true', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--timeout', type=int, default=900)
@@ -80,13 +110,17 @@ def main():
     args = parser.parse_args()
     if not 60 <= args.timeout <= 1800 or not 30 <= args.stable_seconds <= 300:
         parser.error('timeout must be 60–1800 seconds; stable-seconds must be 30–300')
+    try:
+        state, player_service = instance_paths(args.device_id, args.player_state, args.player_service)
+    except ValueError as exc:
+        parser.error(str(exc))
     out = args.output.resolve()
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
     player = Path.home() / 'dillflix-prime-player/.venv/bin/prime-player'
-    state = Path.home() / '.local/state/dillflix-prime-player'
     cli = [str(player), '--socket', str(state / 'player.sock')]
     started = datetime.now(timezone.utc).isoformat()
     verdict = {'passed': False, 'started_at': started, 'fault_injected': False,
+               'device_id': args.device_id, 'serial': args.serial, 'player_service': player_service,
                'scope': 'deployed supervisor and persisted adaptation; one Prime process loss, not a future runtime update'}
     journal = journal_output = None
 
@@ -94,13 +128,14 @@ def main():
         (out / name).write_text(json.dumps(value, indent=2), encoding='utf-8')
 
     def snapshot():
-        return json.loads(run(['docker', 'compose', 'exec', '-T', 'controller', 'python', '-c', SNAPSHOT]))
+        return json.loads(run(['docker', 'compose', 'exec', '-T', 'controller', 'python', '-c', SNAPSHOT, args.device_id]))
 
     try:
         baseline = snapshot()
         health = json.loads(run(cli + ['health']))
         save('baseline-controller.json', baseline)
         save('baseline-health.json', health)
+        require_target(baseline, health, args.device_id, args.serial)
         content_id = (baseline['device'].get('observed') or {}).get('content_id')
         if health.get('serial') != args.serial or not ready(health) or not verified(baseline, content_id, 0, health['session_id']):
             raise RuntimeError('Preflight failed: require ready network and fresh verified live playback on the requested device; no fault injected')
@@ -114,7 +149,7 @@ def main():
         journal_output = (out / 'player-journal.log').open('w', encoding='utf-8')
         journal = subprocess.Popen(
             ['sudo', '-n', 'timeout', str(args.timeout + 120), 'journalctl', '-u',
-             'dillflix-prime-player', '--since', started, '--no-pager', '-f', '-o', 'short-iso'],
+             player_service, '--since', started, '--no-pager', '-f', '-o', 'short-iso'],
             stdout=journal_output, stderr=subprocess.STDOUT,
         )
         fault_at = time.time()
@@ -132,6 +167,10 @@ def main():
                 current = snapshot()
                 save(f'{index:03d}-health.json', health)
                 save(f'{index:03d}-controller.json', current)
+                try:
+                    require_target(current, health, args.device_id, args.serial)
+                except RuntimeError as exc:
+                    raise InterruptedError('Device binding changed during acceptance') from exc
                 device = current['device']
                 if device.get('manual_control') or device.get('input_handoff') or device.get('automation') != 'active':
                     raise InterruptedError('Manual takeover or pause detected; acceptance invalidated')

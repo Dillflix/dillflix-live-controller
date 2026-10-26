@@ -174,6 +174,27 @@ async function quality(card: Locator, tier: string) {
   await card.locator("summary").click();
 }
 
+test("selecting another controller device preserves an active browser viewer", async ({ page }) => {
+  const data = await fixture(page);
+  await page.route("**/api/public/v1/overview*", route => {
+    const id = new URL(route.request().url()).searchParams.get("device_id") || "living-room";
+    return route.fulfill({ json: { ...overview, device: { id }, shared_plan: true, streams: [
+      { id: "living-room", name: "Living room", playback_state: "waiting", automation: "active" },
+      { id: "stream-2", name: "Stream 2", playback_state: "waiting", automation: "active" },
+    ] } });
+  });
+  await page.goto("/public/");
+  const card = page.getByTestId("stream-sports0");
+  await card.getByRole("button", { name: "Watch stream" }).click();
+  await expect.poll(() => card.locator("video").evaluate((video: HTMLVideoElement) => video.videoWidth)).toBe(160);
+  await card.locator("video").evaluate(video => { (window as any).originalViewer = video; });
+  await page.getByRole("button", { name: "Select Stream 2" }).click();
+  await expect(page.getByRole("button", { name: "Select Stream 2" })).toHaveAttribute("aria-pressed", "true");
+  expect(await card.locator("video").evaluate(video => video === (window as any).originalViewer)).toBe(true);
+  expect(data.created).toHaveLength(1);
+  expect(data.deleted).toHaveLength(0);
+});
+
 for (const width of [1280, 320]) {
   test(`stream catalog ${width}px shows configured feeds without autoplay or planner writes`, async ({
     page,

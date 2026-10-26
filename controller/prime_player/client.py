@@ -71,7 +71,7 @@ def correlated(function):
             if isinstance(row, str)
             else {"token": row["token"], "request_id": row["request_id"]}
         )
-        reset = rpc_context.set(correlation)
+        reset = rpc_context.set({"device_id": self.device_id, **correlation})
         try:
             return await function(self, row, *args, **kwargs)
         finally:
@@ -81,7 +81,9 @@ def correlated(function):
 
 
 class PrimePlayerClient:
-    def __init__(self, socket_path, *, transport=None):
+    def __init__(self, socket_path, *, transport=None, expected_serial=None, device_id=None):
+        self.expected_serial = expected_serial
+        self.device_id = device_id
         self.http = httpx.AsyncClient(
             base_url="http://prime-player",
             transport=transport or httpx.AsyncHTTPTransport(uds=str(socket_path), retries=0),
@@ -101,6 +103,7 @@ class PrimePlayerClient:
         started = time.monotonic()
         log = logging.getLogger("controller.prime_rpc")
         evidence = {
+            **({"device_id": self.device_id} if self.device_id else {}),
             **rpc_context.get(),
             "call_id": call_id,
             "request": request_body(method, params),
@@ -182,6 +185,9 @@ class PrimePlayerClient:
     async def control_health(self):
         """Read service identity even when playback/runtime health has failed."""
         value = await self.rpc("health", budget=5)
+        if self.expected_serial is not None and value.get("serial") != self.expected_serial:
+            raise ExecutorError("prime_device_mismatch", "Prime Player serial differs from the configured device",
+                                retryable=False)
         if not isinstance(value.get("session_id"), str) or not value["session_id"]:
             raise ExecutorError("prime_unavailable", "Prime Player service identity is unavailable")
         return value

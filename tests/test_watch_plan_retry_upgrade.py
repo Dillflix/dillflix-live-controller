@@ -14,7 +14,7 @@ def test_existing_fallback_is_cancelled_then_only_manual_event_is_retried(rig, m
         service.db.save_device(db, device)
     # Reproduce the already-deployed controller's fallback selection.
     with monkeypatch.context() as scoped:
-        scoped.setattr("controller.coordinator.choose", lambda *args: {
+        scoped.setattr("controller.fleet.choose", lambda *args: {
             "content_id": "demo:golf", "manual": False, "reason": "Old fallback", "rule_id": None
         })
         service.stage_playback()

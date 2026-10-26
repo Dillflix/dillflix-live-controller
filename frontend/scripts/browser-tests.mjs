@@ -103,6 +103,9 @@ try {
           LIVE_BROWSER_API_KEY: "",
           // Regression tests must never contact a developer's configured TV.
           SCREEN_ADB_SERIAL: "",
+          CONTROLLER_DEVICES_FILE: "",
+          CONTROLLER_DEVICES_JSON: "",
+          PLAYBACK_ADAPTER: "simulator",
         },
         stdio: ["ignore", "pipe", "pipe"],
       },

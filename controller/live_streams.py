@@ -3,7 +3,6 @@
 import asyncio
 import json
 import re
-from urllib.parse import urlsplit
 
 import anyio
 import httpx
@@ -11,10 +10,10 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .current_playback import current_playback
+from .live_stream_config import STREAM_ID
 
 PUBLIC_ROOT = "/api/public/v1/streams"
 UPSTREAM_ROOT = "/api/browser/v1"
-STREAM_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 SESSION_ID = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
 SEGMENT = re.compile(r"[A-Za-z0-9_-]{1,160}\.ts\Z")
 RANGE = re.compile(r"bytes=(?:[0-9]{1,12}-[0-9]{0,12}|-[0-9]{1,12})\Z")
@@ -23,14 +22,6 @@ MAX_JSON = 256 * 1024
 MAX_PLAYLIST = 64 * 1024
 MAX_SEGMENT = 32 * 1024 * 1024
 MAX_CONNECTIONS = 32
-
-
-def validate_device_map(value):
-    if (not isinstance(value, dict) or len(value) > 64
-            or any(not isinstance(key, str) or not STREAM_ID.fullmatch(key)
-                   or not isinstance(device, str) or not STREAM_ID.fullmatch(device)
-                   for key, device in value.items())):
-        raise ValueError("LIVE_BROWSER_DEVICE_MAP must map feed IDs to controller device IDs")
 
 
 def add_playing_titles(value, service):
@@ -54,23 +45,6 @@ def add_playing_titles(value, service):
                         by_device[device] = {"title": playing.event.title, "valid_until": playing.valid_until}
             stream["now_playing"] = by_device[device]
     return value
-
-
-def validate_configuration(url, key):
-    if not url and not key:
-        return
-    try:
-        parsed = urlsplit(url)
-        valid = (parsed.scheme in {"http", "https"} and parsed.hostname
-                 and not parsed.username and not parsed.password
-                 and parsed.path in {"", "/"} and not parsed.query and not parsed.fragment)
-        _ = parsed.port
-    except ValueError:
-        valid = False
-    if not valid:
-        raise ValueError("LIVE_BROWSER_API_URL must be an HTTP(S) origin without credentials or a path")
-    if not key or len(key) > 1024 or any(ord(c) < 33 or ord(c) > 126 for c in key):
-        raise ValueError("LIVE_BROWSER_API_KEY must be a nonempty printable ASCII service key")
 
 
 def failure(status=502):

@@ -56,6 +56,12 @@ def signature(device, item):
     ).hexdigest()
 
 
+def assignment_matches(device, content_id):
+    """A preflight belongs to the current fleet allocation, when one exists."""
+    assignment = device.get("stream_assignment")
+    return assignment is None or assignment.get("content_id") == content_id
+
+
 class CatalogueChecks:
     @staticmethod
     def require_catalogue_generation(health, results):
@@ -70,7 +76,7 @@ class CatalogueChecks:
         """Wake a blocked catalogue check without adopting or replaying playback."""
         adaptation = adaptation_status(health)
         with self.db.transaction() as db:
-            device = self.db.device(db)
+            device = self.db.device(db, self.device_id)
             network = health.get("network", {})
             if network.get("enabled"):
                 operation = network.get("operation") or {}
@@ -136,6 +142,7 @@ class CatalogueChecks:
 
     def prepare_selection(self, db, device, item):
         """Called under the staging transaction; never issues an RPC here."""
+        self.store.require_device(device["id"])
         rule = self.network_policy.rule(item["viewing_options"], item["snapshot"])
         if rule and device.get("prime_network_scope", {}).get("policy_revision") != self.network_policy.revision:
             device["prime_network_scope"] = {"context_id": None, "policy_revision": self.network_policy.revision}
@@ -188,7 +195,8 @@ class CatalogueChecks:
         return {"state": "pending"}
 
     async def observe_catalogue(self, probe):
-        correlation = rpc_context.set({"catalogue_probe_id": probe["id"], "content_id": probe["content_id"]})
+        correlation = rpc_context.set({"device_id": self.device_id,
+                                       "catalogue_probe_id": probe["id"], "content_id": probe["content_id"]})
         evidence = {**probe, "model_calls": []}
         try:
             async with asyncio.timeout(self.config.prime_search_timeout + self.config.model_timeout + 50):
@@ -262,6 +270,7 @@ class CatalogueChecks:
             await self.database_call(lambda: self.finish_catalogue(probe, evidence))
 
     def catalogue_current(self, probe):
+        self.store.require_device(probe["device_id"])
         with self.db.snapshot() as db:
             device = self.db.device(db, probe["device_id"])
             saved = self.db.meta(db, key(device["id"]), {})
@@ -269,12 +278,14 @@ class CatalogueChecks:
                 saved.get("id") == probe["id"]
                 and device["revision"] == probe["revision"]
                 and device["intent_version"] == probe["intent"]
+                and assignment_matches(device, probe["content_id"])
                 and device["automation"] == "active"
                 and not device.get("manual_control")
                 and not device.get("input_handoff")
             )
 
     def finish_catalogue(self, probe, evidence):
+        self.store.require_device(probe["device_id"])
         with self.db.transaction() as db:
             device = self.db.device(db, probe["device_id"])
             saved = self.db.meta(db, key(device["id"]), {})
@@ -283,6 +294,7 @@ class CatalogueChecks:
             valid = (
                 device["revision"] == probe["revision"]
                 and device["intent_version"] == probe["intent"]
+                and assignment_matches(device, probe["content_id"])
                 and device["automation"] == "active"
                 and not device.get("manual_control")
                 and not device.get("input_handoff")
@@ -388,7 +400,10 @@ class CatalogueChecks:
             )
 
     def prepared_catalogue(self, request, session, *, generation=None, network_context_id=None):
+        self.store.require_device(request["device_id"])
         with self.db.snapshot() as db:
+            if not assignment_matches(self.db.device(db, self.device_id), request["content_id"]):
+                return None
             probe = self.db.meta(db, key(request["device_id"]), {})
         if (
             probe.get("state") == "ready"

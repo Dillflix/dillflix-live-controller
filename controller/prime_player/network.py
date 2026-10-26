@@ -25,12 +25,12 @@ NETWORK_ERRORS = {
 class NetworkAcquisition:
     @property
     def network_policy(self):
-        # The executor currently serves living-room. Read without a nested write
+        # Read this executor's device without a nested write
         # transaction: catalogue callers may already hold BEGIN IMMEDIATE.
         db = sqlite3.connect(self.db.path)
         db.row_factory = sqlite3.Row
         try:
-            value = self.db.device(db)["preferences"].get("vpn_policy")
+            value = self.db.device(db, self.device_id)["preferences"].get("vpn_policy")
         finally:
             db.close()
         return NetworkPolicy(value if value is not None else self.config.prime_network_policy)

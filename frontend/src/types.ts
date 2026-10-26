@@ -151,12 +151,28 @@ export interface Device {
   next_candidate?: { content_id: string; reason: string } | null;
   preferences: Preferences;
 }
+export interface StreamSummary {
+  id: string;
+  name: string;
+  playback_state: string;
+  status?: "manual" | "paused" | "starting" | "playing" | "unavailable" | "unverified" | "waiting";
+  reason?: string;
+  desired?: string | null;
+  observed?: { content_id: string; verified?: boolean } | null;
+  automation?: "active" | "paused";
+  manual_control?: unknown;
+  verified?: boolean;
+  current_event?: { content_id: string; title: string } | null;
+  target_event?: { content_id: string; title: string } | null;
+}
 export interface Preview {
   revision?: number;
   entries?: Entry[];
   conflicts: string[][];
   unknown_timing: string[];
   segments: {
+    device_id?: string;
+    device_name?: string;
     start: string;
     end: string;
     content_id: string | null;
@@ -165,6 +181,8 @@ export interface Preview {
   note: string;
 }
 export interface Overview {
+  streams?: StreamSummary[];
+  shared_plan?: boolean;
   device: Device;
   status_health: {
     state: string;

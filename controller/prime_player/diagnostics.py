@@ -160,7 +160,9 @@ def collect(path, device_id="living-room"):
                 "entitlement_worker": {
                     r["key"]: json.loads(r["value"]) for r in db.execute(
                         "SELECT key,value FROM metadata WHERE key IN (?,?,?,?)",
-                        ("entitlement_worker", "entitlement_dispatch_after", "entitlement_service:" + device_id,
+                        ("entitlement_worker" + (":" + device_id if device_id != "living-room" else ""),
+                         "entitlement_dispatch_after" + (":" + device_id if device_id != "living-room" else ""),
+                         "entitlement_service:" + device_id,
                          "entitlement_last_retry:" + device_id),
                     )
                 },

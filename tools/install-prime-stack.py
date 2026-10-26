@@ -20,6 +20,12 @@ def update_env(text, values):
     return "\n".join(kept) + "\n"
 
 
+def require_legacy_deployment(text):
+    for match in re.finditer(r'^\s*(?:export\s+)?CONTROLLER_DEVICES_(?:FILE|JSON)\s*=\s*(.*)$', text, re.MULTILINE):
+        if match[1].strip().strip('\"\''):
+            raise ValueError('This deployment has a device registry; use tools/add-stream.py instead of reinstalling the primary player')
+
+
 def controller_unit(repo, docker):
     for value in (str(repo), docker):
         if any(c in value for c in '\n\r"\\%'):
@@ -61,6 +67,11 @@ def main():
     docker = shutil.which("docker")
     if not docker or not envfile.exists():
         parser.error("Docker Compose and an existing .env with TEAMARR_URL are required")
+    source_env = envfile.read_text()
+    try:
+        require_legacy_deployment(source_env)
+    except ValueError as exc:
+        parser.error(str(exc))
     account = pwd.getpwnam(args.user)
     spec = importlib.util.spec_from_file_location(
         "player_install", args.player_repo / "deploy/install-service.py"
@@ -68,7 +79,6 @@ def main():
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
     # Retain the existing Teamarr URL and all credentials; reject empty setup.
-    source_env = envfile.read_text()
     url = re.search(r"^TEAMARR_URL\s*=\s*(.+)$", source_env, re.MULTILINE)
     if not url or not url.group(1).strip().strip("\"'"):
         parser.error("Configure TEAMARR_URL in .env before installation")

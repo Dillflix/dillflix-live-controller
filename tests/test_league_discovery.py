@@ -7,7 +7,7 @@ import httpx
 import pytest
 from test_controller import overview
 
-from controller.config import Settings
+from controller.config import DeviceSettings, Settings
 from controller.fixtures import fixtures
 from controller.leagues import DEFAULT_LEAGUES, LEAGUE_NAMES
 from controller.models import Rule
@@ -212,7 +212,7 @@ async def test_inflight_old_selection_cannot_replace_catalog(tmp_path):
         await service.stop()
 
 
-def test_shared_feed_union_stays_device_scoped(rig):
+def test_retained_device_records_keep_catalogue_projection_scoped(rig):
     client, service, _ = rig
     with service.db.transaction() as db:
         other = copy.deepcopy(service.db.device(db))
@@ -223,7 +223,46 @@ def test_shared_feed_union_stays_device_scoped(rig):
     with service.db.transaction() as db:
         assert service.requested_leagues(db) == ["mlb", "nhl"]
     assert "demo:jays" not in {e["content_id"] for e in overview(client)["events"]}
-    assert "demo:jays" in {e["content_id"] for e in service.overview("bedroom")["events"]}
+    # Historical database records still contribute discovery/pins, but cannot
+    # instantiate a player or expose a workspace without a configured binding.
+    with service.db.snapshot() as db:
+        assert "demo:jays" in {e["content_id"] for e in service.items(db, "bedroom") if e["active"]}
+    with pytest.raises(KeyError):
+        service.overview("bedroom")
+    assert client.get("/api/v1/overview?device_id=bedroom").status_code == 404
+
+
+async def test_configured_streams_share_discovery_and_retain_local_playback_pins(tmp_path):
+    service = Controller(Settings(database=str(tmp_path / "shared-discovery.db"), devices=(
+        DeviceSettings("living-room", "Living room"), DeviceSettings("bedroom", "Bedroom"),
+    )))
+    try:
+        with service.db.transaction() as db:
+            device = service.db.device(db, "living-room")
+            device["plan"] = []
+            device["preferences"]["discovery_leagues"] = ["mlb"]
+            service.db.save_device(db, device)
+        for device_id in service.runtimes:
+            view = service.overview(device_id)
+            assert view["shared_plan"]
+            assert view["device"]["preferences"]["discovery_leagues"] == ["mlb"]
+            assert "demo:jays" in {event["content_id"] for event in view["events"]}
+        with service.db.transaction() as db:
+            device = service.db.device(db, "living-room")
+            device["preferences"]["discovery_leagues"] = []
+            service.db.save_device(db, device)
+            other = service.db.device(db, "bedroom")
+            other["observed"] = {"content_id": "demo:jays"}
+            service.db.save_device(db, other)
+        with service.db.snapshot() as db:
+            assert service.requested_leagues(db) == ["mlb"]
+            for device_id in service.runtimes:
+                assert service.db.device(db, device_id)["preferences"]["discovery_leagues"] == []
+            active = lambda key: {item["content_id"] for item in service.items(db, key) if item["active"]}
+            assert "demo:jays" not in active("living-room")
+            assert "demo:jays" in active("bedroom")
+    finally:
+        await service.stop()
 
 
 async def test_selection_survives_restart_and_legacy_settings_edits(rig):
