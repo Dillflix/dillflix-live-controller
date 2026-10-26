@@ -43,6 +43,7 @@ export function startLiveStream(
   streamId: string,
   tier: number,
   report: (state: StreamPlayerState, detail: string) => void,
+  autoplay = true,
 ) {
   let disposed = false;
   let session: string | undefined;
@@ -108,15 +109,10 @@ export function startLiveStream(
   };
   on("playing", () => {
     lastProgress = Date.now();
-    state("live", "Playing live coverage. Use the video controls for sound.");
+    state("live", "");
   });
   on("waiting", () => state("buffering", "Buffering live coverage…"));
-  on("pause", () =>
-    state(
-      "paused",
-      "Paused in this browser. Use the video controls to resume.",
-    ),
-  );
+  on("pause", () => state("paused", ""));
   on("timeupdate", () => {
     if (Math.abs(video.currentTime - lastTime) > 0.05) {
       lastProgress = Date.now();
@@ -136,6 +132,7 @@ export function startLiveStream(
   const watchdog = setInterval(() => {
     if (
       disposed ||
+      document.hidden ||
       (video.paused && video.readyState > 0) ||
       Date.now() - lastProgress < 25000
     )
@@ -148,7 +145,10 @@ export function startLiveStream(
   }, 1000);
 
   state("connecting", "Connecting to live coverage…");
-  video.muted = true;
+  const begin = () => {
+    if (autoplay) play();
+    else state("paused", "");
+  };
   void (async () => {
     try {
       requestTimeout = setTimeout(() => creation.abort(), 15000);
@@ -182,7 +182,7 @@ export function startLiveStream(
         );
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = playlist.href;
-        on("loadedmetadata", play);
+        on("loadedmetadata", begin);
         video.load();
       } else {
         const { default: Hls } = await import("hls.js");
@@ -218,7 +218,7 @@ export function startLiveStream(
           playlistLoadPolicy: loadPolicy,
           fragLoadPolicy: loadPolicy,
         });
-        hls.on(Hls.Events.MANIFEST_PARSED, play);
+        hls.on(Hls.Events.MANIFEST_PARSED, begin);
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (disposed) return;
           if (data.response?.code === 401 || data.response?.code === 403) {
@@ -250,6 +250,16 @@ export function startLiveStream(
   })();
   return {
     dispose,
+    isBehindLive: () => {
+      const edge =
+        hls?.liveSyncPosition ??
+        (video.seekable.length
+          ? video.seekable.end(video.seekable.length - 1) - 1
+          : null);
+      return (
+        edge !== null && Number.isFinite(edge) && edge - video.currentTime > 5
+      );
+    },
     goLive: () => {
       if (goLive()) play();
     },

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Locator } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 const media = JSON.parse(
@@ -67,6 +67,7 @@ async function fixture(page: Page, native = false) {
   let schedulerWrites = 0;
   let createStatus = 200;
   let mediaStatus = 200;
+  let playlist = media.playlist;
   let enabled = true;
   let hold: Promise<void> | undefined;
   let resume: (() => void) | undefined;
@@ -110,7 +111,7 @@ async function fixture(page: Page, native = false) {
         return route.fulfill({
           status: mediaStatus,
           contentType: "application/vnd.apple.mpegurl",
-          body: mediaStatus === 200 ? media.playlist : "Unavailable",
+          body: mediaStatus === 200 ? playlist : "Unavailable",
         });
       }
       if (media.segments[name]) {
@@ -138,6 +139,9 @@ async function fixture(page: Page, native = false) {
     set mediaStatus(value: number) {
       mediaStatus = value;
     },
+    set playlist(value: string) {
+      playlist = value;
+    },
     set enabled(value: boolean) {
       enabled = value;
     },
@@ -151,6 +155,21 @@ async function fixture(page: Page, native = false) {
       hold = undefined;
     },
   };
+}
+
+async function openSettings(card: Locator) {
+  const settings = card.locator("details.df-stream-settings");
+  if (!(await settings.evaluate((element: HTMLDetailsElement) => element.open)))
+    await settings.locator("summary").click();
+}
+async function closeStream(card: Locator) {
+  await openSettings(card);
+  await card.getByRole("button", { name: "Close stream" }).click();
+}
+async function quality(card: Locator, tier: string) {
+  await openSettings(card);
+  await card.getByRole("combobox").selectOption(tier);
+  await card.locator("summary").click();
 }
 
 for (const width of [1280, 320]) {
@@ -170,6 +189,18 @@ for (const width of [1280, 320]) {
         .getByTestId("stream-rink-cam")
         .getByRole("button", { name: "Watch stream" }),
     ).toBeDisabled();
+    await expect(
+      panel.getByRole("article", { name: "Feed 1", exact: true }),
+    ).toBeVisible();
+    await expect(
+      panel.getByRole("article", { name: "Feed 2", exact: true }),
+    ).toBeVisible();
+    await expect(panel).not.toContainText("Choose a feed to watch");
+    await expect(panel).not.toContainText("sound off initially");
+    const firstBox = await page.getByTestId("stream-sports0").boundingBox();
+    const secondBox = await page.getByTestId("stream-sports1").boundingBox();
+    expect(secondBox!.y).toBeGreaterThanOrEqual(firstBox!.y + firstBox!.height);
+    expect(secondBox!.x).toBe(firstBox!.x);
     await expect(panel.locator("video")).toHaveCount(0);
     expect(data.created).toHaveLength(0);
     expect(data.schedulerWrites).toBe(0);
@@ -185,7 +216,7 @@ for (const width of [1280, 320]) {
   });
 }
 
-test("real HLS decodes locally, independent viewers switch quality and release on stop/hidden", async ({
+test("real HLS decodes locally, independent viewers switch quality and release on close/page exit", async ({
   page,
 }) => {
   const data = await fixture(page);
@@ -210,8 +241,8 @@ test("real HLS decodes locally, independent viewers switch quality and release o
         ),
     )
     .toBeGreaterThan(0);
-  await expect(first.locator("video")).toHaveJSProperty("muted", true);
-  await expect(first.locator("video")).toHaveJSProperty("controls", true);
+  await expect(first.locator("video")).toHaveJSProperty("muted", false);
+  await expect(first.locator("video")).toHaveJSProperty("controls", false);
   await expect(first.locator("video")).toHaveJSProperty("playsInline", true);
   expect(data.manifests.length).toBeGreaterThan(0);
   expect(data.segments.length).toBeGreaterThan(0);
@@ -232,12 +263,13 @@ test("real HLS decodes locally, independent viewers switch quality and release o
   await page
     .getByRole("region", { name: "Watch streams" })
     .screenshot({ path: "test-results/live-streams-playing.png" });
-  await first.getByRole("combobox").selectOption("1");
+  await quality(first, "1");
   await expect.poll(() => data.created.length).toBe(3);
   await expect.poll(() => data.deleted).toContain(data.created[0].id);
   expect(data.created[2]).toMatchObject({ stream_id: "sports0", tier: 1 });
+  await expect(first.locator("video")).toHaveJSProperty("volume", 0.25);
   expect(data.deleted).not.toContain(data.created[1].id);
-  await first.getByRole("button", { name: "Stop watching" }).click();
+  await closeStream(first);
   await expect.poll(() => data.deleted).toContain(data.created[2].id);
   await expect(first.locator("video")).toHaveCount(0);
   await page.evaluate(() => {
@@ -247,8 +279,8 @@ test("real HLS decodes locally, independent viewers switch quality and release o
     });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  await expect.poll(() => data.deleted).toContain(data.created[1].id);
-  await expect(second.locator("video")).toHaveCount(0);
+  await expect(second.locator("video")).toHaveCount(1);
+  expect(data.deleted).not.toContain(data.created[1].id);
   await page.evaluate(() => {
     Object.defineProperty(document, "hidden", {
       configurable: true,
@@ -256,9 +288,11 @@ test("real HLS decodes locally, independent viewers switch quality and release o
     });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  await expect(
-    second.getByRole("button", { name: "Watch stream" }),
-  ).toBeVisible();
+  await expect(second.locator("video")).toHaveCount(1);
+  expect(data.deleted).not.toContain(data.created[1].id);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await expect.poll(() => data.deleted).toContain(data.created[1].id);
+  await expect(second.locator("video")).toHaveCount(0);
   expect(data.created).toHaveLength(3);
   expect(data.schedulerWrites).toBe(0);
 });
@@ -272,7 +306,7 @@ test("a stopped pending request releases its late session without attaching medi
   const card = page.getByTestId("stream-sports0");
   await card.getByRole("button", { name: "Watch stream" }).click();
   await expect.poll(() => data.created.length).toBe(1);
-  await card.getByRole("button", { name: "Stop watching" }).click();
+  await closeStream(card);
   data.resumeCreation();
   await expect.poll(() => data.deleted).toContain(data.created[0].id);
   await expect(card.locator("video")).toHaveCount(0);
@@ -300,7 +334,7 @@ test("authentication errors are actionable and Retry stream creates a fresh inde
         .evaluate((video: HTMLVideoElement) => video.videoWidth),
     )
     .toBe(160);
-  await card.getByRole("button", { name: "Stop watching" }).click();
+  await closeStream(card);
   await expect.poll(() => data.deleted).toContain(data.created[1].id);
   expect(data.schedulerWrites).toBe(0);
 });
@@ -314,7 +348,7 @@ test("a quality change fences late allocation results and releases only the olde
   const card = page.getByTestId("stream-sports0");
   await card.getByRole("button", { name: "Watch stream" }).click();
   await expect.poll(() => data.created.length).toBe(1);
-  await card.getByRole("combobox").selectOption("1");
+  await quality(card, "1");
   await expect.poll(() => data.created.length).toBe(2);
   data.resumeCreation();
   await expect.poll(() => data.deleted).toContain(data.created[0].id);
@@ -329,7 +363,7 @@ test("a quality change fences late allocation results and releases only the olde
     true,
   );
   expect(data.deleted).not.toContain(data.created[1].id);
-  await card.getByRole("button", { name: "Stop watching" }).click();
+  await closeStream(card);
   await expect.poll(() => data.deleted).toContain(data.created[1].id);
 });
 
@@ -374,7 +408,7 @@ test("transient media failures have bounded retries and release the failed sessi
         .evaluate((video: HTMLVideoElement) => video.videoWidth),
     )
     .toBe(160);
-  await card.getByRole("button", { name: "Stop watching" }).click();
+  await closeStream(card);
   await expect.poll(() => data.deleted).toContain(data.created[1].id);
 });
 
@@ -400,8 +434,8 @@ test("native HLS decodes when the browser supports it and releases on stop", asy
         .evaluate((video: HTMLVideoElement) => video.videoWidth),
     )
     .toBe(160);
-  await expect(card.locator("video")).toHaveJSProperty("muted", true);
-  await card.getByRole("button", { name: "Stop watching" }).click();
+  await expect(card.locator("video")).toHaveJSProperty("muted", false);
+  await closeStream(card);
   await expect.poll(() => data.deleted).toContain(data.created[0].id);
 });
 
@@ -416,4 +450,148 @@ test("disabled browser streams leave the existing public schedule unchanged", as
     0,
   );
   expect(data.created).toHaveLength(0);
+});
+
+test("player sound, pause, quality, collapse and fullscreen controls retain viewing intent", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  await page.goto("/public/");
+  const card = page.getByTestId("stream-sports0");
+  await card.getByRole("button", { name: "Watch stream" }).click();
+  const video = card.locator("video");
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.videoWidth))
+    .toBe(160);
+  await expect(video).toHaveJSProperty("muted", false);
+  await expect(video).toHaveJSProperty("paused", false);
+  await expect(card).not.toContainText("Playing live coverage");
+  await expect(card.getByRole("button", { name: "Stop watching" })).toHaveCount(
+    0,
+  );
+  await expect(
+    card.getByRole("button", { name: "Go live", exact: true }),
+  ).toHaveCount(0);
+  await card.getByRole("button", { name: "Mute", exact: true }).click();
+  await expect(video).toHaveJSProperty("muted", true);
+  await card.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(video).toHaveJSProperty("paused", true);
+  expect(data.deleted).toHaveLength(0);
+  await quality(card, "1");
+  await expect.poll(() => data.created.length).toBe(2);
+  await expect(
+    card.getByRole("button", { name: "Play", exact: true }),
+  ).toBeEnabled();
+  await expect(video).toHaveJSProperty("muted", true);
+  await expect(video).toHaveJSProperty("paused", true);
+  await card.getByRole("button", { name: "Play", exact: true }).click();
+  await expect(video).toHaveJSProperty("paused", false);
+  await card.getByRole("button", { name: "Collapse Feed 1" }).click();
+  await expect(video).toBeHidden();
+  await expect(
+    card.getByRole("button", { name: "Expand Feed 1" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  expect(data.deleted).not.toContain(data.created[1].id);
+  await expect(video).toHaveJSProperty("paused", false);
+  await card.getByRole("button", { name: "Unmute Feed 1" }).click();
+  await expect(video).toHaveJSProperty("muted", false);
+  await card.getByRole("button", { name: "Expand Feed 1" }).click();
+  await expect(video).toBeVisible();
+  expect(data.created).toHaveLength(2);
+  await page.setViewportSize({ width: 320, height: 900 });
+  await openSettings(card);
+  await card.screenshot({
+    path: "test-results/live-streams-mobile-settings.png",
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await card.locator("summary").press("Escape");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await card.getByRole("button", { name: "Fullscreen", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => document.fullscreenElement?.className))
+    .toContain("df-stream-surface");
+  await openSettings(card);
+  await expect(
+    card.getByRole("combobox", { name: "Feed 1 quality" }),
+  ).toBeVisible();
+  await card.locator("summary").press("Escape");
+  await closeStream(card);
+  await expect
+    .poll(() => page.evaluate(() => document.fullscreenElement))
+    .toBeNull();
+  await expect.poll(() => data.deleted).toContain(data.created[1].id);
+  expect(data.schedulerWrites).toBe(0);
+});
+
+test("blocked audible playback offers Play without muting or closing the session", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  await page.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    let blocked = false;
+    HTMLMediaElement.prototype.play = function () {
+      if (!blocked) {
+        blocked = true;
+        return Promise.reject(
+          new DOMException("User gesture required", "NotAllowedError"),
+        );
+      }
+      return play.call(this);
+    };
+  });
+  await page.goto("/public/");
+  const card = page.getByTestId("stream-sports0");
+  await card.getByRole("button", { name: "Watch stream" }).click();
+  await expect(
+    card.getByRole("button", { name: "Play", exact: true }),
+  ).toBeEnabled();
+  await expect(card.locator("video")).toHaveJSProperty("muted", false);
+  expect(data.deleted).toHaveLength(0);
+  await card.getByRole("button", { name: "Play", exact: true }).click();
+  await expect(card.locator("video")).toHaveJSProperty("paused", false);
+  await closeStream(card);
+  await expect.poll(() => data.deleted).toContain(data.created[0].id);
+});
+
+test("Jump to live skips ahead from paused native playback", async ({
+  page,
+}) => {
+  const data = await fixture(page, true);
+  // A bounded fixture provides a deterministic seekable range in native HLS.
+  data.playlist = media.playlist + "#EXT-X-ENDLIST\n";
+  await page.goto("/public/");
+  test.skip(
+    !(await page.evaluate(() =>
+      document
+        .createElement("video")
+        .canPlayType("application/vnd.apple.mpegurl"),
+    )),
+    "Native HLS unavailable",
+  );
+  const card = page.getByTestId("stream-sports0");
+  await card.getByRole("button", { name: "Watch stream" }).click();
+  const video = card.locator("video");
+  await expect
+    .poll(() =>
+      video.evaluate((v: HTMLVideoElement) =>
+        v.seekable.length ? v.seekable.end(v.seekable.length - 1) : 0,
+      ),
+    )
+    .toBeGreaterThan(6);
+  await card.getByRole("button", { name: "Pause", exact: true }).click();
+  await video.evaluate((v: HTMLVideoElement) => {
+    v.currentTime = 0;
+  });
+  await card.getByRole("button", { name: "Jump to live" }).click();
+  await expect(video).toHaveJSProperty("paused", false);
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeGreaterThan(5);
+  await closeStream(card);
+  await expect.poll(() => data.deleted).toContain(data.created[0].id);
 });

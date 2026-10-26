@@ -37,6 +37,22 @@ feed there makes it appear without rebuilding the controller. Offline feeds
 remain visible. Feed availability is transport information, not a claim that the
 capture has a valid picture or the expected event.
 
+## Player controls
+
+Feeds appear in a single column with collapsible tiles. `sports0` and `sports1`
+are displayed as **Feed 1** and **Feed 2**; other feeds use their catalog labels.
+Watching starts with sound on. If the browser blocks playback with sound, press
+Play; the controller does not silently mute the feed.
+
+Play/pause, sound, settings and fullscreen are grouped inside the player. Quality
+and **Close stream** are in Settings. Pause retains the viewing session; Close
+stream releases it. **Jump to live** appears when playback is behind and skips to
+the current broadcast. Collapsing a tile or switching tabs keeps the session
+running, with compact playback and mute controls on a collapsed tile. Leaving the
+page closes its sessions. Browser/OS background suspension can still interrupt
+media independently of the app. On iPhone, native fullscreen may expose only the
+system video controls; change quality before entering that fullscreen view.
+
 ## Access and transport
 
 The browser uses only same-origin `/api/public/v1/streams` endpoints. The
