@@ -105,6 +105,8 @@ function StreamCard({ stream }: { stream: Stream }) {
     setWatching(true);
   };
   const close = () => {
+    if (document.fullscreenElement === surface.current)
+      void document.exitFullscreen().catch(() => {});
     setWatching(false);
     setDetail("");
   };
