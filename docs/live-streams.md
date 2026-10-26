@@ -9,7 +9,8 @@ source, modify a watch plan, update Plex metadata or create a Plex playback sess
 The existing **Play now** and **Add to plan** actions still control the shared
 physical source. **Watch** selects what this browser receives. Stream IDs are not
 Teamarr event IDs. The controller's existing Now playing metadata describes its
-configured device; it does not claim that every capture carries that event.
+configured device. Feed tiles show its verified event title only when an explicit
+feed-to-device mapping identifies that capture.
 
 ## Configure
 
@@ -38,6 +39,24 @@ remain visible. Feed availability is transport information, not a claim that the
 capture has a valid picture or the expected event.
 
 ## Player controls
+
+To show current event titles, map each capture to its controller device in `.env`:
+
+```dotenv
+# Example: only if sports0 captures the living-room device.
+LIVE_BROWSER_DEVICE_MAP='{"sports0":"living-room"}'
+```
+
+Use `sports1` instead for Feed 2, or map both feeds to `living-room` if they mirror
+that device. Other independent devices require their own controller device IDs;
+never map an unrelated feed merely to give it a title. Blank disables titles.
+Recreate the controller after changing the mapping. No Live server change is needed.
+
+Titles come from accepted live playback, not the desired event or watch plan.
+Unmapped, offline, unknown, simulated, expired or unverified feeds show only the
+feed name. Titles refresh with the catalog and expire in the browser even if a
+later refresh fails. Collapsed tiles retain the title, and metadata updates do
+not restart viewing sessions.
 
 Feeds appear in a single column with collapsible tiles. `sports0` and `sports1`
 are displayed as **Feed 1** and **Feed 2**; other feeds use their catalog labels.
