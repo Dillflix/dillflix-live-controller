@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { disableBrowserStreams } from "./public-stream-fixture";
+test.beforeEach(async ({ page }) => disableBrowserStreams(page));
 
 const expandedLeagues = [
   ["EFL League One", "eng.3"],
