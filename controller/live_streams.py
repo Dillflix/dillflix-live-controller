@@ -310,6 +310,7 @@ def install_live_streams_api(app, gateway):
         await gateway.json_request("DELETE", f"/sessions/{session_id}")
         return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
-    @app.api_route(PUBLIC_ROOT + "/sessions/{session_id}/hls/{filename}", methods=["GET", "HEAD"])
+    @app.get(PUBLIC_ROOT + "/sessions/{session_id}/hls/{filename}")
+    @app.head(PUBLIC_ROOT + "/sessions/{session_id}/hls/{filename}", include_in_schema=False)
     async def media(request: Request, session_id: str, filename: str):
         return await gateway.media(request, session_id, filename)
