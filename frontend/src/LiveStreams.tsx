@@ -25,6 +25,7 @@ type Stream = {
   status: Availability;
   default_tier: number;
   tiers: { id: number; label: string; status: Availability }[];
+  now_playing?: { title: string; valid_until: string } | null;
 };
 type Catalog = { enabled: boolean; streams: Stream[] };
 const availability = {
@@ -48,12 +49,26 @@ function StreamCard({ stream }: { stream: Stream }) {
   const [volume, setVolume] = useState(1);
   const [behind, setBehind] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [now, setNow] = useState(Date.now);
   const video = useRef<HTMLVideoElement>(null);
   const surface = useRef<HTMLDivElement>(null);
   const paused = useRef(false);
   const player = useRef<ReturnType<typeof startLiveStream> | null>(null);
   const selected = stream.tiers.find((option) => option.id === tier);
   const bodyId = `stream-body-${stream.id}`;
+  const eventTitle =
+    stream.status === "live" &&
+    stream.now_playing &&
+    Date.parse(stream.now_playing.valid_until) > now
+      ? stream.now_playing.title
+      : null;
+
+  useEffect(() => {
+    if (!stream.now_playing) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [stream.now_playing]);
 
   useEffect(() => {
     if (!stream.tiers.some((option) => option.id === tier))
@@ -165,7 +180,12 @@ function StreamCard({ stream }: { stream: Stream }) {
             onClick={() => setCollapsed(!collapsed)}
           >
             {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-            {name}
+            <span className="df-stream-heading">
+              <span>{name}</span>
+              {eventTitle && (
+                <span className="df-stream-event-title">{eventTitle}</span>
+              )}
+            </span>
           </button>
         </h3>
         <div className="df-stream-head-actions">

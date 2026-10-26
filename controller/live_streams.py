@@ -10,6 +10,8 @@ import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from .current_playback import current_playback
+
 PUBLIC_ROOT = "/api/public/v1/streams"
 UPSTREAM_ROOT = "/api/browser/v1"
 STREAM_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
@@ -21,6 +23,37 @@ MAX_JSON = 256 * 1024
 MAX_PLAYLIST = 64 * 1024
 MAX_SEGMENT = 32 * 1024 * 1024
 MAX_CONNECTIONS = 32
+
+
+def validate_device_map(value):
+    if (not isinstance(value, dict) or len(value) > 64
+            or any(not isinstance(key, str) or not STREAM_ID.fullmatch(key)
+                   or not isinstance(device, str) or not STREAM_ID.fullmatch(device)
+                   for key, device in value.items())):
+        raise ValueError("LIVE_BROWSER_DEVICE_MAP must map feed IDs to controller device IDs")
+
+
+def add_playing_titles(value, service):
+    """Attach only verified titles for explicitly mapped captures; no device I/O."""
+    mapping = service.settings.live_browser_device_map
+    for stream in value["streams"]:
+        stream["now_playing"] = None
+    if not value["streams"] or not mapping:
+        return value
+    with service.db.snapshot() as db:
+        by_device = {}
+        for stream in value["streams"]:
+            device = mapping.get(stream["id"])
+            if stream["status"] != "live" or not device:
+                continue
+            if device not in by_device:
+                by_device[device] = None
+                if db.execute("SELECT 1 FROM devices WHERE id=?", (device,)).fetchone():
+                    playing = current_playback(service, db, device)
+                    if playing.state == "playing" and playing.event and playing.simulated is False:
+                        by_device[device] = {"title": playing.event.title, "valid_until": playing.valid_until}
+            stream["now_playing"] = by_device[device]
+    return value
 
 
 def validate_configuration(url, key):
@@ -300,10 +333,12 @@ class LiveStreams:
                 await self.release(response)
 
 
-def install_live_streams_api(app, gateway):
+def install_live_streams_api(app, gateway, service):
     @app.get(PUBLIC_ROOT)
     async def streams():
-        return JSONResponse(await gateway.streams(), headers={"Cache-Control": "no-store"})
+        value = await gateway.streams()
+        value = await asyncio.to_thread(add_playing_titles, value, service)
+        return JSONResponse(value, headers={"Cache-Control": "no-store"})
 
     @app.post(PUBLIC_ROOT + "/sessions")
     async def create_session(request: Request):

@@ -91,7 +91,7 @@ def create_app(settings=None, *, start_workers=True):
     app.state.screen = screen
     app.state.control = control
     app.state.live_streams = live_streams
-    install_live_streams_api(app, live_streams)
+    install_live_streams_api(app, live_streams, service)
     install_executor_api(app, service)
     install_plex_api(app, service)
 

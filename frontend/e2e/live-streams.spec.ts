@@ -38,6 +38,7 @@ async function fixture(page: Page, native = false) {
     {
       id: "sports0",
       label: "Sports 0",
+      now_playing: null as { title: string; valid_until: string } | null,
       status: "live",
       default_tier: 0,
       tiers: [
@@ -48,6 +49,7 @@ async function fixture(page: Page, native = false) {
     {
       id: "sports1",
       label: "Sports 1",
+      now_playing: null as { title: string; valid_until: string } | null,
       status: "unknown",
       default_tier: 0,
       tiers: [{ id: 0, label: "1080p", status: "unknown" }],
@@ -594,4 +596,105 @@ test("Jump to live skips ahead from paused native playback", async ({
     .toBeGreaterThan(5);
   await closeStream(card);
   await expect.poll(() => data.deleted).toContain(data.created[0].id);
+});
+
+for (const width of [1280, 320]) {
+  test(`feed titles stay distinct and visible when collapsed at ${width}px`, async ({
+    page,
+  }) => {
+    const data = await fixture(page);
+    const title =
+      "Vancouver Canucks at Tampa Bay Lightning - Live NHL coverage";
+    data.streams[0].now_playing = {
+      title,
+      valid_until: new Date(Date.now() + 60000).toISOString(),
+    };
+    data.streams[1].status = "live";
+    data.streams[1].now_playing = {
+      title: "Ningbo Open: Day 3",
+      valid_until: new Date(Date.now() + 60000).toISOString(),
+    };
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/public/");
+    const first = page.getByTestId("stream-sports0");
+    const second = page.getByTestId("stream-sports1");
+    await expect(first.locator(".df-stream-event-title")).toHaveText(title);
+    await expect(second.locator(".df-stream-event-title")).toHaveText(
+      "Ningbo Open: Day 3",
+    );
+    await expect(first).not.toContainText("Ningbo Open");
+    await first.getByRole("button", { name: "Collapse Feed 1" }).click();
+    await expect(first.locator(".df-stream-event-title")).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await first.screenshot({
+      path: `test-results/live-streams-title-${width}.png`,
+    });
+    expect(data.created).toHaveLength(0);
+  });
+}
+
+test("event title refresh does not replace an active viewing session", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  data.streams[0].now_playing = {
+    title: "First event",
+    valid_until: new Date(Date.now() + 60000).toISOString(),
+  };
+  await page.goto("/public/");
+  const card = page.getByTestId("stream-sports0");
+  await card.getByRole("button", { name: "Watch stream" }).click();
+  await expect
+    .poll(() =>
+      card.locator("video").evaluate((v: HTMLVideoElement) => v.videoWidth),
+    )
+    .toBe(160);
+  await card.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(card.locator(".df-stream-event-title")).toHaveText(
+    "First event",
+  );
+  data.streams[0].now_playing = {
+    title: "Next event",
+    valid_until: new Date(Date.now() + 60000).toISOString(),
+  };
+  await expect(card.locator(".df-stream-event-title")).toHaveText(
+    "Next event",
+    { timeout: 20000 },
+  );
+  await expect(card.locator("video")).toHaveJSProperty("paused", true);
+  expect(data.created).toHaveLength(1);
+  expect(data.deleted).toHaveLength(0);
+  await closeStream(card);
+});
+
+test("expired and unavailable feed titles are hidden without waiting for another catalog response", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  data.streams[0].now_playing = {
+    title: "Expiring event",
+    valid_until: new Date(Date.now() + 3000).toISOString(),
+  };
+  data.streams[1].now_playing = {
+    title: "Unverified feed title",
+    valid_until: new Date(Date.now() + 60000).toISOString(),
+  };
+  await page.goto("/public/");
+  const first = page.getByTestId("stream-sports0");
+  await expect(first.locator(".df-stream-event-title")).toHaveText(
+    "Expiring event",
+  );
+  await expect(
+    page.getByTestId("stream-sports1").locator(".df-stream-event-title"),
+  ).toHaveCount(0);
+  await expect(first.locator(".df-stream-event-title")).toHaveCount(0, {
+    timeout: 5000,
+  });
+  await expect(
+    first.getByRole("button", { name: "Collapse Feed 1" }),
+  ).toBeVisible();
 });

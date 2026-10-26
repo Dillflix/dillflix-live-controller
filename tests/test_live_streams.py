@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from contextlib import contextmanager
 
 import httpx
@@ -39,11 +40,12 @@ class TrackedStream(httpx.AsyncByteStream):
 @pytest.fixture
 def live_client(tmp_path, monkeypatch):
     @contextmanager
-    def build(handler, *, enabled=True, public_mode="guest"):
+    def build(handler, *, enabled=True, public_mode="guest", device_map=None):
         settings = Settings(
             database=str(tmp_path / "live.sqlite"), public_auth_mode=public_mode,
             proxy_secret="proxy-key", live_browser_api_url="http://live-lb:8000" if enabled else "",
             live_browser_api_key=KEY if enabled else "",
+            live_browser_device_map=device_map or {}, simulation_delay=0,
         )
         gateway = LiveStreams(settings, transport=httpx.MockTransport(handler))
         monkeypatch.setattr(api_module, "LiveStreams", lambda _: gateway)
@@ -78,6 +80,79 @@ def test_catalog_projects_all_feeds_without_private_fields(live_client):
         assert [s["id"] for s in response.json()["streams"]] == ["sports0", "sports1", "sports_future"]
         assert "secret" not in response.text and "http://" not in response.text
         assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("mapped_feed", ["sports0", "sports1"])
+def test_catalog_title_is_verified_device_scoped_and_read_only(live_client, mapped_feed, monkeypatch):
+    feeds = [feed(), feed("sports1"), feed("mirror"), feed("missing")]
+    mapping = {mapped_feed: "living-room", "mirror": "living-room", "missing": "absent-device"}
+    with live_client(lambda _: httpx.Response(200, json={"streams": feeds}), device_map=mapping) as (client, _, service):
+        assert all(item["now_playing"] is None for item in client.get(ROOT).json()["streams"])
+        service.tick()
+        with service.db.transaction() as db:
+            device = service.db.device(db)
+            device["observed"]["simulated"] = False
+            service.db.save_device(db, device)
+            before = list(db.iterdump())
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("Feed titles must not issue playback commands or poll the device")
+
+        monkeypatch.setattr(service, "tick", forbidden)
+        monkeypatch.setattr(service.playback, "observe", forbidden)
+        response = client.get(ROOT)
+        assert response.status_code == 200
+        streams = {item["id"]: item for item in response.json()["streams"]}
+        title = streams[mapped_feed]["now_playing"]
+        assert title["title"] == "NFL RedZone"
+        assert set(title) == {"title", "valid_until"}
+        assert datetime.fromisoformat(title["valid_until"]) > datetime.now(UTC)
+        assert streams["mirror"]["now_playing"] == title
+        assert streams["sports1" if mapped_feed == "sports0" else "sports0"]["now_playing"] is None
+        assert streams["missing"]["now_playing"] is None
+        assert "living-room" not in response.text
+        with service.db.snapshot() as db:
+            assert list(db.iterdump()) == before
+
+
+@pytest.mark.parametrize("condition", ["expired", "unverified", "manual", "completed", "simulated", "offline", "unknown"])
+def test_catalog_does_not_label_a_feed_without_verified_live_playback(live_client, condition):
+    item = feed(status=condition if condition in {"offline", "unknown"} else "live")
+    # An upstream title must not bypass the controller's verified projection.
+    item["now_playing"] = {"title": "Untrusted upstream title"}
+    with live_client(lambda _: httpx.Response(200, json={"streams": [item]}),
+                     device_map={"sports0": "living-room"}) as (client, _, service):
+        service.tick()
+        with service.db.transaction() as db:
+            device = service.db.device(db)
+            observed = device["observed"]
+            observed["simulated"] = condition == "simulated"
+            if condition == "expired":
+                observed["valid_until"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+            elif condition == "unverified":
+                observed["verified"] = False
+            elif condition == "manual":
+                device["manual_control"] = {"id": "owner"}
+            elif condition == "completed":
+                device["manual_completions"][observed["content_id"]] = datetime.now(UTC).isoformat()
+            service.db.save_device(db, device)
+        response = client.get(ROOT)
+        assert response.status_code == 200
+        assert response.json()["streams"][0]["now_playing"] is None
+
+
+@pytest.mark.parametrize("mapping", [None, [], "sports0", {"../feed": "living-room"},
+                                      {"sports0": ""}, {"sports0": ["living-room"]}])
+def test_invalid_feed_device_mapping_is_rejected(mapping):
+    with pytest.raises(ValueError, match="LIVE_BROWSER_DEVICE_MAP"):
+        Settings(live_browser_device_map=mapping)
+
+
+def test_feed_device_mapping_is_loaded_from_environment(monkeypatch):
+    monkeypatch.setenv("LIVE_BROWSER_DEVICE_MAP", '{"sports1":"living-room"}')
+    assert Settings.from_env().live_browser_device_map == {"sports1": "living-room"}
+    monkeypatch.setenv("LIVE_BROWSER_DEVICE_MAP", "")
+    assert Settings.from_env().live_browser_device_map == {}
 
 
 @pytest.mark.parametrize("bad", [
