@@ -26,6 +26,9 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
   `CONTROLLER_ADMIN_AUTH_MODE=trusted-lan`; both apps then work without login.
   See [test launch and rollback](docs/public-lan-test.md).
 
+- Optional [browser HLS viewing](docs/live-streams.md) in the public app, with a
+  dynamic feed catalog, quality selection and audio. Watching a feed does not
+  change the shared device or its watch plan.
 - Optional [Plex title and artwork updates](docs/plex-artwork.md), configured in Settings,
   driven by accepted playback with durable five-minute fallback and narrow, verified API writes.
 - A read-only [now-playing diagnostic endpoint](docs/now-playing.md), including
@@ -270,7 +273,9 @@ python -m uvicorn controller.api:create_app --factory --host 0.0.0.0 --port 8790
 
 For hot reload, run the API with `--reload`, and run `npm run dev` from `frontend` in a second terminal. Vite proxies API calls to port 8790. The Python server does not automatically load `.env`; export variables in your shell when running outside Compose.
 
-Use **one API worker**. The current release has one logical device, `living-room`. The endpoints and records are device-scoped, but device creation, multiple playback workers, and multi-device coordination are future work.
+Use **one API worker**. It coordinates the shared watch plan and runs an independent
+playback worker for each configured device. Existing installations keep
+`living-room`; use the [add-stream helper](docs/multiple-streams.md) to add devices.
 
 ## API
 

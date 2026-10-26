@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { disableBrowserStreams } from "./public-stream-fixture";
+test.beforeEach(async ({ page }) => disableBrowserStreams(page));
 
 for (const publicView of [false, true]) {
   test(`${publicView ? "public" : "admin"} Events defaults to entitled and filters unresolved results`, async ({ page }) => {

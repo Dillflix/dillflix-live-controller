@@ -9,6 +9,7 @@
     "test:browser": "node scripts/browser-tests.mjs"
   },
   "dependencies": {
+    "hls.js": "1.7.3",
     "jmuxer": "2.1.4",
     "lucide-react": "1.40.0",
     "react": "19.3.0",

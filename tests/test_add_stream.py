@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -13,6 +14,14 @@ spec.loader.exec_module(helper)
 
 ENV = ('# deployment\nTEAMARR_TOKEN="retain-secret"\nSCREEN_ADB_SERIAL=first:5555\n'
        'COMPOSE_FILE=compose.yaml:compose.prime-player.yaml\n')
+
+
+def test_host_installer_works_without_controller_web_dependencies():
+    result = subprocess.run([sys.executable, "-S", "-c",
+                             "import runpy, sys; runpy.run_path(sys.argv[1])",
+                             str(helper.REPO / "tools/add-stream.py")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 def prepare(tmp_path, env=ENV, **kwargs):

@@ -97,8 +97,15 @@ try {
           ...process.env,
           CONTROLLER_MODE: "demo",
           CONTROLLER_DATABASE: join(scratch, "controller.sqlite3"),
+          // Player tests supply their own catalog/media fixtures; never contact
+          // a developer's live load balancer or inherit its API credential.
+          LIVE_BROWSER_API_URL: "",
+          LIVE_BROWSER_API_KEY: "",
           // Regression tests must never contact a developer's configured TV.
           SCREEN_ADB_SERIAL: "",
+          CONTROLLER_DEVICES_FILE: "",
+          CONTROLLER_DEVICES_JSON: "",
+          PLAYBACK_ADAPTER: "simulator",
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -137,16 +144,25 @@ try {
   process.exitCode = 1;
 } finally {
   if (server && server.exitCode === null) {
-    // A Windows venv launcher owns a Python child. Killing only the launcher
-    // leaves the API running and its SQLite file locked after the tests finish.
+    // The Windows venv launcher can own a second Python process. Terminate
+    // only this test server's process tree so its temporary SQLite file closes.
     if (process.platform === "win32") {
-      spawnSync("taskkill", ["/PID", String(server.pid), "/T", "/F"], { stdio: "ignore" });
+      spawnSync("taskkill", ["/pid", String(server.pid), "/t", "/f"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
     } else server.kill("SIGTERM");
     await Promise.race([
       new Promise((done) => server.once("exit", done)),
       new Promise((done) => setTimeout(done, 4000)),
     ]);
-    if (server.exitCode === null) server.kill("SIGKILL");
+    if (server.exitCode === null) {
+      server.kill("SIGKILL");
+      await Promise.race([
+        new Promise((done) => server.once("exit", done)),
+        new Promise((done) => setTimeout(done, 1000)),
+      ]);
+    }
   }
-  rmSync(scratch, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+  rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

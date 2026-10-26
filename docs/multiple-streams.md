@@ -13,7 +13,7 @@ explicit migration first; startup never chooses an arbitrary plan to overwrite
 the others. The same check protects an existing shared plan from stale saved
 device projections.
 
-## Hardware qualification comes first
+## Current device support
 
 Prime Player currently requires available device root, its supported ARM32 native
 runtime and matching Frida 17.2.17. ADB connectivity and an ARM32 ABI alone do not
@@ -21,15 +21,36 @@ establish player compatibility. The service installer does not root a stick.
 
 The second stick identified during this work is `192.168.0.164:5555`, model
 `AFTSS` / device `sheldon`, Android 9, build `PS7717.5741N`, incremental
-`0036408028548`; its observed ADB identity is unprivileged `uid=2000(shell)`.
-It is **not yet qualified for activation**. The root tools bundled for the
-existing `karat` device must not be run on it. Device-specific root research,
-runtime validation and simultaneous account playback acceptance remain separate
-from the controller configuration migration.
+`0036408028548`. Root, production runtime adaptation and direct live playback
+have now succeeded on that stick. Its own Toronto/Montreal profiles and pairing
+are saved, and VPN Bridge 8 is installed. Updating that bridge does not require
+repeating pairing, profile import or app routing.
+
+Controller deployment can proceed with this setup. Regional VPN playback and
+simultaneous playback on the shared Prime account remain unverified on the
+physical devices; those observations are deferred until eligible events are
+available. The player only offers network targets with the required evidence.
+Do not represent deferred checks as completed. The `karat` root tools must not
+be run on `sheldon`; its model-specific root setup is separate and must be
+available after a device reboot.
 
 ## Prepare the additional stream
 
-Update both controller and player checkouts to the reviewed multi-device versions.
+Update the controller to the reviewed multi-device version. Use a separate player
+checkout and virtual environment for the second stick so changes to the primary
+service's editable installation cannot affect its running process. For example,
+after fetching the reviewed player revision into the existing repository:
+
+```bash
+git -C "$HOME/dillflix-prime-player" worktree add --detach \
+  "$HOME/dillflix-prime-player-stream-2" REVIEWED_PLAYER_COMMIT
+python3 -m venv "$HOME/dillflix-prime-player-stream-2/.venv"
+"$HOME/dillflix-prime-player-stream-2/.venv/bin/python" -m pip install \
+  -e "$HOME/dillflix-prime-player-stream-2[device]"
+```
+
+The commit must include the multi-instance installer and Sheldon support. This
+does not switch the primary checkout or restart its service.
 Keep the existing deployment account, approved ADB identity, state directory,
 Compose project and named database volume. The existing `.env` must name its
 literal `PRIME_PLAYER_STATE_DIR`, `SCREEN_ADB_SERIAL`, and include
@@ -41,7 +62,7 @@ not publish configuration or install, enable or start another player:
 ```bash
 cd /appdata/dillflix-live-controller
 sudo python3 tools/add-stream.py \
-  --player-repo "$HOME/dillflix-prime-player" \
+  --player-repo "$HOME/dillflix-prime-player-stream-2" \
   --id stream-2 --name 'Stream 2' \
   --serial 192.168.0.164:5555
 ```
@@ -52,14 +73,22 @@ its `/run/prime-player/player.sock` endpoint. New streams use stable IDs and
 `/run/prime-player/instances/ID/player.sock`. Duplicate IDs, serials, sockets,
 existing service names and more than eight streams are rejected.
 
-## Activate only after device qualification
+## Add the second player and activate the controller
 
-Once root, runtime and playback compatibility have been confirmed for the second
-stick, rerun the preparation command with `--activate`. Include
-`--adb-key "$HOME/.android/adbkey"` to explicitly reuse the approved identity.
-When using managed VPN, also provide `--network-config /absolute/path/second-network.json`
-with that device's separately paired token. Do not reuse the first stick's VPN
-pairing token.
+Root, runtime and direct playback have been confirmed for this second stick.
+Use its existing network configuration and the approved host ADB identity:
+
+```bash
+cd /appdata/dillflix-live-controller
+sudo python3 tools/add-stream.py \
+  --player-repo "$HOME/dillflix-prime-player-stream-2" \
+  --id stream-2 --name 'Stream 2' --serial 192.168.0.164:5555 \
+  --network-config "$HOME/.config/dillflix-prime-player/devices/stream-2/network.json" \
+  --adb-key "$HOME/.android/adbkey" --activate
+```
+
+Use the [online database backup](operations.md#back-up-a-running-installation) before upgrading the
+controller. The configuration backups below do not replace a database backup.
 
 Activation backs up `.env` and any existing registry beside the originals with
 a `before-add-stream-TIMESTAMP` suffix. Backups are owner-readable only. It
@@ -97,13 +126,14 @@ connection is not evidence of ready Prime playback. Inspect current health
 using the instance's socket after following the reported stages:
 
 ```bash
-"$HOME/dillflix-prime-player/.venv/bin/prime-player" \
+"$HOME/dillflix-prime-player-stream-2/.venv/bin/prime-player" \
   --socket "$HOME/.local/state/dillflix-prime-player/instances/stream-2/player.sock" \
   health
 ```
 
 If `PRIME_PLAYER_STATE_DIR` is customized, use that directory in the health
-command. Verify two different eligible live events, fresh native playback
+command. If no eligible events are live, waiting is expected and does not require
+repeating setup. When events are available, observe two different eligible live events, fresh native playback
 evidence on both, independent manual takeover and independent network recovery.
 Restarting the second player must leave the first stick playing. The services
 share the host ADB server, so do not kill that server to restart one stream.

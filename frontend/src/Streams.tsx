@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Tv } from "lucide-react";
 import type { StreamSummary } from "./types";
 
-// Each workspace owns its drafts, remote credentials and asynchronous reads.
-// Changing this key unmounts the previous workspace and closes its sockets.
+// The admin workspace uses this ID as a key to clear remote credentials and drafts.
+// Public viewing keeps browser players mounted and fences device requests itself.
 export function useStreamSelection() {
   const [selected, setSelected] = useState<string | null>(() =>
     new URLSearchParams(window.location.search).get("device"),
@@ -56,7 +56,7 @@ export function Streams({ streams, selected, select, events, publicView = false 
           <span className="df-stream-name"><Tv size={16} />{stream.name}<span className="df-stream-status">{state}</span></span>
           <strong>{event?.title || "Waiting for live sports"}</strong>
           <span className="df-stream-action">{stream.id === selected
-            ? publicView ? "Selected stream" : "Viewing controls" : publicView ? "View stream" : "View controls"}</span>
+            ? publicView ? "Selected stream" : "Viewing controls" : publicView ? "View details" : "View controls"}</span>
         </button>;
       })}
     </div>

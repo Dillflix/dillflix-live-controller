@@ -8,6 +8,7 @@ import { commandId } from "./api";
 import { Streams, streamAssignment, useStreamSelection } from "./Streams";
 import type { StreamSummary } from "./types";
 import { EntitlementStatus, entitlementConfirmed, type Entitlement } from "./EntitlementStatus";
+import { LiveStreams } from "./LiveStreams";
 import "./styles.css";
 
 interface PublicEvent {
@@ -114,7 +115,7 @@ async function publicApi<T>(path: string, body?: unknown): Promise<T> {
 
 function PublicApp() {
   const [deviceId, selectDevice] = useStreamSelection();
-  return <PublicWorkspace key={deviceId || "default"} deviceId={deviceId} selectDevice={selectDevice} />;
+  return <PublicWorkspace deviceId={deviceId} selectDevice={selectDevice} />;
 }
 
 function PublicWorkspace({ deviceId, selectDevice }: {
@@ -134,25 +135,37 @@ function PublicWorkspace({ deviceId, selectDevice }: {
   const loading = useRef(0);
   const mounted = useRef(true);
   const submitting = useRef(false);
+  // Device controls change, but independent browser viewing sessions stay mounted.
+  const selection = useRef({ deviceId, generation: 0 });
+  if (selection.current.deviceId !== deviceId) {
+    selection.current = { deviceId, generation: selection.current.generation + 1 };
+  }
+  const generation = selection.current.generation;
   const deviceQuery = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
   const load = useCallback(async () => {
-    if (!mounted.current) return;
+    if (!mounted.current || generation !== selection.current.generation) return;
     const serial = ++loading.current;
     try {
       const next = await publicApi<PublicOverview>("/overview" + deviceQuery);
-      if (mounted.current && serial === loading.current) {
+      if (mounted.current && generation === selection.current.generation && serial === loading.current) {
         setData(next);
         setConnected(true);
       }
     } catch (e) {
-      if (mounted.current && serial === loading.current) {
+      if (mounted.current && generation === selection.current.generation && serial === loading.current) {
         setConnected(false);
         setError((e as Error).message);
       }
     }
-  }, [deviceQuery]);
+  }, [deviceQuery, generation]);
   useEffect(() => {
     mounted.current = true;
+    submitting.current = false;
+    setBusy(false);
+    setConnected(false);
+    setError("");
+    setNotice("");
+    setDetailsId(null);
     void load();
     const timer = setInterval(() => void load(), 5000);
     return () => {
@@ -162,7 +175,9 @@ function PublicWorkspace({ deviceId, selectDevice }: {
     };
   }, [load]);
   const request = async (event: PublicEvent, action: "add" | "play_now") => {
-    if (!data || submitting.current) return;
+    if (!data || !connected || submitting.current ||
+        (deviceId && (data.device?.id || data.device_id) !== deviceId)) return;
+    const current = () => mounted.current && generation === selection.current.generation;
     submitting.current = true;
     setBusy(true);
     setError("");
@@ -174,19 +189,23 @@ function PublicWorkspace({ deviceId, selectDevice }: {
         action,
         content_id: event.content_id,
       });
-      if (!mounted.current) return;
+      if (!current()) return;
       setNotice(
         action === "add"
           ? `${event.title} added to the shared watch plan.`
           : `Play request saved for ${event.title}. Admin selections take priority.`,
       );
     } catch (e) {
-      if (!mounted.current) return;
+      if (!current()) return;
       setError((e as Error).message);
     } finally {
-      await load();
-      setBusy(false);
-      submitting.current = false;
+      if (current()) {
+        await load();
+        if (current()) {
+          setBusy(false);
+          submitting.current = false;
+        }
+      }
     }
   };
   if (!data)
@@ -227,7 +246,8 @@ function PublicWorkspace({ deviceId, selectDevice }: {
   const selected = data.device?.id || data.device_id || deviceId || streams[0]?.id || "";
   const selectedName = data.device?.name || streams.find((stream) => stream.id === selected)?.name;
   const details = data.events.find((event) => event.content_id === detailsId);
-  const disabled = busy || !connected;
+  const changingDevice = !!deviceId && selected !== deviceId;
+  const disabled = busy || !connected || changingDevice;
   const card = (e: PublicEvent) => {
     const current =
       now.verified && now.event?.content_id === e.content_id;
@@ -354,6 +374,7 @@ function PublicWorkspace({ deviceId, selectDevice }: {
       </header>
       <main className="df-public-main">
         <Streams streams={streams} selected={selected} select={selectDevice} events={data.events} publicView />
+        {changingDevice && <p role="status">Loading {streams.find(stream => stream.id === deviceId)?.name || "stream"}…</p>}
         <section className="df-playing" aria-label="Now playing">
           <div className="df-playing-copy">
             <div className="df-playing-top">
@@ -381,6 +402,7 @@ function PublicWorkspace({ deviceId, selectDevice }: {
             </p>
           </div>
         </section>
+        <LiveStreams />
         <div className="df-title-row">
           <div>
             <div className="df-eyebrow">Watch together</div>
@@ -389,7 +411,7 @@ function PublicWorkspace({ deviceId, selectDevice }: {
           </div>
           <ScheduleViewToggle value={scheduleView} onChange={setScheduleView} />
         </div>
-        {!connected && (
+        {!connected && !changingDevice && (
           <div className="df-warning" role="status">
             Connection interrupted. Showing the last received schedule; actions
             are unavailable until reconnected.

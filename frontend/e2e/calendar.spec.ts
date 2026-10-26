@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
+import { disableBrowserStreams } from "./public-stream-fixture";
 import { calendarDate, calendarDayOffset } from "../src/ScheduleCalendar";
+test.beforeEach(async ({ page }) => disableBrowserStreams(page));
 
 test("calendar days follow the display timezone across midnight and DST", () => {
   expect(calendarDate("2025-03-09T07:30:00Z", "America/Vancouver")).toBe(
