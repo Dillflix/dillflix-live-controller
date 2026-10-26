@@ -20,6 +20,9 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
   `CONTROLLER_ADMIN_AUTH_MODE=trusted-lan`; both apps then work without login.
   See [test launch and rollback](docs/public-lan-test.md).
 
+- Optional [browser HLS viewing](docs/live-streams.md) in the public app, with a
+  dynamic feed catalog, quality selection and audio. Watching a feed does not
+  change the shared device or its watch plan.
 - Optional [Plex title and artwork updates](docs/plex-artwork.md), configured in Settings,
   driven by accepted playback with durable five-minute fallback and narrow, verified API writes.
 - A read-only [now-playing diagnostic endpoint](docs/now-playing.md), including

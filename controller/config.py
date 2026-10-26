@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .executor.config import ExecutorConfig
+from .live_streams import validate_configuration
 
 
 @dataclass(frozen=True)
@@ -10,6 +11,8 @@ class Settings:
     proxy_secret: str = ""
     public_auth_mode: str = "proxy"
     admin_auth_mode: str = "proxy"
+    live_browser_api_url: str = ""
+    live_browser_api_key: str = field(default="", repr=False)
     database: str = "data/controller.sqlite3"
     mode: str = "demo"
     teamarr_url: str = ""
@@ -40,6 +43,7 @@ class Settings:
     frontend: Path = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
     def __post_init__(self):
+        validate_configuration(self.live_browser_api_url, self.live_browser_api_key)
         if self.public_auth_mode not in {"proxy", "guest"}:
             raise ValueError("CONTROLLER_PUBLIC_AUTH_MODE must be proxy or guest")
         if self.admin_auth_mode not in {"proxy", "trusted-lan"}:
@@ -68,6 +72,8 @@ class Settings:
             proxy_secret=os.getenv("CONTROLLER_PROXY_SECRET", ""),
             public_auth_mode=os.getenv("CONTROLLER_PUBLIC_AUTH_MODE", "proxy"),
             admin_auth_mode=os.getenv("CONTROLLER_ADMIN_AUTH_MODE", "proxy"),
+            live_browser_api_url=os.getenv("LIVE_BROWSER_API_URL", "").strip().rstrip("/"),
+            live_browser_api_key=os.getenv("LIVE_BROWSER_API_KEY", ""),
             prime_player_socket=os.getenv("PRIME_PLAYER_SOCKET", ""),
             database=os.getenv("CONTROLLER_DATABASE", "data/controller.sqlite3"),
             mode=mode,

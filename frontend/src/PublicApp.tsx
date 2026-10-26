@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
 import { commandId } from "./api";
 import { EntitlementStatus, entitlementConfirmed, type Entitlement } from "./EntitlementStatus";
+import { LiveStreams } from "./LiveStreams";
 import "./styles.css";
 
 interface PublicEvent {
@@ -355,6 +356,7 @@ function PublicApp() {
             </p>
           </div>
         </section>
+        <LiveStreams />
         <div className="df-title-row">
           <div>
             <div className="df-eyebrow">Watch together</div>

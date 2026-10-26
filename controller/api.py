@@ -18,6 +18,7 @@ from .device_input import DeviceInput, same_origin
 from .diagnostic_log import LogHandler, Recorder, read_logs
 from .display import DisplayView, display_view
 from .executor.api import install_executor_api
+from .live_streams import LiveStreams, install_live_streams_api
 from .loop_watchdog import LoopWatchdog
 from .models import (
     AutomationUpdate,
@@ -44,6 +45,7 @@ def create_app(settings=None, *, start_workers=True):
     service = Controller(settings)
     screen = ScreenStream(settings)
     control = DeviceInput(service)
+    live_streams = LiveStreams(settings)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -71,6 +73,7 @@ def create_app(settings=None, *, start_workers=True):
                 await screen.stop()
                 await service.stop()
             finally:
+                await live_streams.close()
                 logger.removeHandler(handler)
                 server_logger.removeHandler(handler)
                 logger.setLevel(previous_level)
@@ -87,6 +90,8 @@ def create_app(settings=None, *, start_workers=True):
     app.state.controller = service
     app.state.screen = screen
     app.state.control = control
+    app.state.live_streams = live_streams
+    install_live_streams_api(app, live_streams)
     install_executor_api(app, service)
     install_plex_api(app, service)
 

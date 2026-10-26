@@ -25,6 +25,20 @@ html {
 #df-app .df-public-footer {
   margin-top: 28px;
 }
+#df-app .df-streams { margin: 28px 0 36px; }
+#df-app .df-streams-intro { margin-bottom: 16px; }
+#df-app .df-stream-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+#df-app .df-stream-card { min-width: 0; border: 1px solid var(--df-line); border-radius: 14px; overflow: hidden; background: var(--df-surface); }
+#df-app .df-stream-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 16px; }
+#df-app .df-stream-head h3 { overflow-wrap: anywhere; }
+#df-app .df-stream-video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+#df-app .df-stream-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; padding: 16px; }
+#df-app .df-stream-quality { display: grid; gap: 4px; min-width: 0; max-width: 100%; flex: 1 1 150px; font-size: .85rem; }
+#df-app .df-stream-quality select { width: 100%; min-width: 0; color: inherit; border: 1px solid var(--df-line); border-radius: 8px; background: var(--df-panel); padding: 9px; }
+#df-app .df-stream-detail { padding: 0 16px 16px; font-size: .85rem; color: var(--df-muted); overflow-wrap: anywhere; }
+#df-app .df-stream-error { color: var(--df-accent); }
+#df-app .df-streams-warning { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+@media (max-width: 700px) { #df-app .df-stream-grid { grid-template-columns: minmax(0, 1fr); } }
 #df-app dialog.df-public-details {
   margin: auto;
   width: calc(100% - 32px);
