@@ -30,7 +30,8 @@ def reconcile(service, db, device_id, *, now=None):
             state.update(desired=None, generation=state["generation"] + 1)
         state.update(pending=False, fallback_at=None, retry_at=None, hold=False)
     else:
-        stream_name = service.db.device(db, device_id)["name"].strip()
+        device = service.db.device(db, device_id)
+        stream_name = device["name"].strip()
         if device_id == "living-room" and stream_name == "Living room":
             stream_name = "Stream 1"
         view = current_playback(service, db, device_id, now=now)
@@ -40,7 +41,8 @@ def reconcile(service, db, device_id, *, now=None):
             state["last_confirmed_at"] = max(stamp, state["last_confirmed_at"] or stamp)
         due = (state["last_confirmed_at"] or config["enabled_at"] or now.timestamp()) + 300
         state["fallback_at"] = due if config["enabled"] else None
-        idle = view.state == "idle"
+        idle = (view.state == "idle" and device["playback_state"] == "waiting"
+                and not device.get("manual_control") and not device.get("input_handoff"))
         state["hold"] = not confirmed and not idle and now.timestamp() < due and not config.get("one_shot")
         wanted = None
         if idle or config.get("one_shot") or now.timestamp() >= due:
