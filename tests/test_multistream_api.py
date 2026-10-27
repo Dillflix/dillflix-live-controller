@@ -62,8 +62,8 @@ def test_legacy_registry_label_is_stream_one_on_admin_and_public_surfaces(fleet)
     for path in ("/api/v1/overview", "/api/public/v1/overview"):
         view = client.get(path).json()
         assert view["device"]["id"] == "living-room"
-        assert view["device"]["name"] == "Stream 1"
-        assert next(stream for stream in view["streams"] if stream["id"] == "living-room")["name"] == "Stream 1"
+        assert view["device"]["name"] == "Dillflix 1"
+        assert next(stream for stream in view["streams"] if stream["id"] == "living-room")["name"] == "Dillflix 1"
 
 
 def test_selection_preview_respects_other_stream_claim_without_mutation(fleet):

@@ -41,7 +41,7 @@ class Plex:
         self.machine = "server-1"
         self.duration = "7200000"
         self.bitrate = "20000"
-        self.title = "Dillflix Live - Stream 1"
+        self.title = "Dillflix Live - Dillflix 1"
         self.sort_title = self.title
         self.title_locked = False
         self.sort_locked = False
@@ -222,8 +222,8 @@ async def red_image(_url):
 def plex_fleet(tmp_path):
     app = create_app(Settings(
         database=str(tmp_path / "fleet.sqlite"), simulation_delay=0,
-        devices=(DeviceSettings("living-room", "Stream 1", "/run/first.sock", "first:5555"),
-                 DeviceSettings("stream-2", "Stream 2", "/run/second.sock", "second:5555")),
+        devices=(DeviceSettings("living-room", "Dillflix 1", "/run/first.sock", "first:5555"),
+                 DeviceSettings("stream-2", "Dillflix 2", "/run/second.sock", "second:5555")),
     ), start_workers=False)
     service = app.state.controller
     items = {"8": Plex("8"), "9": Plex("9")}
@@ -304,11 +304,11 @@ async def test_two_plex_items_keep_titles_artwork_and_fallback_deadlines_indepen
         })
         assert response.status_code == 200, response.text
         await service.plex.worker.run_once(device)
-        assert items[key].title == ("Stream 1" if device == "living-room" else "Stream 2") + " - " + titles[device]
+        assert items[key].title == ("Dillflix 1" if device == "living-room" else "Dillflix 2") + " - " + titles[device]
     assert items["8"].images == {"thumb": picture("red"), "art": picture("gray")}
     assert items["9"].images == {"thumb": picture("green"), "art": picture("yellow")}
 
-    # Only Stream 2 receives a fresh confirmation. Stream 1 must revert alone.
+    # Only Dillflix 2 receives a fresh confirmation. Dillflix 1 must revert alone.
     service.plex.now = lambda: now + timedelta(seconds=60)
     with service.db.transaction() as db:
         d = service.db.device(db, "stream-2")
@@ -318,9 +318,9 @@ async def test_two_plex_items_keep_titles_artwork_and_fallback_deadlines_indepen
     second_writes = list(items["9"].mutations())
     for device in service.runtimes:
         await service.plex.worker.run_once(device)
-    assert items["8"].title == "Stream 1"
+    assert items["8"].title == "Dillflix 1"
     assert items["8"].images == {"thumb": picture("black"), "art": picture("gray")}
-    assert items["9"].title == "Stream 2 - " + titles["stream-2"]
+    assert items["9"].title == "Dillflix 2 - " + titles["stream-2"]
     assert items["9"].images == {"thumb": picture("green"), "art": picture("yellow")}
     assert items["9"].mutations() == second_writes
     first = browser.get(PATH).json()
@@ -336,8 +336,8 @@ async def test_two_plex_items_keep_titles_artwork_and_fallback_deadlines_indepen
         device["playback_state"] = "waiting"
         service.db.save_device(db, device)
     await service.plex.worker.run_once("stream-2")
-    assert items["9"].title == "Stream 2"
-    assert items["8"].title == "Stream 1"
+    assert items["9"].title == "Dillflix 2"
+    assert items["8"].title == "Dillflix 1"
 
 
 async def test_plex_delivery_with_contended_writer_keeps_loop_responsive(setup, monkeypatch):
@@ -406,22 +406,22 @@ async def test_event_title_updates_without_an_image_then_restores_default(setup)
         db.execute("UPDATE contents SET snapshot=? WHERE id=?", (encode(snap), cid))
     enable(browser)
     await service.plex.worker.run_once("living-room")
-    assert plex.title == "Stream 1 - " + title and plex.title_locked
-    assert plex.title_requests == [{"id": "8", "type": "1", "title.value": "Stream 1 - " + title, "title.locked": "1"}]
+    assert plex.title == "Dillflix 1 - " + title and plex.title_locked
+    assert plex.title_requests == [{"id": "8", "type": "1", "title.value": "Dillflix 1 - " + title, "title.locked": "1"}]
     assert not plex.writes()
-    assert browser.get(PATH).json()["status"]["applied_title"]["value"] == "Stream 1 - " + title
+    assert browser.get(PATH).json()["status"]["applied_title"]["value"] == "Dillflix 1 - " + title
     exported = browser.get("/api/v1/devices/living-room/diagnostics").json()
-    assert exported["plex_artwork"]["applied_title"]["value"] == "Stream 1 - " + title
+    assert exported["plex_artwork"]["applied_title"]["value"] == "Dillflix 1 - " + title
     with service.db.transaction() as db:
         d = service.db.device(db)
         d["observed"]["verified"] = False
         service.db.save_device(db, d)
     service.plex.now = lambda: now + timedelta(seconds=299)
     await service.plex.worker.run_once("living-room")
-    assert plex.title == "Stream 1 - " + title and len(plex.title_requests) == 1
+    assert plex.title == "Dillflix 1 - " + title and len(plex.title_requests) == 1
     service.plex.now = lambda: now + timedelta(seconds=300)
     await service.plex.worker.run_once("living-room")
-    assert plex.title == "Stream 1"
+    assert plex.title == "Dillflix 1"
     assert len(plex.title_requests) == 2 and not state(service)["pending"]
 
 
@@ -444,7 +444,7 @@ async def test_renewal_and_title_change_do_not_reupload_matching_images(setup):
     assert len(plex.title_requests) == 1
     event_title(service, cid, "Beijing Open: Day 8")
     await service.plex.worker.run_once("living-room")
-    assert plex.title == "Stream 1 - Beijing Open: Day 8" and len(plex.title_requests) == 2
+    assert plex.title == "Dillflix 1 - Beijing Open: Day 8" and len(plex.title_requests) == 2
     assert len(plex.writes()) == 1
 
 
@@ -463,10 +463,10 @@ async def test_upgrade_reconciles_title_for_already_applied_artwork(setup):
         del saved["desired"]["plex_title"]
         saved.pop("applied_title")
         save_runtime(db, "living-room", saved)
-    plex.title, plex.title_locked = "Dillflix Live - Stream 1", False
+    plex.title, plex.title_locked = "Dillflix Live - Dillflix 1", False
     plex.calls.clear()
     await restart_plex(service, now).run_once("living-room")
-    assert plex.title == "Stream 1 - Beijing Open: Day 7" and not plex.writes()
+    assert plex.title == "Dillflix 1 - Beijing Open: Day 7" and not plex.writes()
     assert not state(service)["pending"]
 
 
@@ -584,8 +584,8 @@ async def test_new_title_supersedes_old_uncertain_edit(setup):
     await service.plex.worker.run_once("living-room")
     event_title(service, cid, "Beijing Open: Day 8")
     await restart_plex(service, now).run_once("living-room")
-    assert len(plex.title_requests) == 2 and plex.title == "Stream 1 - Beijing Open: Day 8"
-    assert state(service)["applied_title"]["value"] == "Stream 1 - Beijing Open: Day 8"
+    assert len(plex.title_requests) == 2 and plex.title == "Dillflix 1 - Beijing Open: Day 8"
+    assert state(service)["applied_title"]["value"] == "Dillflix 1 - Beijing Open: Day 8"
 
 
 @pytest.mark.asyncio
@@ -1136,7 +1136,7 @@ async def test_restore_defaults_disables_auto_and_is_one_shot(setup):
     assert response.status_code == 200
     await service.plex.worker.run_once("living-room")
     assert plex.images["thumb"] == picture("black")
-    assert plex.title == "Stream 1"
+    assert plex.title == "Dillflix 1"
     title_writes = len(plex.title_requests)
     count = len(plex.writes())
     await service.plex.worker.run_once("living-room")

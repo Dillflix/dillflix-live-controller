@@ -26,7 +26,7 @@ def test_host_installer_works_without_controller_web_dependencies():
 
 def prepare(tmp_path, env=ENV, **kwargs):
     return helper.prepare_update(env, tmp_path, device_id=kwargs.get("device_id", "stream-2"),
-        name=kwargs.get("name", "Stream 2"), serial=kwargs.get("serial", "second:5555"))
+        name=kwargs.get("name", "Dillflix 2"), serial=kwargs.get("serial", "second:5555"))
 
 
 def test_first_add_preserves_existing_primary_and_every_other_environment_setting(tmp_path):
@@ -35,8 +35,8 @@ def test_first_add_preserves_existing_primary_and_every_other_environment_settin
     assert env.startswith(ENV)
     assert helper.env_value(env, "CONTROLLER_DEVICES_FILE") == "/run/prime-player/controller-devices.json"
     assert records == [
-        {"id": "living-room", "name": "Stream 1", "prime_player_socket": "/run/prime-player/player.sock", "adb_serial": "first:5555"},
-        {"id": "stream-2", "name": "Stream 2", "prime_player_socket": "/run/prime-player/instances/stream-2/player.sock", "adb_serial": "second:5555"},
+        {"id": "living-room", "name": "Dillflix 1", "prime_player_socket": "/run/prime-player/player.sock", "adb_serial": "first:5555"},
+        {"id": "stream-2", "name": "Dillflix 2", "prime_player_socket": "/run/prime-player/instances/stream-2/player.sock", "adb_serial": "second:5555"},
     ]
     assert not registry.exists()
 
@@ -147,7 +147,7 @@ def test_default_command_only_previews_unqualified_hardware(tmp_path, monkeypatc
     monkeypatch.setattr(helper.shutil, "which", lambda _: "/usr/bin/docker")
     run = Mock(return_value=SimpleNamespace(stdout="not-found\n"))
     monkeypatch.setattr(helper.subprocess, "run", run)
-    monkeypatch.setattr(sys, "argv", ["add-stream", "--id", "stream-2", "--name", "Stream 2",
+    monkeypatch.setattr(sys, "argv", ["add-stream", "--id", "stream-2", "--name", "Dillflix 2",
         "--serial", "second:5555", "--player-repo", str(tmp_path / "not-installed"), "--user", "player"])
     helper.main()
     assert "not published" in capsys.readouterr().out

@@ -33,7 +33,7 @@ def reconcile(service, db, device_id, *, now=None):
         device = service.db.device(db, device_id)
         stream_name = device["name"].strip()
         if device_id == "living-room" and stream_name == "Living room":
-            stream_name = "Stream 1"
+            stream_name = "Dillflix 1"
         view = current_playback(service, db, device_id, now=now)
         confirmed = view.state == "playing" and view.simulated is False
         if confirmed:

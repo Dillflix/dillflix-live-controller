@@ -19,12 +19,18 @@ this endpoint, even though its response contains only presentation data.
 | Field | Meaning |
 | --- | --- |
 | `schema_version` | `1` |
-| `device_id` | Requested controller device, currently `living-room` |
+| `device_id` | Requested controller device; stable internal ID |
+| `device_name` | Public display name, e.g. `Dillflix 1` |
+| `streams` | All configured streams, each with `device_id`, `name`, and independent `playback` |
 | `generated_at` | Real UTC response time, not renewed source evidence |
 | `timezone` | Configured IANA timezone for displaying schedules |
 | `playback` | Accepted playback, display status, and separately identified retained/desired events |
 | `events` | At most 100 entitled active live/upcoming events |
 | `schedule` | `state: ok/stale/unavailable`, `observed_at`, `valid_until` |
+
+The fleet summaries reuse the same catalogue projection and database snapshot.
+The existing top-level `playback` remains the requested device for older clients;
+`events` remains one shared schedule. Names do not change device IDs or bindings.
 
 `playback` contains:
 

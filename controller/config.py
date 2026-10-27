@@ -23,8 +23,10 @@ class DeviceSettings:
             raise ValueError("Device names must contain 1–80 characters")
         # Preserve the original device ID and bindings while retiring the old
         # room label, including registries written by the first add-stream tool.
-        if self.id == "living-room" and self.name == "Living room":
-            object.__setattr__(self, "name", "Stream 1")
+        if self.name in {"Stream 1", "Stream 2"}:
+            object.__setattr__(self, "name", self.name.replace("Stream", "Dillflix", 1))
+        elif self.id == "living-room" and self.name == "Living room":
+            object.__setattr__(self, "name", "Dillflix 1")
 
 
 @dataclass(frozen=True)
@@ -103,7 +105,7 @@ class Settings:
     @property
     def configured_devices(self):
         return self.devices or (DeviceSettings(
-            self.device_id, "Stream 1", self.prime_player_socket or self.executor.prime_socket,
+            self.device_id, "Dillflix 1", self.prime_player_socket or self.executor.prime_socket,
             self.screen_adb_serial,
         ),)
 
