@@ -93,6 +93,40 @@ function fixture() {
   };
 }
 
+test("a slow overview survives polling without overlapping requests", async ({ page }) => {
+  await page.clock.install();
+  let calls = 0;
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/public/v1/overview", async (route) => {
+    calls++;
+    await waiting;
+    await route.fulfill({ json: fixture() });
+  });
+  await page.goto("/public/");
+  await expect.poll(() => calls).toBe(1);
+  await page.clock.runFor(16000);
+  expect(calls).toBe(1);
+  release();
+  await expect(page.getByRole("heading", { name: "What's on" })).toBeVisible();
+});
+
+test("a hung overview shows an error and can recover", async ({ page }) => {
+  await page.clock.install();
+  let calls = 0;
+  await page.route("**/api/public/v1/overview", (route) => {
+    calls++;
+    if (calls > 1) return route.fulfill({ json: fixture() });
+    // Leave the first request unanswered, just like a stalled backend.
+  });
+  await page.goto("/public/");
+  await expect.poll(() => calls).toBe(1);
+  await page.clock.runFor(30001);
+  await expect(page.getByRole("alert")).toContainText("took too long");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("heading", { name: "What's on" })).toBeVisible();
+});
+
 for (const width of [1280, 390, 320]) {
   test(`public ${width}px: safe controls, filtering and user requests`, async ({
     page,

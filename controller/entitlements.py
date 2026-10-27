@@ -108,13 +108,7 @@ class EntitlementChecks:
 
     def entitlement_views(self, db, device_id, items):
         records = {r["content_id"]: r for r in db.execute(
-            """SELECT content_id,status,state,checked_at,next_check,
-                json_extract(evidence,'$.identity','$.reason','$.error','$.audit.error',
-                    '$.audit.search_queries_exhausted','$.audit.match_status') AS summary,
-                (SELECT json_group_array(json_object(
-                    'state',json_extract(value,'$.state'),
-                    'error',json_extract(value,'$.error')))
-                 FROM json_each(evidence,'$.audit.search_attempts')) AS attempts
+            """SELECT content_id,status,state,checked_at,next_check,view_evidence
                 FROM event_entitlements
                 WHERE device_id=? AND content_id IN (SELECT id FROM contents)""", (device_id,)
         )}
@@ -128,10 +122,7 @@ class EntitlementChecks:
             # Read only the fields used by cards/planning, not those bodies on every tick.
             evidence = {}
             if row:
-                fingerprint, reason, error, audit_error, exhausted, match = json.loads(row["summary"])
-                evidence = {"identity": fingerprint, "reason": reason, "error": error,
-                            "audit": {"error": audit_error, "search_queries_exhausted": exhausted,
-                                      "match_status": match, "search_attempts": json.loads(row["attempts"])}}
+                evidence = json.loads(row["view_evidence"])
             stale = bool(evidence.get("identity") and evidence["identity"] != identity(item))
             status = row["status"] if row and not stale else "unknown"
             # A Prime-only denial cannot disable another permitted application.
@@ -279,7 +270,7 @@ class EntitlementChecks:
         counts = {s: 0 for s in ("queued", "checking", "retry", "complete", "stopped")}
         failures = 0
         for r in db.execute("SELECT e.content_id,e.state,e.failures,e.started_at,e.next_check,e.manual,"
-                            "json_extract(e.evidence,'$.error','$.last_deferral') AS summary "
+                            "e.view_evidence "
                             "FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
                             "WHERE e.device_id=? ORDER BY "
                             "CASE e.state WHEN 'checking' THEN 0 WHEN 'retry' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,"
@@ -287,7 +278,8 @@ class EntitlementChecks:
             item = projected.get(r["content_id"])
             if not item or not item.get("entitlement"):
                 continue
-            error, last_deferral = json.loads(r["summary"])
+            evidence = json.loads(r["view_evidence"])
+            error, last_deferral = evidence.get("error"), evidence.get("last_deferral")
             terminal = item["lifecycle"]["state"] in {"ended", "cancelled"}
             eligible = not terminal and bool(item["active"] or r["manual"])
             if eligible:

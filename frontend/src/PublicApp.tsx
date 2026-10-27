@@ -1,7 +1,8 @@
 import { leagueName } from "./leagues";
 import { eventSchedule } from "./eventSchedule";
 import { ScheduleCalendar, ScheduleViewToggle, useScheduleView } from "./ScheduleCalendar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { overviewRead } from "./overviewRead";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
 import { commandId } from "./api";
@@ -94,12 +95,13 @@ function EventDetails({
   );
 }
 
-async function publicApi<T>(path: string, body?: unknown): Promise<T> {
+async function publicApi<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch("/api/public/v1" + path, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
     cache: "no-store",
+    signal,
   });
   if (!response.ok) {
     const value = await response.json().catch(() => null);
@@ -142,11 +144,13 @@ function PublicWorkspace({ deviceId, selectDevice }: {
   }
   const generation = selection.current.generation;
   const deviceQuery = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
+  const reader = useMemo(() => overviewRead((signal) =>
+    publicApi<PublicOverview>("/overview" + deviceQuery, undefined, signal)), [deviceQuery]);
   const load = useCallback(async () => {
     if (!mounted.current || generation !== selection.current.generation) return;
     const serial = ++loading.current;
     try {
-      const next = await publicApi<PublicOverview>("/overview" + deviceQuery);
+      const next = await reader.read();
       if (mounted.current && generation === selection.current.generation && serial === loading.current) {
         setData(next);
         setConnected(true);
@@ -157,7 +161,7 @@ function PublicWorkspace({ deviceId, selectDevice }: {
         setError((e as Error).message);
       }
     }
-  }, [deviceQuery, generation]);
+  }, [reader, generation]);
   useEffect(() => {
     mounted.current = true;
     submitting.current = false;
@@ -170,10 +174,11 @@ function PublicWorkspace({ deviceId, selectDevice }: {
     const timer = setInterval(() => void load(), 5000);
     return () => {
       mounted.current = false;
+      reader.abort();
       clearInterval(timer);
       ++loading.current;
     };
-  }, [load]);
+  }, [load, reader]);
   const request = async (event: PublicEvent, action: "add" | "play_now") => {
     if (!data || !connected || submitting.current ||
         (deviceId && (data.device?.id || data.device_id) !== deviceId)) return;

@@ -32,7 +32,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 15
+    SCHEMA_VERSION = 16
 
     def __init__(self, path):
         self.path = path
@@ -199,6 +199,33 @@ class Database:
                             "UPDATE devices SET payload=?, revision=revision+1 WHERE id=?",
                             (encode(device), device_id),
                         )
+            if version < 16:
+                # Large retained model/catalogue bodies must be parsed only when
+                # evidence changes, never by every browser/ticker/planner read.
+                columns = {row[1] for row in db.execute("PRAGMA table_info(event_entitlements)")}
+                if "view_evidence" not in columns:
+                    db.execute("ALTER TABLE event_entitlements ADD COLUMN view_evidence TEXT NOT NULL DEFAULT '{}'")
+                projection = """json_object(
+                    'identity',json_extract(evidence,'$.identity'),
+                    'reason',json_extract(evidence,'$.reason'),
+                    'error',json_extract(evidence,'$.error'),
+                    'last_deferral',json_extract(evidence,'$.last_deferral'),
+                    'audit',json_object(
+                        'error',json_extract(evidence,'$.audit.error'),
+                        'search_queries_exhausted',json(CASE json_type(evidence,'$.audit.search_queries_exhausted')
+                            WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE 'null' END),
+                        'match_status',json_extract(evidence,'$.audit.match_status'),
+                        'search_attempts',json((SELECT json_group_array(json_object(
+                            'state',json_extract(value,'$.state'),
+                            'error',json_extract(value,'$.error')))
+                            FROM json_each(evidence,'$.audit.search_attempts')))))"""
+                db.execute(f"UPDATE event_entitlements SET view_evidence={projection}")
+                for event, name in (("INSERT", "insert"), ("UPDATE OF evidence", "update")):
+                    db.execute(f"""CREATE TRIGGER IF NOT EXISTS entitlement_view_{name}
+                        AFTER {event} ON event_entitlements BEGIN
+                        UPDATE event_entitlements SET view_evidence={projection}
+                        WHERE device_id=NEW.device_id AND content_id=NEW.content_id;
+                        END""")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:

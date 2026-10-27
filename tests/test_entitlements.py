@@ -58,10 +58,51 @@ async def test_card_projection_does_not_decode_catalogue_evidence(tmp_path, monk
 
         monkeypatch.setattr(json, "loads", bounded_loads)
         with controller.db.snapshot() as db:
+            # SQLite must not parse the large body either. The previous JSON
+            # extraction query hid that cost from the Python-only assertion.
+            import sqlite3
+            db.set_authorizer(lambda action, table, column, *_:
+                              sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_READ
+                              and table == "event_entitlements" and column == "evidence"
+                              else sqlite3.SQLITE_OK)
             view = controller.items(db, "living-room")[0]["entitlement"]
+            controller.entitlement_queue(db, controller.db.device(db), controller.items(db))
         assert view["result"] == "no_listing"
         assert view["reason"] == "No Prime listing found"
         assert controller.overview()["entitlement_queue"]["failed_jobs"] == 0
+    finally:
+        await cleanup(controller)
+
+
+async def test_entitlement_read_projection_migrates_and_tracks_writes(tmp_path):
+    from controller.database import Database
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    evidence = {"reason": "Old result", "error": {"code": "old"},
+                "audit": {"search_queries_exhausted": True,
+                          "search_attempts": [{"state": "no_matching_feed", "response": "x" * 1000000}]}}
+    try:
+        with controller.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET evidence=?", (json.dumps(evidence),))
+            db.execute("DROP TRIGGER entitlement_view_insert")
+            db.execute("DROP TRIGGER entitlement_view_update")
+            db.execute("ALTER TABLE event_entitlements DROP COLUMN view_evidence")
+            db.execute("PRAGMA user_version=15")
+        Database(controller.db.path)
+        with controller.db.transaction() as db:
+            row = db.execute("SELECT evidence,view_evidence FROM event_entitlements").fetchone()
+            assert json.loads(row["evidence"]) == evidence
+            view = json.loads(row["view_evidence"])
+            assert len(row["view_evidence"]) < 1000
+            assert view["audit"]["search_queries_exhausted"] is True
+            assert view["audit"]["search_attempts"] == [{"state": "no_matching_feed", "error": None}]
+            db.execute("UPDATE event_entitlements SET evidence=?", ('{"reason":"New result"}',))
+            view = json.loads(db.execute("SELECT view_evidence FROM event_entitlements").fetchone()[0])
+            assert view["reason"] == "New result"
+            assert view["error"] is None
+            db.execute("INSERT INTO event_entitlements(device_id,content_id,evidence) VALUES (?,?,?)",
+                       ("second-tv", "test", '{"reason":"Other device"}'))
+            assert json.loads(db.execute("SELECT view_evidence FROM event_entitlements WHERE device_id='second-tv'").fetchone()[0])["reason"] == "Other device"
     finally:
         await cleanup(controller)
 

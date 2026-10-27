@@ -2,10 +2,12 @@ import { leagueName } from "./leagues";
 import { eventSchedule } from "./eventSchedule";
 import { ScheduleCalendar, ScheduleViewToggle, useScheduleView } from "./ScheduleCalendar";
 import { EntitlementFilter, matchesEntitlement } from "./EntitlementFilter";
+import { overviewRead } from "./overviewRead";
 import React, {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -399,11 +401,14 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
     [connected, setConnected] = useState(true);
   const fetchVersion = useRef(0);
   const mounted = useRef(true);
+  const reader = useMemo(() => overviewRead((signal) => api<Overview>(
+    "/overview" + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""),
+    undefined, undefined, signal)), [deviceId]);
   const load = useCallback(async () => {
     if (!mounted.current) return;
     const serial = ++fetchVersion.current;
     try {
-      const next = await api<Overview>("/overview" + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""));
+      const next = await reader.read();
       if (mounted.current && serial === fetchVersion.current) {
         setData(next);
         setConnected(true);
@@ -414,7 +419,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
         setError((e as Error).message);
       }
     }
-  }, [deviceId]);
+  }, [reader]);
   useEffect(() => {
     mounted.current = true;
     void load();
@@ -424,11 +429,12 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
     const poll = setInterval(() => void load(), 10000);
     return () => {
       mounted.current = false;
+      reader.abort();
       ++fetchVersion.current;
       source.close();
       clearInterval(poll);
     };
-  }, [load]);
+  }, [load, reader]);
   const close = useCallback(() => setModal(null), []);
   const mutate = async (
     fn: () => Promise<unknown>,
