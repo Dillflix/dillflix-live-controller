@@ -33,6 +33,14 @@ Idle streams are assigned eligible unclaimed events using shared priorities and
 their individual access. Forecasts account for the number of active streams but
 cannot promise future provider access or device availability.
 
+An issued catalogue check keeps a bounded reservation while schedule status is
+temporarily unknown. Its original deadline, plan revision, intent, event identity,
+route and subscription eligibility still apply. Completion, pause and manual
+control invalidate it. A ready result retains the normal 60-second handoff window;
+the coordinator must still confirm current launch eligibility. Superseded reads
+are discarded without recording an entitlement failure or imposing its retry
+delay. Exports retain the rejected guard values and every stream's allocation.
+
 Player services use independent state/socket directories and hold a per-serial
 host lease before provisioning. Adding a stream never provisions another capture
 output automatically. See [setup and acceptance](multiple-streams.md).
@@ -114,6 +122,10 @@ backfills existing records once. Page, ticker and planner reads use this summary
 instead of repeatedly parsing full model/catalogue responses in SQLite. Shared
 browsing projects each stream once and reuses decoded event snapshots for lifecycle
 evaluation. Neither optimization caches playback freshness or creates new evidence.
+Routine catalogue reimports and positive-playback checks also use the compact
+identity projection. Entitlement queue sorting reads scheduling columns and loads
+the full retained evidence only for the selected check, keeping bulk response
+decoding outside routine writer transactions.
 Browser polling and update notifications share one in-flight overview read with
 a 30-second timeout; a later poll cannot permanently discard a slower response.
 

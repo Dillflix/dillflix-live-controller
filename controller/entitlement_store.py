@@ -40,7 +40,9 @@ def record_entitled(db, device_id, request, selected, *, source, provenance):
     fingerprint = identity({"snapshot": snapshot, "viewing_options": options})
     if fingerprint != identity({"snapshot": current, "viewing_options": allowed_options(current)}):
         return
-    row = db.execute("SELECT status,evidence FROM event_entitlements WHERE device_id=? AND content_id=?",
+    row = db.execute("SELECT e.status,v.evidence FROM event_entitlements e JOIN entitlement_read_models v "
+                     "ON v.device_id=e.device_id AND v.content_id=e.content_id "
+                     "WHERE e.device_id=? AND e.content_id=?",
                      (device_id, snapshot["id"])).fetchone()
     if row and row["status"] == "entitled" and json.loads(row["evidence"]).get("identity") == fingerprint:
         return  # Routine monitoring must not refresh a conclusive check or cancel an admin recheck.

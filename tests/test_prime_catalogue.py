@@ -4,6 +4,7 @@ import asyncio
 import json
 import threading
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -11,9 +12,104 @@ from playback_fixtures import payload
 from test_prime_matching import results, tile
 from test_prime_workflow import cleanup, launch, rig, row
 
+from controller.config import DeviceSettings
 from controller.planner import content_view
 from controller.prime_player.catalogue import key
 from controller.prime_player.diagnostics import collect
+
+
+async def test_two_stream_catalogue_survives_temporary_status_loss_without_restarting_playback(tmp_path, monkeypatch):
+    from broadcast_model import FixtureBroadcastModel
+    from playback_fixtures import settings
+    from test_prime_workflow import Player
+    from controller.service import Controller
+
+    controller = Controller(replace(settings(tmp_path), devices=(
+        DeviceSettings("living-room", "One", "/test/one.sock", "fixture"),
+        DeviceSettings("second-tv", "Two", "/test/two.sock", "fixture-two"),
+    )))
+    workflow = controller.executor
+    workflow.player = Player()
+    workflow.matcher.model = FixtureBroadcastModel()
+    _, item, intent = setup_selection(controller, monkeypatch)
+    second = controller.runtime("second-tv")
+    monkeypatch.setattr(second, "items", lambda *args, **kwargs: [item])
+    workflow.player.search_release = asyncio.Event()
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        task = asyncio.create_task(workflow.observe_catalogue(probe))
+        await asyncio.wait_for(workflow.player.search_entered.wait(), 2)
+        item.update(playable=False, lifecycle={"state": "unknown", "stale": True})
+        controller.stage_playback()
+        second.stage_playback()
+        device, current = saved(controller)
+        assert device["stream_assignment"]["content_id"] == item["content_id"]
+        assert device["intent_version"] == intent and device["desired"] == "previous-event"
+        assert current["id"] == probe["id"] and workflow.catalogue_current(probe)
+        workflow.player.search_release.set()
+        await task
+        assert saved(controller)[1]["state"] == "ready"
+        controller.stage_playback()
+        assert saved(controller)[0]["intent_version"] == intent  # Unknown status cannot authorize a launch.
+        item.update(playable=True, lifecycle={"state": "live"})
+        controller.stage_playback()
+        device, current = saved(controller)
+        assert device["intent_version"] == intent + 1 and current["id"] == probe["id"]
+        with controller.db.snapshot() as db:
+            job = db.execute("SELECT * FROM jobs WHERE device_id='living-room' AND state='pending'").fetchone()
+            body = json.loads(job["payload"])
+            body["deadline_at"] = datetime.fromtimestamp(job["deadline_at"], UTC).isoformat()
+            assert not db.execute("SELECT 1 FROM jobs WHERE device_id='second-tv'").fetchone()
+        report, _ = workflow.store.submit(body)
+        await workflow.navigate(row(workflow, report["token"]))
+        assert workflow.store.report(report["token"])["operation"]["state"] == "playing_verified"
+        assert [c[0] for c in workflow.player.calls].count("search") == 1
+        assert [c[0] for c in workflow.player.calls].count("play") == 1
+        assert not any(c[0] in {"cancel", "stop"} for c in workflow.player.calls)
+    finally:
+        workflow.player.search_release.set()
+        await cleanup(controller)
+
+
+async def test_rejected_catalogue_cannot_become_access_failure_when_assignment_returns(tmp_path, monkeypatch):
+    controller, workflow = rig(tmp_path)
+    _, item, _ = setup_selection(controller, monkeypatch)
+    original_search, original_check = workflow.player.search, workflow.catalogue_invalidation
+
+    async def search(*args):
+        result = await original_search(*args)
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            device["stream_assignment"] = {"content_id": "another-event", "revision": device["revision"]}
+            controller.db.save_device(db, device)
+        return result
+
+    def check(probe):
+        invalidation = original_check(probe)
+        if invalidation:
+            with controller.db.transaction() as db:
+                device = controller.db.device(db)
+                device["stream_assignment"]["content_id"] = item["content_id"]
+                controller.db.save_device(db, device)
+        return invalidation
+
+    workflow.player.search = search
+    monkeypatch.setattr(workflow, "catalogue_invalidation", check)
+    try:
+        controller.stage_playback()
+        _, probe = saved(controller)
+        await workflow.observe_catalogue(probe)
+        device, finished = saved(controller)
+        assert finished["state"] == "discarded" and finished["retry_at"] == 0
+        assert finished["invalidation"]["changed"] == ["assignment"]
+        assert finished["invalidation"]["current"]["assignment"] == "another-event"
+        assert finished["invalidation"]["phase"] == "broadcast selection"
+        assert not device.get("prime_access")
+        controller.stage_playback()
+        assert saved(controller)[1]["id"] != probe["id"]  # No entitlement cooldown.
+    finally:
+        await cleanup(controller)
 
 
 @pytest.mark.parametrize("rollback", [False, True])

@@ -82,7 +82,9 @@ class EntitlementChecks:
         # Deduplication lasts for the catalogue retention window, not forever.
         for device in db.execute("SELECT id FROM devices").fetchall():
             records = {r["content_id"]: r for r in db.execute(
-                "SELECT * FROM event_entitlements WHERE device_id=?", (device["id"],)
+                "SELECT e.content_id,e.state,v.evidence FROM event_entitlements e "
+                "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
+                "WHERE e.device_id=?", (device["id"],)
             )}
             for row in db.execute("SELECT id,snapshot FROM contents WHERE active=1 AND source='teamarr'"):
                 snapshot = json.loads(row["snapshot"])
@@ -375,7 +377,7 @@ class EntitlementChecks:
             # Completed denials from older releases must also discover listings
             # added later. Base the deadline on the original check, not restart
             # time; repeated imports must never push it into the future.
-            for old in db.execute("SELECT * FROM event_entitlements WHERE device_id=? "
+            for old in db.execute("SELECT content_id,checked_at FROM event_entitlements WHERE device_id=? "
                                   "AND state='complete' AND status='unentitled' AND manual=0",
                                   (device["id"],)).fetchall():
                 item = items.get(old["content_id"])
@@ -394,7 +396,8 @@ class EntitlementChecks:
                                "WHERE device_id=? AND content_id=? AND state IN ('queued','retry')",
                                (device["id"], item["content_id"]))
             due = db.execute(
-                "SELECT e.* FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
+                "SELECT e.content_id,e.manual,e.failures,e.next_check FROM event_entitlements e "
+                "JOIN contents c ON c.id=e.content_id "
                 "WHERE (c.active=1 OR e.manual=1) AND e.device_id=? AND e.state IN ('queued','retry') "
                 "AND e.next_check<=? ORDER BY e.manual DESC,e.next_check,e.content_id", (device["id"], now),
             ).fetchall()
@@ -411,7 +414,8 @@ class EntitlementChecks:
                                (device["id"], candidate["content_id"]))
                     continue
                 if item and (item["active"] or candidate["manual"]) and item.get("entitlement"):
-                    row = dict(candidate)
+                    row = dict(db.execute("SELECT * FROM event_entitlements WHERE device_id=? AND content_id=?",
+                                          (device["id"], candidate["content_id"])).fetchone())
                     break
             if not row or not self.entitlement_idle(db, device):
                 return

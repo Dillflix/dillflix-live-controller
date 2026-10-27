@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from ..entitlement_store import record_entitled
+from ..entitlement_store import identity, record_entitled
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls_async
 from .client import (
@@ -181,6 +181,11 @@ class CatalogueChecks:
             "timezone": device["preferences"]["timezone"],
         }
         self.db.set_meta(db, key(device["id"]), probe)
+        assignment = device.get("stream_assignment")
+        if assignment and assignment.get("content_id") == item["content_id"]:
+            assignment["catalogue"] = {"id": probe["id"], "intent": probe["intent"],
+                                       "expires": probe["expires"], "identity": identity(item)}
+            self.db.save_device(db, device)
         if self.loop and self.loop.is_running() and not self.stopping:
 
             def schedule():
@@ -203,11 +208,17 @@ class CatalogueChecks:
                 session = None
                 received = {}
 
+                async def require_current(phase):
+                    invalidation = await self.database_call(lambda: self.catalogue_invalidation(probe))
+                    if invalidation:
+                        evidence["invalidation"] = {**invalidation, "phase": phase,
+                                                    "at": datetime.now(UTC).isoformat()}
+                        raise ExecutorError("prime_stale_result", "Catalogue selection was superseded during " + phase)
+
                 async def search(query):
                     nonlocal session
                     async with self.input_lock:
-                        if not await self.database_call(lambda: self.catalogue_current(probe)):
-                            raise ExecutorError("prime_stale_result", "Plan changed before catalogue search")
+                        await require_current("search")
                         evidence["runtime_capability"] = "search"
                         health = await self.check_session(session, capabilities=("search",))
                         if health.get("api_version", 0) < 11:
@@ -226,8 +237,7 @@ class CatalogueChecks:
 
                 async def fetch_broadcasts(results, content_id):
                     async with self.input_lock:
-                        if not await self.database_call(lambda: self.catalogue_current(probe)):
-                            raise ExecutorError("prime_stale_result", "Plan changed during broadcast selection")
+                        await require_current("broadcast selection")
                         evidence["runtime_capability"] = "broadcasts"
                         current = await self.check_session(session, capabilities=("broadcasts",))
                         self.require_catalogue_generation(current, results)
@@ -270,19 +280,23 @@ class CatalogueChecks:
             await self.database_call(lambda: self.finish_catalogue(probe, evidence))
 
     def catalogue_current(self, probe):
+        return self.catalogue_invalidation(probe) is None
+
+    def catalogue_invalidation(self, probe):
         self.store.require_device(probe["device_id"])
         with self.db.snapshot() as db:
             device = self.db.device(db, probe["device_id"])
             saved = self.db.meta(db, key(device["id"]), {})
-            return (
-                saved.get("id") == probe["id"]
-                and device["revision"] == probe["revision"]
-                and device["intent_version"] == probe["intent"]
-                and assignment_matches(device, probe["content_id"])
-                and device["automation"] == "active"
-                and not device.get("manual_control")
-                and not device.get("input_handoff")
-            )
+            expected = {"probe_id": probe["id"], "revision": probe["revision"], "intent": probe["intent"],
+                        "assignment": probe["content_id"], "automation": "active",
+                        "manual_control": False, "input_handoff": False}
+            current = {"probe_id": saved.get("id"), "revision": device["revision"],
+                       "intent": device["intent_version"], "automation": device["automation"],
+                       "assignment": (device.get("stream_assignment") or {}).get("content_id", probe["content_id"]),
+                       "manual_control": bool(device.get("manual_control")),
+                       "input_handoff": bool(device.get("input_handoff"))}
+            changed = [field for field, value in expected.items() if current[field] != value]
+            return {"changed": changed, "expected": expected, "current": current} if changed else None
 
     def finish_catalogue(self, probe, evidence):
         self.store.require_device(probe["device_id"])
@@ -317,6 +331,12 @@ class CatalogueChecks:
             now = datetime.now(UTC)
             state = evidence.get("state", "access_unknown") if valid else "discarded"
             error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
+            # A rejected read stays rejected even if the reservation returns to
+            # the original event before this transaction acquires the writer.
+            # It says nothing about entitlement and must not impose its backoff.
+            superseded = bool(evidence.get("invalidation") or error.get("code") == "prime_stale_result")
+            if superseded:
+                valid, state = False, "discarded"
             rule = self.network_policy.rule(probe["request"]["allowed_viewing_options"], probe["request"]["content_snapshot"])
             fallback = state
             if valid and rule and (
@@ -340,6 +360,18 @@ class CatalogueChecks:
                 retry_at=time.time() + retry_seconds if valid else 0,
             )
             self.db.set_meta(db, key(device["id"]), evidence)
+            assignment = device.get("stream_assignment") or {}
+            if (assignment.get("catalogue") or {}).get("id") == probe["id"]:
+                if state in {"ready", "network_acquisition_required"}:
+                    assignment["catalogue"]["expires"] = evidence["expires"]
+                else:
+                    assignment.pop("catalogue", None)
+                self.db.save_device(db, device)
+            if superseded:
+                self.db.log(db, now.isoformat(), "Prime catalogue check superseded; rechecking current selection",
+                            json.dumps({"probe_id": probe["id"], "content_id": probe["content_id"],
+                                        "error": error, "invalidation": evidence.get("invalidation")}),
+                            "prime_catalogue", device["id"])
             if not valid or (evidence.get("error") or {}).get("code") == "prime_device_recovery":
                 return
             if not error:

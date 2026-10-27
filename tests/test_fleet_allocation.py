@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from controller.fleet import select_for_stream
+from controller.entitlement_store import identity
 
 
 NOW = datetime(2026, 10, 25, 18, tzinfo=UTC)
@@ -86,6 +87,41 @@ def test_shared_plan_priority_wins_and_one_tick_reserves_all_idle_streams():
     assert fleet.devices["one"]["stream_assignment"]["content_id"] == "c"
     assert fleet.devices["two"]["stream_assignment"]["content_id"] == "a"
     assert fleet.select("one")["content_id"] == "c"
+
+
+@pytest.mark.parametrize("change", ["unchanged", "status_unknown", "ended", "cancelled", "delayed",
+                                    "expired", "revision", "intent", "route", "denied", "paused", "manual"])
+def test_catalogue_reservation_is_bounded_and_never_overrides_withdrawal(change):
+    fleet = rig({"one": "ab", "two": "ab"}, plan=("a",))
+    device = fleet.devices["one"]
+    device["intent_version"] = 3
+    item = fleet.local["one"][0]
+    item["snapshot"] = {"id": "a", "kind": "event", "title": "A"}
+    device["stream_assignment"] = {"content_id": "a", "revision": 1, "catalogue": {
+        "id": "probe", "intent": 3, "expires": NOW.timestamp() + 60, "identity": identity(item)}}
+    if change in {"status_unknown", "ended", "cancelled", "delayed"}:
+        item.update(playable=False, lifecycle={"state": "unknown" if change == "status_unknown" else change})
+    elif change == "expired":
+        device["stream_assignment"]["catalogue"]["expires"] = NOW.timestamp()
+    elif change == "revision":
+        device["revision"] += 1
+    elif change == "intent":
+        device["intent_version"] += 1
+    elif change == "route":
+        item["viewing_options"] = [{"id": "replacement"}]
+    elif change == "denied":
+        item["entitlement"]["status"] = "unentitled"
+    elif change == "paused":
+        device["automation"] = "paused"
+    elif change == "manual":
+        device["manual_control"] = {"session": "remote"}
+    from controller.fleet import catalogue_reservation
+    held = catalogue_reservation(device, fleet.local["one"], NOW)
+    assert held == ("a" if change in {"unchanged", "status_unknown"} else None)
+    if held:
+        assert fleet.select("one")["content_id"] == "a"
+        assert fleet.select("two")["content_id"] == "b"
+        assert fleet.devices["one"]["stream_assignment"]["catalogue"]["id"] == "probe"
 
 
 @pytest.mark.parametrize("claim", ["observed", "pending", "physical", "assignment"])

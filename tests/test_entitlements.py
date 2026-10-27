@@ -74,6 +74,39 @@ async def test_card_projection_does_not_decode_catalogue_evidence(tmp_path, monk
         await cleanup(controller)
 
 
+async def test_catalogue_reimport_and_blocked_queue_never_read_full_entitlement_archive(tmp_path, monkeypatch):
+    import sqlite3
+    controller, _ = rig(tmp_path)
+    seed(controller)
+    try:
+        with controller.db.transaction() as db:
+            item = controller.items(db)[0]
+            db.execute("UPDATE event_entitlements SET state='complete',status='entitled',evidence=?",
+                       (json.dumps({"identity": identity(item), "archive": "x" * 1000000}),))
+            controller.db.set_meta(db, "entitlement_no_listing_v2", True)
+        original = json.loads
+        def bounded(value, *args, **kwargs):
+            assert len(value) < 1000000, "Routine writer parsed the full entitlement archive"
+            return original(value, *args, **kwargs)
+        monkeypatch.setattr(json, "loads", bounded)
+        with controller.db.transaction() as db:
+            db.set_authorizer(lambda action, table, column, database, source:
+                              sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_READ and source is None
+                              and table == "event_entitlements" and column == "evidence"
+                              else sqlite3.SQLITE_OK)
+            controller.seed_entitlements(db)
+            record_entitled(db, "living-room", {"content_snapshot": item["snapshot"],
+                            "allowed_viewing_options": item["viewing_options"]},
+                            {"entitlement_status": "ENTITLED", "viewing_option_id": item["viewing_options"][0]["id"]},
+                            source="foreground", provenance={})
+        with controller.db.transaction() as db:
+            db.execute("UPDATE event_entitlements SET state='retry',next_check=0")
+        monkeypatch.setattr(controller, "entitlement_idle", lambda *args: False)
+        assert controller.prepare_entitlement_check() is None
+    finally:
+        await cleanup(controller)
+
+
 async def test_entitlement_read_projection_migrates_and_tracks_writes(tmp_path):
     from controller.database import Database
     controller, workflow = rig(tmp_path)
