@@ -133,7 +133,7 @@ async def test_shared_positive_cannot_launch_when_local_search_is_unentitled(sha
         result = await original(*args)
         for container in result["containers"]:
             for item in container["items"]:
-                item["entitlement_status"] = "NOT_ENTITLED"
+                item["entitlement_status"] = "UNENTITLED"
         return result
 
     second.executor.player.search = denied
@@ -143,5 +143,6 @@ async def test_shared_positive_cannot_launch_when_local_search_is_unentitled(sha
     await second.executor.observe_catalogue(probe)
     second.stage_playback()
     with controller.db.snapshot() as db:
+        assert controller.db.meta(db, key(second.device_id))["state"] == "feeds_locked"
         assert not db.execute("SELECT 1 FROM jobs WHERE device_id='second-tv'").fetchone()
     assert not any(call[0] == "play" for call in second.executor.player.calls)
