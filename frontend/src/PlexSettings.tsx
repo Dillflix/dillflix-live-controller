@@ -162,9 +162,10 @@ export function PlexSettings({
       )}
       <p>
         Show {deviceName}'s verified live event on its own Plex library item.
-        Each stream has its own item, token and default artwork. The title
-        returns to “Dillflix Live” with your default images five minutes after
-        the last fresh playback confirmation.
+        Each stream has its own item, token and default artwork. The title shows
+        “{deviceName} - Event” during playback and returns to “{deviceName}”
+        with your default images when idle. If playback confirmation is lost,
+        the last event is retained for up to five minutes after confirmation.
       </p>
       {error && (
         <div role="alert" className="df-plex-error">

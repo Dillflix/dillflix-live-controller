@@ -178,10 +178,11 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         return planning_preview(self, db, device, items, self.now(db))
 
     def initialize(self):
-        from .fleet import planning_fields, validate_saved_plan
+        from .fleet import planning_fields, validate_saved_plan, share_vpn_policy
 
         with self.db.transaction() as db:
             validate_saved_plan(self, db)
+            share_vpn_policy(self, db)
             existing = self.db.meta(db, "mode")
             if existing and existing != self.settings.mode:
                 raise ValueError("Use a separate CONTROLLER_DATABASE when changing demo/teamarr mode")

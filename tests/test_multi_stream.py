@@ -115,16 +115,74 @@ def test_shared_catalogue_does_not_rebuild_other_streams(fleet, monkeypatch, dev
     assert calls == [device_id]
 
 
-def test_local_network_preferences_are_never_copied(fleet):
+def test_shared_network_policy_keeps_connection_state_local(fleet):
     client, service, _ = fleet
     with service.db.transaction() as db:
         b = service.db.device(db, "second-tv")
-        b["preferences"]["vpn_policy"] = {"local": "second"}
+        b["preferences"]["vpn_policy"] = {"enabled": True, "locations": []}
         b["prime_network"] = {"state": "ready", "location": "toronto"}
         service.db.save_device(db, b)
     assert command(client, "living-room", {"type": "add", "content_id": "demo:lions"}).status_code == 200
-    assert read(client, "second-tv")["device"]["preferences"]["vpn_policy"] == {"local": "second"}
+    assert read(client, "second-tv")["device"]["preferences"]["vpn_policy"] == {"enabled": True, "locations": []}
+    assert read(client)["device"]["preferences"]["vpn_policy"] == {"enabled": True, "locations": []}
     assert "prime_network" not in read(client)["device"]
+
+
+def test_vpn_edit_from_second_stream_shares_revision_and_undo(fleet):
+    client, service, _ = fleet
+    path = "/api/v1/devices/second-tv/rules"
+    body = client.get(path).json()
+    old_first = read(client)["device"]["revision"]
+    original = body["preferences"].get("vpn_policy")
+    policy = {"enabled": True, "locations": [{"target_id": "montreal", "team_cities": ["Montreal"]}]}
+    body["preferences"]["vpn_policy"] = policy
+    body.update(command_id=str(uuid4()), expected_revision=body.pop("revision"))
+    result = client.put(path, json=body)
+    assert result.status_code == 200, result.text
+    assert client.put(path, json=body).json() == result.json()
+    left, right = read(client), read(client, "second-tv")
+    assert left["device"]["preferences"]["vpn_policy"] == right["device"]["preferences"]["vpn_policy"]
+    assert left["device"]["revision"] > old_first
+    response = client.post("/api/v1/devices/second-tv/undo", json={
+        "command_id": str(uuid4()), "expected_revision": right["device"]["revision"],
+        "history_id": right["undo"]["id"],
+    })
+    assert response.status_code == 200, response.text
+    for device in service.runtimes:
+        assert read(client, device)["device"]["preferences"].get("vpn_policy") == original
+
+
+def test_legacy_vpn_policy_migrates_once_and_new_stream_inherits(tmp_path):
+    from dataclasses import replace
+    settings = Settings(database=str(tmp_path / "migration.sqlite"), simulation_delay=0,
+                        devices=(DeviceSettings("living-room", "Stream 1"),
+                                 DeviceSettings("second-tv", "Stream 2")))
+    first = {"enabled": True, "locations": [{"target_id": "toronto", "team_cities": ["Toronto"]}]}
+    second = {"enabled": False, "locations": []}
+    app = create_app(settings, start_workers=False)
+    with TestClient(app):
+        service = app.state.controller
+        service.db.before_commit = None
+        with service.db.transaction() as db:
+            for key, policy in (("living-room", first), ("second-tv", second)):
+                device = service.db.device(db, key)
+                device["preferences"]["vpn_policy"] = policy
+                device["prime_network"] = {"local": key}
+                service.db.save_device(db, device)
+            canonical = service.db.meta(db, "fleet_plan")
+            canonical["preferences"].pop("vpn_policy", None)
+            service.db.set_meta(db, "fleet_plan", canonical)
+            db.execute("DELETE FROM metadata WHERE key='shared_vpn_policy_migrated'")
+    settings = replace(settings, devices=(*settings.devices, DeviceSettings("third-tv", "Stream 3")))
+    for _ in range(2):
+        app = create_app(settings, start_workers=False)
+        with TestClient(app):
+            service = app.state.controller
+            with service.db.snapshot() as db:
+                for key in service.runtimes:
+                    assert service.db.device(db, key)["preferences"]["vpn_policy"] == first
+                assert service.db.device(db, "second-tv")["prime_network"] == {"local": "second-tv"}
+                assert service.db.meta(db, "legacy_device_vpn_policies") == {"living-room": first, "second-tv": second}
 
 
 def test_selected_display_and_public_status_are_scoped(fleet):

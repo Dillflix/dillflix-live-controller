@@ -37,8 +37,10 @@ on the same Plex server. Switching streams clears unsaved connection/token draft
 
 ## Behavior
 
-- The title follows the currently verified event, for example **Beijing Open:
-  Day 7**, including events without an image. The default title is **Dillflix Live**.
+- The title includes the stream name and verified event, for example **Stream 1 -
+  Beijing Open: Day 7**, including events without an image. Idle streams use
+  **Stream 1** or **Stream 2** and their saved default artwork. Uncertain playback
+  retains the existing five-minute confirmation grace period.
   Requested and last verified titles are shown separately in settings and diagnostics.
 - Upgrading an enabled 0.15.x installation schedules the current title on startup;
   no new playback request or settings change is required. Version 0.16.1 also

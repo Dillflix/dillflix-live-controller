@@ -20,10 +20,18 @@ the shared catalogue. All configured streams use the same Prime account.
 Schema 15 adds a canonical `fleet_plan` metadata record. Plan, rules, team ranks,
 manual completions, public permissions and global preferences are projected to
 device payloads in the same transaction; revisions advance on affected streams.
-VPN policy, automation mode and actual playback are independent. Existing clients
+VPN location policy is shared; automation mode and actual playback are independent. Existing clients
 can still address `living-room`; selected-device overviews include safe stream
 summaries, and the shared schedule may use access confirmed on any stream.
 Execution still requires that stream's own access and network evidence.
+
+Schema 18 shares VPN policy with the other planning preferences. Upgrade adopts
+the primary stream's saved policy (or the first configured stream with a policy
+when the primary has none), archives prior values in `legacy_device_vpn_policies`,
+and projects the policy to all streams. Subsequent edits and undo from any stream
+update all revisions atomically, and new streams inherit the policy. Logical
+targets such as `toronto` resolve through each player's own profile inventory;
+pairing, OpenVPN profile UUIDs and connection evidence remain local to that player.
 
 Schema 17 consolidates subscription discovery into one account catalogue and one
 background queue. Existing current-identity positive receipts are reused across
