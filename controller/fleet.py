@@ -209,8 +209,13 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
             "assigned_at": real.isoformat(),
         }
         service.db.save_device(db, device)
-    if not decision["content_id"] and (reserved or assignments):
-        decision["reason"] = "Waiting for another eligible event; other streams have the current assignments"
+    if not decision["content_id"]:
+        if any(item["active"] and item["playable"] and item["content_id"] not in reserved
+               and (item.get("entitlement") or {}).get("status") == "unknown"
+               and not entitlement_eligible(item) for item in items):
+            decision["reason"] = "Checking Prime access for other live events"
+        elif reserved or assignments:
+            decision["reason"] = "Waiting for another eligible event; other streams have the current assignments"
     return decision
 
 

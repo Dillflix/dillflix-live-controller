@@ -157,6 +157,15 @@ def test_automatic_priorities_and_local_access_failures_remain_authoritative():
     assert fleet.select("two")["content_id"] == "a"
 
 
+def test_unchecked_live_events_are_not_described_as_all_claimed():
+    fleet = rig({"one": "ab", "two": "a"})
+    fleet.devices["one"]["stream_assignment"] = {"content_id": "a", "revision": 1}
+    fleet.local["two"][1]["entitlement"]["status"] = "unknown"
+    result = fleet.select("two")
+    assert result["content_id"] is None
+    assert result["reason"] == "Checking Prime access for other live events"
+
+
 @pytest.mark.parametrize("unavailable", ["player_recovery", "input_handoff", "stopped_executor"])
 def test_unusable_stream_does_not_reserve_new_work_but_retains_physical_claim(unavailable):
     fleet = rig({"one": "ab", "two": "a"})

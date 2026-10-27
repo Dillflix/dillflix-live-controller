@@ -101,7 +101,7 @@ def test_pause_and_runtime_failure_do_not_stop_other_stream(fleet):
 
 
 @pytest.mark.parametrize("device_id", ["living-room", "second-tv"])
-def test_shared_catalogue_reads_each_stream_once(fleet, monkeypatch, device_id):
+def test_shared_catalogue_does_not_rebuild_other_streams(fleet, monkeypatch, device_id):
     _, service, _ = fleet
     calls = []
     for key, runtime in service.runtimes.items():
@@ -112,7 +112,7 @@ def test_shared_catalogue_reads_each_stream_once(fleet, monkeypatch, device_id):
         monkeypatch.setattr(runtime, "items", counted)
     with service.db.snapshot() as db:
         assert service.runtime(device_id).planning_items(db)
-    assert sorted(calls) == ["living-room", "second-tv"]
+    assert calls == [device_id]
 
 
 def test_local_network_preferences_are_never_copied(fleet):
@@ -189,20 +189,20 @@ def test_plan_preview_counts_available_streams_without_mutating_assignments(flee
         assert preview["conflicts"] == [["a", "b"], ["a", "c"]]
 
 
-def test_second_stream_diagnostics_use_its_own_entitlement_worker(fleet):
+def test_second_stream_diagnostics_show_shared_entitlement_worker(fleet):
     from controller.prime_player.diagnostics import collect
 
     _, service, _ = fleet
     with service.db.transaction() as db:
-        service.db.set_meta(db, "entitlement_worker", {"reason": "primary"})
+        service.db.set_meta(db, "entitlement_worker", {"device_id": "living-room", "reason": "shared"})
         service.db.set_meta(db, "entitlement_worker:second-tv", {"reason": "secondary"})
-        service.db.set_meta(db, "entitlement_dispatch_after:second-tv", 123)
+        service.db.set_meta(db, "entitlement_dispatch_after", 123)
     exported = collect(service.settings.database, "second-tv")
     assert {row["device_id"] for row in exported["stream_allocations"]} == {"living-room", "second-tv"}
     assert all("preferences" not in row for row in exported["stream_allocations"])
-    assert exported["entitlement_worker"]["entitlement_worker:second-tv"] == {"reason": "secondary"}
-    assert exported["entitlement_worker"]["entitlement_dispatch_after:second-tv"] == 123
-    assert "entitlement_worker" not in exported["entitlement_worker"]
+    assert exported["entitlement_worker"]["entitlement_worker"] == {"device_id": "living-room", "reason": "shared"}
+    assert exported["entitlement_worker"]["entitlement_dispatch_after"] == 123
+    assert "entitlement_worker:second-tv" not in exported["entitlement_worker"]
 
 
 async def test_secondary_close_failure_still_drains_primary_and_releases_leases(tmp_path):

@@ -1,6 +1,6 @@
 # Upcoming subscription entitlement
 
-Version 0.18.0 queues one durable entitlement job for each Prime event first imported
+The controller queues one durable account-level entitlement job for each Prime event first imported
 from Teamarr. The existing Teamarr import window is the only discovery boundary.
 The upgrade also seeds currently imported events once. Feed refreshes, changing
 scores, restarts and reimporting unchanged event details do not reset completed checks.
@@ -15,9 +15,23 @@ jobs retain their existing handling; playback and manual control still take prio
 Version 0.18.2 also records positive subscription evidence from accepted foreground
 catalogue selections and fresh, attempt-bound playback with an explicitly entitled
 selected feed. This completes the same durable job without an extra search. Existing
-playback is reconciled on its next ordinary monitor. Event/route identity and device
-scope must match; a late background error cannot overwrite the accepted positive.
+playback is reconciled on its next ordinary monitor. Event/route identity and the originating player
+session must match; a late background error cannot overwrite the accepted positive.
 Routine monitoring does not repeatedly refresh completed entitlement records.
+
+All configured streams share the same Prime account, subscription receipts and
+queue. A single worker picks an available player and yields to playback/recovery
+on that player. If a player is unavailable, another can perform the check. Adding
+a stream or opening its Activity page never creates a second scan. Check/Recheck
+on either stream addresses the same job. Activity identifies the player currently
+performing it; diagnostics from any stream include this shared queue and each
+player's dependency state.
+
+Schema 17 reuses existing current-identity positive results across devices and
+archives the original per-device receipts. A device's regional launch denial
+remains local; it does not revoke account subscription evidence. Per-device
+network changes, launch and live verification remain necessary for the selected
+event. Independent Prime accounts require separate controller instances.
 
 Entitlement is separate from event lifecycle, regional availability and live-launch
 readiness. An ENTITLED/UPCOMING or ENTITLED/UNAVAILABLE result is entitled. No match,

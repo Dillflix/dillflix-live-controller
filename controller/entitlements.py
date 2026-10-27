@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .database import encode
-from .entitlement_store import identity
+from .entitlement_store import account_id, identity
 from .executor.models import ExecutorError
 from .model_diagnostics import capture_model_calls_async
 from .planner import allowed_options, parse_time
@@ -70,9 +70,8 @@ class Settled(Exception):
 
 class EntitlementChecks:
     def entitlement_key(self, key, device_id=None):
-        device_id = device_id or self.device_id
-        # Retain the original primary-device history during a single-stream upgrade.
-        return key if device_id == "living-room" else key + ":" + device_id
+        # Queue/progress belong to the shared Prime account, not the viewer's TV.
+        return key
 
     def seed_entitlements(self, db):
         if not self.executor:
@@ -80,35 +79,36 @@ class EntitlementChecks:
         # Unchanged entries keep their result, including reimports. Changed
         # entries must be requeued when the read model invalidates that result.
         # Deduplication lasts for the catalogue retention window, not forever.
-        for device in db.execute("SELECT id FROM devices").fetchall():
-            records = {r["content_id"]: r for r in db.execute(
-                "SELECT e.content_id,e.state,v.evidence FROM event_entitlements e "
-                "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
-                "WHERE e.device_id=?", (device["id"],)
-            )}
-            for row in db.execute("SELECT id,snapshot FROM contents WHERE active=1 AND source='teamarr'"):
-                snapshot = json.loads(row["snapshot"])
-                if any(prime_option(o) for o in snapshot.get("viewing_options", [])):
+        scope = account_id(db, self.root.device_id)
+        records = {r["content_id"]: r for r in db.execute(
+            "SELECT e.content_id,e.state,v.evidence FROM event_entitlements e "
+            "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
+            "WHERE e.device_id=?", (scope,)
+        )}
+        for row in db.execute("SELECT id,snapshot FROM contents WHERE active=1 AND source='teamarr'"):
+            snapshot = json.loads(row["snapshot"])
+            if any(prime_option(o) for o in snapshot.get("viewing_options", [])):
+                db.execute(
+                    "INSERT OR IGNORE INTO event_entitlements(device_id,content_id,next_check) VALUES (?,?,0)",
+                    (scope, row["id"]),
+                )
+                previous = records.get(row["id"])
+                if previous is None or previous["state"] not in {"complete", "retry"}:
+                    continue  # Preserve queued/manual, in-flight and stopped work.
+                evidence = json.loads(previous["evidence"])
+                fingerprint = identity({"snapshot": snapshot, "viewing_options": allowed_options(snapshot)})
+                if evidence.get("identity") and evidence["identity"] != fingerprint:
+                    # Keep the old evidence for audit; entitlement_views already
+                    # exposes it as unknown. Never carry an old no-listing delay
+                    # or a completed job's NULL deadline into the new check.
                     db.execute(
-                        "INSERT OR IGNORE INTO event_entitlements(device_id,content_id,next_check) VALUES (?,?,0)",
-                        (device["id"], row["id"]),
+                        "UPDATE event_entitlements SET state='queued',next_check=0,check_id=NULL "
+                        "WHERE device_id=? AND content_id=?",
+                        (scope, row["id"]),
                     )
-                    previous = records.get(row["id"])
-                    if previous is None or previous["state"] not in {"complete", "retry"}:
-                        continue  # Preserve queued/manual, in-flight and stopped work.
-                    evidence = json.loads(previous["evidence"])
-                    fingerprint = identity({"snapshot": snapshot, "viewing_options": allowed_options(snapshot)})
-                    if evidence.get("identity") and evidence["identity"] != fingerprint:
-                        # Keep the old evidence for audit; entitlement_views already
-                        # exposes it as unknown. Never carry an old no-listing delay
-                        # or a completed job's NULL deadline into the new check.
-                        db.execute(
-                            "UPDATE event_entitlements SET state='queued',next_check=0,check_id=NULL "
-                            "WHERE device_id=? AND content_id=?",
-                            (device["id"], row["id"]),
-                        )
 
     def entitlement_views(self, db, device_id, items):
+        device_id = account_id(db, self.root.device_id)
         records = {r["content_id"]: r for r in db.execute(
             """SELECT e.content_id,e.status,e.state,e.checked_at,e.next_check,v.evidence AS view_evidence
                 FROM event_entitlements e JOIN entitlement_read_models v
@@ -144,6 +144,7 @@ class EntitlementChecks:
 
     def entitlement_command(self, device_id, command):
         def apply(db, device):
+            scope = account_id(db, self.root.device_id)
             if not self.executor:
                 raise HTTPException(409, "Entitlement checks require Prime Player")
             item = next((i for i in self.items(db, device_id) if i["content_id"] == command.content_id), None)
@@ -153,13 +154,13 @@ class EntitlementChecks:
                 raise HTTPException(422, "This event cannot be checked for Prime entitlement")
             db.execute(
                 "INSERT OR IGNORE INTO event_entitlements(device_id,content_id,next_check) VALUES (?,?,0)",
-                (device_id, command.content_id),
+                (scope, command.content_id),
             )
             # Keep both in-flight work and its last observation; another click coalesces.
             db.execute(
                 "UPDATE event_entitlements SET state='queued',next_check=0,manual=1 "
                 "WHERE device_id=? AND content_id=? AND state!='checking'",
-                (device_id, command.content_id),
+                (scope, command.content_id),
             )
         return self.mutate(device_id, command.command_id, command.expected_revision,
                            command.model_dump(), apply)
@@ -213,7 +214,7 @@ class EntitlementChecks:
     def entitlement_progress(self, db, phase, *, content_id=None, reason=None):
         self.db.set_meta(db, self.entitlement_key("entitlement_worker"), {
             "phase": phase, "content_id": content_id, "reason": reason,
-            "updated_at": time.time(),
+            "updated_at": time.time(), "device_id": self.device_id,
         })
 
     def entitlement_service_failure(self, db, device_id, error):
@@ -250,16 +251,17 @@ class EntitlementChecks:
             return False
         def repair_dependency():
             with self.db.transaction() as db:
+                scope = account_id(db, self.root.device_id)
                 self.db.set_meta(db, "entitlement_service:" + device_id, {})
                 # Older deployments charged shared outages to individual events.
                 # Preserve that history, but don't leave them behind hours of backoff
                 # after the dependency has recovered.
                 repair = blocked or not self.db.meta(db, "entitlement_service_repaired:" + device_id, False)
                 for row in (db.execute("SELECT content_id,evidence FROM event_entitlements "
-                                       "WHERE device_id=? AND state='retry'", (device_id,)).fetchall() if repair else []):
+                                       "WHERE device_id=? AND state='retry'", (scope,)).fetchall() if repair else []):
                     if (json.loads(row["evidence"]).get("error") or {}).get("code") in SERVICE_ERRORS:
                         db.execute("UPDATE event_entitlements SET state='queued',next_check=0 "
-                                   "WHERE device_id=? AND content_id=?", (device_id, row["content_id"]))
+                                   "WHERE device_id=? AND content_id=?", (scope, row["content_id"]))
                 self.db.set_meta(db, "entitlement_service_repaired:" + device_id, True)
         await self.playback_work(repair_dependency)
         return True
@@ -268,6 +270,7 @@ class EntitlementChecks:
         if not self.executor:
             return None
         now = time.time()
+        scope = account_id(db, self.root.device_id)
         projected = {i["content_id"]: i for i in items}
         rows, history_rows = [], []
         counts = {s: 0 for s in ("queued", "checking", "retry", "complete", "stopped")}
@@ -278,7 +281,7 @@ class EntitlementChecks:
                             "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
                             "WHERE e.device_id=? ORDER BY "
                             "CASE e.state WHEN 'checking' THEN 0 WHEN 'retry' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,"
-                            "e.manual DESC,e.next_check,e.content_id", (device["id"],)):
+                            "e.manual DESC,e.next_check,e.content_id", (scope,)):
             item = projected.get(r["content_id"])
             if not item or not item.get("entitlement"):
                 continue
@@ -300,7 +303,9 @@ class EntitlementChecks:
                          "due": r["next_check"] is not None and r["next_check"] <= now,
                          "manual": bool(r["manual"])})
         worker = self.db.meta(db, self.entitlement_key("entitlement_worker", device["id"]), {})
-        service = self.db.meta(db, "entitlement_service:" + device["id"], {})
+        candidates = self.entitlement_players(db)
+        worker_id = worker.get("device_id", self.root.device_id)
+        service = {} if candidates else self.db.meta(db, "entitlement_service:" + worker_id, {})
         reason = worker.get("reason")
         phase = worker.get("phase", "starting")
         due = [r for r in rows if r["eligible"] and r["due"] and r["entitlement"]["state"] in {"queued", "retry"}]
@@ -310,7 +315,9 @@ class EntitlementChecks:
         elif counts["checking"] and phase == "idle":
             phase, reason = "waiting", "Waiting to recover an interrupted check"
         elif not counts["checking"]:
-            blocker = self.entitlement_blocker(db, device)
+            blocker = None if candidates else "All players are busy or unavailable"
+            if len(self.root.runtimes) == 1:
+                blocker = self.entitlement_blocker(db, device)
             if due and blocker:
                 phase, reason = "waiting", blocker
             elif due and not any(r["manual"] for r in due) and now < dispatch:
@@ -327,7 +334,9 @@ class EntitlementChecks:
                 phase, reason = "error", worker.get("reason")
         if service:
             phase, reason = "waiting", "Prime search unavailable: " + service["error"]["message"]
-        return {"phase": phase, "reason": reason, "counts": counts, "failed_jobs": failures,
+        return {"scope": "account", "worker_device_id": worker_id,
+                "worker_device_name": self.db.device(db, worker_id)["name"],
+                "phase": phase, "reason": reason, "counts": counts, "failed_jobs": failures,
                 "service_error": service.get("error"),
                 "service_probe_at": datetime.fromtimestamp(service["next_probe"], UTC).isoformat() if service else None,
                 "updated_at": datetime.fromtimestamp(worker["updated_at"], UTC).isoformat() if worker else None,
@@ -341,7 +350,8 @@ class EntitlementChecks:
         now = time.time()
         with self.db.transaction() as db:
             device = self.db.device(db, self.device_id)
-            if not self.db.lease(db, "entitlements:" + device["id"], self.owner, now, CHECK_SECONDS + 60):
+            scope = account_id(db, self.root.device_id)
+            if not self.db.lease(db, "entitlements:account", self.root.owner, now, CHECK_SECONDS + 60):
                 return
             self.entitlement_progress(db, "idle")
             # Upgrade existing no-listing deadlines to daily checks from the last
@@ -370,16 +380,19 @@ class EntitlementChecks:
             # A lost response after restart is unknown. Never immediately replay it.
             for row in db.execute(
                 "SELECT * FROM event_entitlements WHERE device_id=? AND state='checking' AND started_at<?",
-                (device["id"], now - CHECK_SECONDS - 30),
+                (scope, now - CHECK_SECONDS - 30),
             ).fetchall():
                 self.finish_entitlement(db, row, "unknown", {"reason": "Check interrupted; retry scheduled"})
+            if db.execute("SELECT 1 FROM event_entitlements WHERE device_id=? AND state='checking' LIMIT 1",
+                          (scope,)).fetchone():
+                return
             items = {i["content_id"]: i for i in self.items(db, device["id"])}
             # Completed denials from older releases must also discover listings
             # added later. Base the deadline on the original check, not restart
             # time; repeated imports must never push it into the future.
             for old in db.execute("SELECT content_id,checked_at FROM event_entitlements WHERE device_id=? "
                                   "AND state='complete' AND status='unentitled' AND manual=0",
-                                  (device["id"],)).fetchall():
+                                  (scope,)).fetchall():
                 item = items.get(old["content_id"])
                 if not item or not item["active"]:
                     continue
@@ -388,22 +401,22 @@ class EntitlementChecks:
                 db.execute("UPDATE event_entitlements SET state='retry',next_check=? "
                            "WHERE device_id=? AND content_id=?",
                            (no_listing_retry(checked.timestamp(), start.timestamp() if start else None)
-                            if checked else 0, device["id"], old["content_id"]))
+                            if checked else 0, scope, old["content_id"]))
             # Completion cleanup is independent of retry deadlines and playback priority.
             for item in items.values():
                 if item["lifecycle"]["state"] in {"ended", "cancelled"}:
                     db.execute("UPDATE event_entitlements SET state='stopped',next_check=NULL,manual=0 "
                                "WHERE device_id=? AND content_id=? AND state IN ('queued','retry')",
-                               (device["id"], item["content_id"]))
+                               (scope, item["content_id"]))
             due = db.execute(
                 "SELECT e.content_id,e.manual,e.failures,e.next_check FROM event_entitlements e "
                 "JOIN contents c ON c.id=e.content_id "
                 "WHERE (c.active=1 OR e.manual=1) AND e.device_id=? AND e.state IN ('queued','retry') "
-                "AND e.next_check<=? ORDER BY e.manual DESC,e.next_check,e.content_id", (device["id"], now),
+                "AND e.next_check<=? ORDER BY e.manual DESC,e.next_check,e.content_id", (scope, now),
             ).fetchall()
             if not due or not self.entitlement_idle(db, device):
                 return
-            prefer_retry = not self.db.meta(db, "entitlement_last_retry:" + device["id"], False)
+            prefer_retry = not self.db.meta(db, "entitlement_last_retry:" + scope, False)
             due = sorted((r for r in due if r["content_id"] in items),
                          key=lambda r: queue_priority(r, items[r["content_id"]], device, prefer_retry))
             row = None
@@ -411,11 +424,11 @@ class EntitlementChecks:
                 item = items.get(candidate["content_id"])
                 if item and item["lifecycle"]["state"] in {"ended", "cancelled"}:
                     db.execute("UPDATE event_entitlements SET state='stopped',next_check=NULL WHERE device_id=? AND content_id=?",
-                               (device["id"], candidate["content_id"]))
+                               (scope, candidate["content_id"]))
                     continue
                 if item and (item["active"] or candidate["manual"]) and item.get("entitlement"):
                     row = dict(db.execute("SELECT * FROM event_entitlements WHERE device_id=? AND content_id=?",
-                                          (device["id"], candidate["content_id"])).fetchone())
+                                          (scope, candidate["content_id"])).fetchone())
                     break
             if not row or not self.entitlement_idle(db, device):
                 return
@@ -424,10 +437,38 @@ class EntitlementChecks:
             item = items[row["content_id"]]
         return row, item, device
 
+    def entitlement_players(self, db):
+        """Choose a usable player for the single queue; prefer an idle screen."""
+        candidates = []
+        for runtime in self.root.runtimes.values():
+            device = self.db.device(db, runtime.device_id)
+            dependency = self.db.meta(db, "entitlement_service:" + runtime.device_id, {})
+            if (dependency.get("next_probe", 0) <= time.time()
+                    and runtime.entitlement_idle(db, device)):
+                candidates.append((bool(device.get("observed")), runtime.device_id, runtime))
+        return [runtime for _, _, runtime in sorted(candidates, key=lambda value: value[:2])]
+
     async def check_entitlement_once(self):
+        # The root worker owns dispatch. The same lock also coalesces explicit
+        # invocations through different runtimes, including health-before-claim.
+        async with self.root.entitlement_lock:
+            def available():
+                with self.db.snapshot() as db:
+                    return self.entitlement_players(db)
+            candidates = await self.playback_work(available)
+            if not candidates:
+                # Expire interrupted/ended work even while every player is busy.
+                await self.playback_work(self.root.prepare_entitlement_check)
+                await self.playback_work(self.entitlement_write, lambda db:
+                    self.entitlement_progress(db, "waiting", reason="All players are busy or unavailable"))
+            for runtime in candidates:
+                if await runtime._check_entitlement_once():
+                    break
+
+    async def _check_entitlement_once(self):
         prepared = await self.playback_work(self.prepare_entitlement_check)
         if prepared is None:
-            return
+            return True  # Nothing due; do not rebuild the same queue on every player.
         row, item, device = prepared
         workflow = self.executor
         if not await self.entitlement_service_ready(workflow, device["id"]):
@@ -435,7 +476,7 @@ class EntitlementChecks:
         def claim(row):
             with self.db.transaction() as db:
                 current = db.execute("SELECT * FROM event_entitlements WHERE device_id=? AND content_id=?",
-                                     (device["id"], row["content_id"])).fetchone()
+                                     (row["device_id"], row["content_id"])).fetchone()
                 if (not current or current["state"] not in {"queued", "retry"}
                         or current["check_id"] != row["check_id"]
                         or not self.entitlement_idle(db, self.db.device(db, device["id"]))):
@@ -445,17 +486,17 @@ class EntitlementChecks:
                 row.update(check_id=uuid4().hex, started_at=now)
                 db.execute(
                     "UPDATE event_entitlements SET state='checking',check_id=?,started_at=?,next_check=NULL,manual=0 "
-                    "WHERE device_id=? AND content_id=?", (row["check_id"], now, device["id"], row["content_id"]),
+                    "WHERE device_id=? AND content_id=?", (row["check_id"], now, row["device_id"], row["content_id"]),
                 )
                 self.db.set_meta(db, self.entitlement_key("entitlement_dispatch_after"), now + DISPATCH_INTERVAL)
-                self.db.set_meta(db, "entitlement_last_retry:" + device["id"], row["failures"] > 0)
+                self.db.set_meta(db, "entitlement_last_retry:" + row["device_id"], row["failures"] > 0)
                 self.entitlement_progress(db, "searching", content_id=row["content_id"])
             return row
 
         row = await self.playback_work(claim, row)
         if row is None:
-            return
-        evidence = {"identity": identity(item)}
+            return True
+        evidence = {"identity": identity(item), "device_id": device["id"]}
         request = {"content_snapshot": item["snapshot"], "allowed_viewing_options": item["viewing_options"]}
         context = {"source": "schedule_entitlement", "device_id": device["id"],
                    "content_id": item["content_id"], "check_id": row["check_id"]}
@@ -464,7 +505,7 @@ class EntitlementChecks:
             with self.db.snapshot() as db:
                 current_check = db.execute(
                     "SELECT check_id FROM event_entitlements WHERE device_id=? AND content_id=?",
-                    (device["id"], row["content_id"]),
+                    (row["device_id"], row["content_id"]),
                 ).fetchone()
                 if not current_check or current_check[0] != row["check_id"]:
                     raise Settled()
@@ -604,6 +645,7 @@ class EntitlementChecks:
                         self.finish_entitlement(db, row, status, evidence)
                     self.entitlement_progress(db, "waiting" if deferred else "idle", reason=deferred)
             await self.playback_work(persist, status)
+        return True
 
     def finish_entitlement(self, db, row, status, evidence):
         failures = row["failures"] + 1 if status == "unknown" else 0

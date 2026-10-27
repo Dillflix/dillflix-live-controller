@@ -54,6 +54,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         self.device_id = settings.device_id
         self.root = self
         self.runtimes = {self.device_id: self}
+        self.entitlement_lock = asyncio.Lock()
         self._database_guard = database_guard(settings.database)
         self._database_guard.__enter__()
         try:
@@ -90,6 +91,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             # Serialize playback calls with manual handoff, never on the event loop.
             self.playback_lock = threading.RLock()
             self.initialize()
+            from .entitlement_store import share_account
+            with self.db.transaction() as db:
+                share_account(db, self.device_id)
             self.configure_runtimes()
             from .plex.integration import PlexIntegration
 
@@ -161,21 +165,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         return stream_summaries(self, db)
 
     def planning_items(self, db, device_id=None):
-        """Shared browsing may use access on any stream; execution still checks its own."""
-        device_id = device_id or self.device_id
-        items = self.items(db, device_id)
-        if len(self.root.runtimes) < 2:
-            return items
-        indexed = {item["content_id"]: item for item in items}
-        for runtime in self.root.runtimes.values():
-            if runtime.device_id == device_id:
-                continue
-            for item in runtime.items(db):
-                previous = indexed.get(item["content_id"])
-                if previous is None or ((item.get("entitlement") or {}).get("status") == "entitled"
-                                        and (previous.get("entitlement") or {}).get("status") != "entitled"):
-                    indexed[item["content_id"]] = item
-        return list(indexed.values())
+        """All streams read the account's shared subscription catalogue."""
+        return self.items(db, device_id or self.device_id)
 
     def planning_preview(self, db, device, items):
         from .fleet import planning_preview
@@ -1076,7 +1067,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                              maintenance=self.run_maintenance)
             if self.settings.mode == "teamarr":
                 functions.update(catalog=self.run_feed, team_directory=self.run_team_directory)
-        if self.settings.mode == "teamarr" and self.executor:
+        if self is self.root and self.settings.mode == "teamarr" and self.executor:
             functions["entitlements"] = self.run_entitlements
         self.workers = {name: BackgroundWorker(name, function) for name, function in functions.items()}
         self.tasks = [
@@ -1089,6 +1080,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     runtime.start()
 
     async def stop(self):
+        for task in self.tasks:
+            task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
         if self is self.root:
             results = await asyncio.gather(
                 *(runtime.stop() for runtime in self.runtimes.values() if runtime is not self),
@@ -1098,9 +1092,6 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 if isinstance(result, BaseException):
                     log.error("Stream shutdown failed after draining its workers",
                               exc_info=(type(result), result, result.__traceback__))
-        for task in self.tasks:
-            task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
         try:
             try:
                 if self.executor:

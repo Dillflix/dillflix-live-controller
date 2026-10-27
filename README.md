@@ -86,7 +86,13 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
-Multi-stream support introduces schema 15 and an optional server-side device
+Schema 17 shares one subscription catalogue and discovery queue across streams
+using the same Prime account. Existing results are retained; adding a player no
+longer repeats the schedule scan. The shared worker uses an available player,
+while route selection and live playback verification remain per device. Older
+controllers cannot open the upgraded database; use a pre-upgrade backup for rollback.
+
+Multi-stream support introduced schema 15 and an optional server-side device
 registry. Existing `living-room` history and player socket remain valid. Do not
 enable a second stream until its player is qualified; see the [additive setup and
 rollback procedure](docs/multiple-streams.md). Schema 15 prevents older controller

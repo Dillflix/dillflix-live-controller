@@ -32,7 +32,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 16
+    SCHEMA_VERSION = 17
 
     def __init__(self, path):
         self.path = path
@@ -233,6 +233,13 @@ class Database:
                     DELETE FROM entitlement_read_models
                     WHERE device_id=OLD.device_id AND content_id=OLD.content_id;
                     END""")
+            if version < 17:
+                # One account catalogue replaces the duplicated per-device queues.
+                # Older code must not reopen it and start seeding those queues again.
+                db.execute("CREATE TABLE IF NOT EXISTS entitlement_migration_archive AS "
+                           "SELECT * FROM event_entitlements WHERE 0")
+                from .entitlement_store import share_account
+                share_account(db)
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:

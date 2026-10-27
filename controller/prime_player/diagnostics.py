@@ -6,6 +6,8 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..entitlement_store import account_id
+
 
 def redact(value):
     """Exclude credentials even when an upstream error embeds structured context."""
@@ -28,6 +30,7 @@ def collect(path, device_id="living-room"):
     with sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True) as db:
         db.row_factory = sqlite3.Row
         db.execute("BEGIN")
+        scope = account_id(db, device_id)
         device = db.execute("SELECT id,revision,payload FROM devices WHERE id=?", (device_id,)).fetchone()
         if not device:
             raise KeyError(device_id)
@@ -158,22 +161,20 @@ def collect(path, device_id="living-room"):
                     "json_extract(e.evidence,'$.reason') AS reason,"
                     "json_extract(e.evidence,'$.network_context_id') AS network_context_id "
                     "FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
-                    "WHERE e.device_id=?", (device_id,)
+                    "WHERE e.device_id=?", (scope,)
                 )],
                 "schedule_entitlements": [
                     {**dict(r), "evidence": json.loads(r["evidence"])} for r in db.execute(
                         "SELECT * FROM event_entitlements WHERE device_id=? "
                         "AND content_id IN (SELECT id FROM contents) ORDER BY checked_at DESC LIMIT 500",
-                        (device_id,),
+                        (scope,),
                     )
                 ],
                 "entitlement_worker": {
                     r["key"]: json.loads(r["value"]) for r in db.execute(
-                        "SELECT key,value FROM metadata WHERE key IN (?,?,?,?)",
-                        ("entitlement_worker" + (":" + device_id if device_id != "living-room" else ""),
-                         "entitlement_dispatch_after" + (":" + device_id if device_id != "living-room" else ""),
-                         "entitlement_service:" + device_id,
-                         "entitlement_last_retry:" + device_id),
+                        "SELECT key,value FROM metadata WHERE key IN (?,?,?,?) OR key LIKE 'entitlement_service:%'",
+                        ("entitlement_worker", "entitlement_dispatch_after", "entitlement_account",
+                         "entitlement_last_retry:" + scope),
                     )
                 },
                 "catalogue_probe": json.loads(
