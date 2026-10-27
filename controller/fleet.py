@@ -4,7 +4,7 @@ import copy
 import json
 from datetime import timedelta
 
-from .planner import choose, entitlement_eligible, ordered_plan, parse_time, preview_plan
+from .planner import choose, entitlement_eligible, ordered_plan, parse_time, preview_plan, selection_eligible
 from .entitlement_store import identity
 
 
@@ -29,7 +29,7 @@ def catalogue_reservation(device, items, real):
         and not device.get("manual_control") and not device.get("input_handoff")
         and (item["active"] or item["content_id"] in {p["content_id"] for p in device["plan"]})
         and (item["playable"] or item["lifecycle"]["state"] == "unknown")
-        and entitlement_eligible(item)
+        and selection_eligible(item)
         and pending.get("identity") == identity(item)
     ):
         return item["content_id"]
@@ -149,7 +149,7 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
         # N choices per stream suffice: at most N-1 other idle streams can
         # occupy earlier choices. Keep choose's local access/retry/policy rules.
         for key, other in idle.items():
-            local = items if key == device["id"] else runtimes[key].items(db, key)
+            local = items if key == device["id"] else runtimes[key].selection_items(db, key)
             remaining = [item for item in local if item["content_id"] not in occupied]
             options = candidates[key] = {}
             for _ in range(len(idle)):
@@ -209,8 +209,13 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
             "assigned_at": real.isoformat(),
         }
         service.db.save_device(db, device)
-    if not decision["content_id"] and (reserved or assignments):
-        decision["reason"] = "Waiting for another eligible event; other streams have the current assignments"
+    if not decision["content_id"]:
+        if any(item["active"] and item["playable"] and item["content_id"] not in reserved
+               and (item.get("entitlement") or {}).get("status") == "unknown"
+               and not selection_eligible(item) for item in items):
+            decision["reason"] = "Checking Prime access for other live events"
+        elif reserved or assignments:
+            decision["reason"] = "Waiting for another eligible event; other streams have the current assignments"
     return decision
 
 

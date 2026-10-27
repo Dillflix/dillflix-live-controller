@@ -25,6 +25,15 @@ can still address `living-room`; selected-device overviews include safe stream
 summaries, and the shared schedule may use access confirmed on any stream.
 Execution still requires that stream's own access and network evidence.
 
+Allocation can nominate an unchecked event using positive entitlement evidence
+from another configured stream with the same event/route identity. This is a
+transient selection hint, not a copied entitlement, prepared feed, network
+context or playback observation. The chosen stream runs its normal foreground
+catalogue and network checks before launch, without waiting for its background
+queue to rediscover the entire schedule. Local denials and current route failures
+remain authoritative. Shared hints read compact receipts without rebuilding
+other streams' catalogues or reading full model-response archives.
+
 Allocation reserves an event within the coordinator's write transaction before
 catalogue work starts. Other streams exclude pending assignments and retained
 physical attempts. Existing playback keeps its claim through uncertain monitoring

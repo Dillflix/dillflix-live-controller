@@ -390,7 +390,7 @@ def create_app(settings=None, *, start_workers=True):
     def simulate(device_id: str):
         runtime = service.runtime(device_id)
         with service.db.snapshot() as db:
-            d, items = service.db.device(db, device_id), runtime.items(db, device_id)
+            d, items = service.db.device(db, device_id), runtime.selection_items(db, device_id)
             d["force_switch"] = True
             decision = select_for_stream(runtime, db, d, items, service.now(db), datetime.now(UTC), reserve=False)
             alternatives = [

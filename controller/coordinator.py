@@ -55,7 +55,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             if self.executor and hasattr(self.executor, "player_recovery_ready"):
                 if not self.executor.player_recovery_ready(db, d):
                     return True
-            items = self.items(db, d["id"])
+            items = self.selection_items(db, d["id"])
             indexed = {i["content_id"]: i for i in items}
             now = self.now(db)
             from .fleet import select_for_stream
@@ -315,7 +315,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             if not job or job["state"] != "pending" or not self.owns_device(db, job["device_id"]):
                 return False
             d = self.db.device(db, job["device_id"])
-            items = self.items(db, d["id"])
+            items = self.selection_items(db, d["id"])
             from .fleet import select_for_stream
             decision = select_for_stream(self, db, d, items, self.now(db), datetime.now(UTC), reserve=False)
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)

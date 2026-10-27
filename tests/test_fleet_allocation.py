@@ -48,7 +48,8 @@ def rig(capabilities, plan=("a", "b", "c", "d")):
     root = SimpleNamespace(runtimes={})
     for key in devices:
         root.runtimes[key] = SimpleNamespace(root=root, db=database,
-            items=lambda _db, device_id, key=key: copy.deepcopy(local[device_id]))
+            items=lambda _db, device_id, key=key: copy.deepcopy(local[device_id]),
+            selection_items=lambda _db, device_id, key=key: copy.deepcopy(local[device_id]))
 
     def select(key, reserve=True):
         runtime = root.runtimes[key]
@@ -155,6 +156,15 @@ def test_automatic_priorities_and_local_access_failures_remain_authoritative():
         "options": [{"id": "a"}]}}
     assert fleet.select("one")["content_id"] == "b"
     assert fleet.select("two")["content_id"] == "a"
+
+
+def test_unchecked_live_events_are_not_described_as_all_claimed():
+    fleet = rig({"one": "ab", "two": "a"})
+    fleet.devices["one"]["stream_assignment"] = {"content_id": "a", "revision": 1}
+    fleet.local["two"][1]["entitlement"]["status"] = "unknown"
+    result = fleet.select("two")
+    assert result["content_id"] is None
+    assert result["reason"] == "Checking Prime access for other live events"
 
 
 @pytest.mark.parametrize("unavailable", ["player_recovery", "input_handoff", "stopped_executor"])

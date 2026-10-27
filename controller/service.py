@@ -320,6 +320,33 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         ]
         return self.entitlement_views(db, device_id, items)
 
+    def selection_items(self, db, device_id=None):
+        device_id = device_id or self.device_id
+        items = self.items(db, device_id)
+        if not self.executor or len(self.root.runtimes) < 2:
+            return items
+        from .entitlement_store import identity
+
+        unchecked = {item["content_id"]: item for item in items
+                     if (item.get("entitlement") or {}).get("status") == "unknown"}
+        if not unchecked:
+            return items
+        # Read compact identity receipts, not other streams' complete catalogues
+        # or archived model responses. Never write borrowed evidence locally.
+        for row in db.execute(
+            "SELECT e.device_id,e.content_id,e.checked_at,v.evidence FROM event_entitlements e "
+            "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
+            "WHERE e.device_id!=? AND e.status='entitled' ORDER BY e.device_id", (device_id,),
+        ):
+            item = unchecked.get(row["content_id"])
+            if item is None or row["device_id"] not in self.root.runtimes:
+                continue
+            evidence = json.loads(row["evidence"])
+            if evidence.get("identity") == identity(item):
+                item["selection_entitlement"] = {"device_id": row["device_id"],
+                                                  "checked_at": row["checked_at"]}
+        return items
+
     def overview(self, device_id=None):
         device_id = device_id or self.device_id
         if device_id != self.device_id:
