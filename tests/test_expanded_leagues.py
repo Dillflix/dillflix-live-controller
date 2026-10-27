@@ -57,7 +57,7 @@ def test_schema_13_expands_defaults_preserving_custom_settings_and_opt_out(tmp_p
 
 def test_expanded_selection_round_trips_configuration_and_undo(rig):
     client, _, _ = rig
-    assert len(DEFAULT_LEAGUES) == 36
+    assert len(DEFAULT_LEAGUES) == 38
     assert select(client, list(DEFAULT_LEAGUES)).status_code == 200
     exported = client.get("/api/v1/devices/living-room/configuration").json()
     assert exported["configuration"]["preferences"]["discovery_leagues"] == list(DEFAULT_LEAGUES)

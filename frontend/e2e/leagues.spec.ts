@@ -6,6 +6,8 @@ for (const [league, code] of [
   ["EFL Championship", "eng.2"],
   ["Bundesliga", "ger.1"],
   ["2. Bundesliga", "ger.2"],
+  ["EFL Cup", "eng.league_cup"],
+  ["DFB-Pokal", "ger.dfb_pokal"],
   ["MLS", "usa.1"],
   ["NCAA Women's Basketball", "womens-college-basketball"],
   ["PWHL", "pwhl"],

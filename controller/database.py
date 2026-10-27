@@ -32,7 +32,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 18
+    SCHEMA_VERSION = 19
 
     def __init__(self, path):
         self.path = path
@@ -240,6 +240,26 @@ class Database:
                            "SELECT * FROM event_entitlements WHERE 0")
                 from .entitlement_store import share_account
                 share_account(db)
+            if version < 19:
+                # Expand only the previous full selection; preserve custom lists and opt-outs.
+                cup_leagues = ["eng.league_cup", "ger.dfb_pokal"]
+                previous_defaults = {
+                    "nfl", "college-football", "nhl", "mlb", "nba", "cfl", "uefa.champions",
+                    "eng.2", "ger.1", "ger.2", "eng.3", "eng.4", "uefa.europa",
+                    "uefa.europa.conf", "eng.1", "ita.1", "esp.1", "usa.1", "usa.nwsl",
+                    "eng.fa", "wnba", "mens-college-basketball", "womens-college-basketball",
+                    "pwhl", "chl", "ohl", "whl", "qmjhl", "mens-college-hockey",
+                    "womens-college-hockey", "urc", "prem", "nrl", "afl", "pll", "f1",
+                }
+                for device_id, payload in db.execute("SELECT id,payload FROM devices").fetchall():
+                    device = json.loads(payload)
+                    selected = device.get("preferences", {}).get("discovery_leagues")
+                    if isinstance(selected, list) and set(selected) == previous_defaults:
+                        device["preferences"]["discovery_leagues"] = selected + cup_leagues
+                        db.execute(
+                            "UPDATE devices SET payload=?, revision=revision+1 WHERE id=?",
+                            (encode(device), device_id),
+                        )
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:

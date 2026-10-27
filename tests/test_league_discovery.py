@@ -31,6 +31,8 @@ from controller.teamarr import TeamarrClient
     ("usa.1", "soccer", "Away team", "Home team", "espn"),
     ("usa.nwsl", "soccer", "Away team", "Home team", "espn"),
     ("eng.fa", "soccer", "Away team", "Home team", "espn"),
+    ("eng.league_cup", "soccer", "Bradford City", "Peterborough United", "espn"),
+    ("ger.dfb_pokal", "soccer", "Borussia Monchengladbach", "Karlsruher SC", "espn"),
     ("wnba", "basketball", "Away team", "Home team", "espn"),
     ("mens-college-basketball", "basketball", "Away team", "Home team", "espn"),
     ("womens-college-basketball", "basketball", "Away team", "Home team", "espn"),

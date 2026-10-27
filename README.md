@@ -87,6 +87,12 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
+Schema 19 adds EFL Cup / Carabao Cup (`eng.league_cup`) and DFB-Pokal
+(`ger.dfb_pokal`) to discovery, expanding previous 36-league defaults to 38.
+Custom selections stay unchanged. Update Teamarr too and add the two Prime Video
+routes if using an explicit broadcast map. See [cup upgrade instructions](docs/expanded-leagues.md#soccer-cups-schema-19).
+Back up before upgrading; older controllers cannot open schema 19.
+
 Schema 17 shares one subscription catalogue and discovery queue across streams
 using the same Prime account. Existing results are retained; adding a player no
 longer repeats the schedule scan. The shared worker uses an available player,

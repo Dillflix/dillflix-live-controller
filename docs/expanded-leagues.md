@@ -1,5 +1,30 @@
 # Expanded sports discovery (0.19.0)
 
+## Soccer cups (schema 19)
+
+Discovery now also includes EFL Cup / Carabao Cup (`eng.league_cup`) and
+DFB-Pokal (`ger.dfb_pokal`), bringing the default selection to 38 competitions.
+Update Teamarr and the controller together. Schema 19 adds both cups once when
+the saved selection matches the previous 36 defaults, preserving their order.
+Custom and empty selections remain unchanged; enable the cups in Settings.
+Back up the controller database before upgrading; older versions cannot open
+schema 19. Restore the backup to roll back.
+
+If Teamarr has an explicit `controller.league_apps` map, merge these entries:
+
+```json
+{
+  "eng.league_cup": "prime_video",
+  "ger.dfb_pokal": "prime_video"
+}
+```
+
+Both use Teamarr's existing ESPN soccer providers. Prime Video entitlement and
+live availability checks still apply; a DAZN listing alone does not establish
+availability through the Prime channel.
+
+## Original expansion
+
 The controller adds the following 25 competitions to the existing 11 defaults.
 Teamarr already supplies their providers; no new provider API keys are required.
 

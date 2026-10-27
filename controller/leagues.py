@@ -21,6 +21,8 @@ LEAGUE_NAMES = {
     "usa.1": "MLS",
     "usa.nwsl": "NWSL",
     "eng.fa": "FA Cup",
+    "eng.league_cup": "EFL Cup",
+    "ger.dfb_pokal": "DFB-Pokal",
     "wnba": "WNBA",
     "mens-college-basketball": "NCAA Men's Basketball",
     "womens-college-basketball": "NCAA Women's Basketball",
