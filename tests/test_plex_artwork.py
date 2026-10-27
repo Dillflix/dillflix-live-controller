@@ -222,7 +222,8 @@ async def red_image(_url):
 def plex_fleet(tmp_path):
     app = create_app(Settings(
         database=str(tmp_path / "fleet.sqlite"), simulation_delay=0,
-        devices=(DeviceSettings("living-room", "Stream 1"), DeviceSettings("stream-2", "Stream 2")),
+        devices=(DeviceSettings("living-room", "Stream 1", "/run/first.sock", "first:5555"),
+                 DeviceSettings("stream-2", "Stream 2", "/run/second.sock", "second:5555")),
     ), start_workers=False)
     service = app.state.controller
     items = {"8": Plex("8"), "9": Plex("9")}
