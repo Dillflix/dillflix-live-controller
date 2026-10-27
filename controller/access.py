@@ -17,11 +17,12 @@ GUEST = {"type": "user", "id": "guest:anonymous", "name": "Guest"}
 
 
 class ProxyAccess:
-    def __init__(self, app, secret, public_auth_mode="proxy", admin_auth_mode="proxy"):
+    def __init__(self, app, secret, public_auth_mode="proxy", admin_auth_mode="proxy", public_origin=""):
         self.app = app
         self.secret = secret
         self.public_auth_mode = public_auth_mode
         self.admin_auth_mode = admin_auth_mode
+        self.public_origin = public_origin
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in {"http", "websocket"}:
@@ -74,9 +75,16 @@ class ProxyAccess:
             scheme = scope.get("scheme", "http")
             if trusted_proxy:
                 scheme = headers.get("x-forwarded-proto", scheme)
+            # An explicitly configured public origin supports TLS termination
+            # without trusting visitor-supplied forwarding headers. Host and
+            # Fetch Metadata must still match, and authentication above applies.
+            configured_public_origin = (
+                public and self.public_origin
+                and headers.get("origin") == self.public_origin
+            )
             # Guest requests retain the same cross-origin protection as signed-in users.
             if (
-                origin.scheme != scheme
+                (origin.scheme != scheme and not configured_public_origin)
                 or origin.netloc != headers.get("host")
                 or origin.path not in {"", "/"}
                 or origin.query

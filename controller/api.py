@@ -97,6 +97,7 @@ def create_app(settings=None, *, start_workers=True):
         ProxyAccess,
         secret=settings.proxy_secret,
         public_auth_mode=settings.public_auth_mode,
+        public_origin=settings.public_origin,
         admin_auth_mode=settings.admin_auth_mode,
     )
     app.state.controller = service

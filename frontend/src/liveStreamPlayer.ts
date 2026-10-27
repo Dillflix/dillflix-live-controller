@@ -8,19 +8,28 @@ export type StreamSession = {
   playlist_url: string;
 };
 const api = "/api/public/v1/streams/sessions";
+const signInError =
+  "Your access to live streams has expired or is unavailable. Sign in through the public page and try again.";
+const deniedError = "Access to this live stream was denied.";
 
 export async function streamResponse<T>(response: Response): Promise<T> {
-  if (response.status === 401 || response.status === 403)
-    throw new Error(
-      "Your access to live streams has expired or is unavailable. Sign in through the public page and try again.",
-    );
+  if (response.status === 401) throw new Error(signInError);
   const value = await response.json().catch(() => null);
+  if (
+    response.status === 403 &&
+    value?.detail === "Actions require the same origin."
+  )
+    throw new Error(
+      "The controller rejected this page's address. Its reverse proxy configuration needs to be corrected.",
+    );
   if (!response.ok)
     throw new Error(
       typeof value?.detail === "string"
         ? value.detail
         : value?.detail?.message ||
-            "The stream is unavailable. Please try again.",
+            (response.status === 403
+              ? deniedError
+              : "The stream is unavailable. Please try again."),
     );
   if (!value)
     throw new Error("The stream service returned an invalid response.");
@@ -222,9 +231,7 @@ export function startLiveStream(
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (disposed) return;
           if (data.response?.code === 401 || data.response?.code === 403) {
-            fail(
-              "Your access to live streams has expired or is unavailable. Sign in through the public page and try again.",
-            );
+            fail(data.response.code === 401 ? signInError : deniedError);
           } else if (data.fatal) {
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecovery) {
               mediaRecovery = true;

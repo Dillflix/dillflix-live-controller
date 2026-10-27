@@ -341,7 +341,7 @@ test("authentication errors are actionable and Retry stream creates a fresh inde
   page,
 }) => {
   const data = await fixture(page);
-  data.createStatus = 403;
+  data.createStatus = 401;
   await page.goto("/public/");
   const card = page.getByTestId("stream-sports0");
   await card.getByRole("button", { name: "Watch stream" }).click();
@@ -361,6 +361,24 @@ test("authentication errors are actionable and Retry stream creates a fresh inde
   await expect.poll(() => data.deleted).toContain(data.created[1].id);
   expect(data.schedulerWrites).toBe(0);
 });
+
+for (const [label, response, message] of [
+  ["origin mismatch", { json: { detail: "Actions require the same origin." } }, "reverse proxy configuration needs to be corrected"],
+  ["permission rejection", { json: { detail: "The authentication proxy must supply an authorized role." } }, "The authentication proxy must supply an authorized role."],
+  ["proxy HTML rejection", { contentType: "text/html", body: "<h1>Forbidden</h1>" }, "Access to this live stream was denied."],
+] as const) {
+  test(`session ${label} is not reported as an expired login`, async ({ page }) => {
+    const data = await fixture(page);
+    await page.route(`**${path}/sessions`, route => route.fulfill({ status: 403, ...response }));
+    await page.goto("/public/");
+    const card = page.getByTestId("stream-sports0");
+    await card.getByRole("button", { name: "Watch stream" }).click();
+    await expect(card.getByRole("alert")).toContainText(message);
+    await expect(card.getByRole("alert")).not.toContainText("Sign in");
+    expect(data.manifests).toHaveLength(0);
+    expect(data.schedulerWrites).toBe(0);
+  });
+}
 
 test("a quality change fences late allocation results and releases only the older session", async ({
   page,

@@ -3,6 +3,7 @@ import os
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .executor.config import ExecutorConfig
 from .live_stream_config import validate_configuration, validate_device_map
@@ -28,6 +29,7 @@ class Settings:
     devices: tuple[DeviceSettings, ...] = ()
     proxy_secret: str = ""
     public_auth_mode: str = "proxy"
+    public_origin: str = ""
     admin_auth_mode: str = "proxy"
     live_browser_api_url: str = ""
     live_browser_api_key: str = field(default="", repr=False)
@@ -66,6 +68,21 @@ class Settings:
         validate_device_map(self.live_browser_device_map)
         if self.public_auth_mode not in {"proxy", "guest"}:
             raise ValueError("CONTROLLER_PUBLIC_AUTH_MODE must be proxy or guest")
+        if self.public_origin:
+            try:
+                origin = urlsplit(self.public_origin)
+                valid = (
+                    origin.scheme in {"http", "https"} and origin.hostname
+                    and origin.port != 0 and not origin.username and not origin.password
+                    and origin.path in {"", "/"} and not origin.query and not origin.fragment
+                    and not any(c.isspace() or ord(c) < 32 for c in self.public_origin)
+                    and not any(c in self.public_origin for c in "@*\\?#")
+                )
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError("CONTROLLER_PUBLIC_ORIGIN must be an HTTP(S) origin without credentials, path, query or fragment")
+            object.__setattr__(self, "public_origin", self.public_origin.rstrip("/"))
         if self.admin_auth_mode not in {"proxy", "trusted-lan"}:
             raise ValueError("CONTROLLER_ADMIN_AUTH_MODE must be proxy or trusted-lan")
         if len(self.devices) > 8:
@@ -127,6 +144,7 @@ class Settings:
             devices=devices,
             proxy_secret=os.getenv("CONTROLLER_PROXY_SECRET", ""),
             public_auth_mode=os.getenv("CONTROLLER_PUBLIC_AUTH_MODE", "proxy"),
+            public_origin=os.getenv("CONTROLLER_PUBLIC_ORIGIN", ""),
             admin_auth_mode=os.getenv("CONTROLLER_ADMIN_AUTH_MODE", "proxy"),
             live_browser_api_url=os.getenv("LIVE_BROWSER_API_URL", "").strip().rstrip("/"),
             live_browser_api_key=os.getenv("LIVE_BROWSER_API_KEY", ""),
