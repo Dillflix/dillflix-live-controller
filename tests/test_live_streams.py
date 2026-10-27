@@ -40,9 +40,10 @@ class TrackedStream(httpx.AsyncByteStream):
 @pytest.fixture
 def live_client(tmp_path, monkeypatch):
     @contextmanager
-    def build(handler, *, enabled=True, public_mode="guest", device_map=None):
+    def build(handler, *, enabled=True, public_mode="guest", device_map=None, public_origin=""):
         settings = Settings(
             database=str(tmp_path / "live.sqlite"), public_auth_mode=public_mode,
+            public_origin=public_origin,
             proxy_secret="proxy-key", live_browser_api_url="http://live-lb:8000" if enabled else "",
             live_browser_api_key=KEY if enabled else "",
             live_browser_device_map=device_map or {}, simulation_delay=0,
@@ -54,6 +55,26 @@ def live_client(tmp_path, monkeypatch):
             yield client, gateway, app.state.controller
         assert gateway.client is None or gateway.client.is_closed
     return build
+
+
+@pytest.mark.parametrize("stream_id", ["sports0", "sports1"])
+def test_https_public_origin_supports_stream_creation_and_release(live_client, stream_id):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if request.method == "POST":
+            return httpx.Response(200, json={"session_id": SESSION, "expires_in": 120})
+        return httpx.Response(204)
+
+    origin = "https://live-controller.example.com"
+    headers = {"host": "live-controller.example.com", "origin": origin, "sec-fetch-site": "same-origin"}
+    with live_client(handler, public_origin=origin) as (client, _, _):
+        response = client.post(ROOT + "/sessions", headers=headers, json={"stream_id": stream_id, "tier": 2})
+        assert response.status_code == 200, response.text
+        assert response.json()["playlist_url"] == MEDIA + "index.m3u8"
+        assert client.delete(ROOT + f"/sessions/{SESSION}", headers=headers).status_code == 204
+        assert [request.method for request in calls] == ["POST", "DELETE"]
 
 
 def test_disabled_catalog_does_not_contact_live_service(live_client):

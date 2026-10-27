@@ -325,6 +325,12 @@ This screen feed does not write to the catalog, watch plan, jobs, observed playb
 
 Application authentication is intentionally delegated to the existing nginx proxy. The initial deployment uses a single process and local SQLite on persistent storage. No Fire TV credentials, screenshots, or manual input text are stored. Manual ownership is stored separately from event playback intent.
 
+Public mutations compare the browser Origin with Host and the request scheme,
+using a forwarded scheme only from an authenticated proxy. An optional configured
+`CONTROLLER_PUBLIC_ORIGIN` supplies the external origin for TLS termination; it
+does not relax Host/Fetch Metadata checks, change authentication, or affect admin
+origins. Unconfigured and direct LAN deployments keep their existing behavior.
+
 
 ## Manual device control
 

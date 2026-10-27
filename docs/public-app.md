@@ -171,6 +171,14 @@ Programmatic admin writes must supply that same Origin in addition to their
 existing proxy authentication. Existing executor API token checks still apply;
 machine clients must also pass the authenticated admin proxy boundary.
 
+For an existing TLS proxy that performs its own login check in front of guest
+mode, `CONTROLLER_PUBLIC_ORIGIN=https://your-public-hostname` declares the public
+API's external origin without relying on forwarded scheme headers. It must be an
+HTTP(S) origin without a path, query, credentials or fragment. `Host` must still
+match, and cross-site requests remain rejected. This does not change either
+authentication mode or extend the origin accepted by admin APIs. Direct LAN
+requests retain their normal same-origin behavior. See [HTTPS stream access](live-streams.md#access-and-transport).
+
 In proxy mode without `CONTROLLER_PROXY_SECRET`, the existing trusted-LAN/admin deployment
 continues to work; **public APIs fail closed with 503**. Do not expose that legacy
 deployment as a public service. Public API responses omit actor lists, internal

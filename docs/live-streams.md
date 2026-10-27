@@ -83,6 +83,27 @@ browser viewing available to anyone who can access that public surface.
 
 Existing nginx public examples already forward `/api/public/v1/`; no new public
 hostname, exposed receiver port, CORS policy or nginx location is required.
+
+If viewing works over LAN HTTP but the HTTPS public page rejects session creation
+with `403 {"detail":"Actions require the same origin."}`, set the browser-facing
+origin in the controller's `.env`, then recreate the controller container:
+
+```dotenv
+CONTROLLER_PUBLIC_ORIGIN=https://live-controller.example.com
+```
+
+Use the actual public hostname, including a nonstandard port if present, without
+the `/public/` path. This explicitly identifies the external origin when nginx
+terminates HTTPS and forwards HTTP without the controller's proxy credential.
+nginx must still preserve `Host` (`proxy_set_header Host $http_host;`). The setting
+applies only to public APIs, retains direct LAN access, and does not bypass login,
+trust arbitrary forwarding headers, or authorize other origins. Existing PlexSSO
+authentication at nginx stays in place. The authenticated proxy examples already
+support HTTPS using the matching proxy key and `X-Forwarded-Proto` instead.
+
+The player distinguishes a 401 sign-in failure from a 403 origin/configuration
+rejection. Older builds incorrectly described both as expired stream access.
+
 The controller's outgoing connection must reach the LB. Keep receiver and LB
 service-key endpoints private to the deployment. The HTTP segment traffic passes
 through the controller, so include viewer bandwidth and connection capacity when
