@@ -108,9 +108,10 @@ class EntitlementChecks:
 
     def entitlement_views(self, db, device_id, items):
         records = {r["content_id"]: r for r in db.execute(
-            """SELECT content_id,status,state,checked_at,next_check,view_evidence
-                FROM event_entitlements
-                WHERE device_id=? AND content_id IN (SELECT id FROM contents)""", (device_id,)
+            """SELECT e.content_id,e.status,e.state,e.checked_at,e.next_check,v.evidence AS view_evidence
+                FROM event_entitlements e JOIN entitlement_read_models v
+                ON v.device_id=e.device_id AND v.content_id=e.content_id
+                WHERE e.device_id=? AND e.content_id IN (SELECT id FROM contents)""", (device_id,)
         )}
         for item in items:
             row = records.get(item["content_id"])
@@ -270,8 +271,9 @@ class EntitlementChecks:
         counts = {s: 0 for s in ("queued", "checking", "retry", "complete", "stopped")}
         failures = 0
         for r in db.execute("SELECT e.content_id,e.state,e.failures,e.started_at,e.next_check,e.manual,"
-                            "e.view_evidence "
+                            "v.evidence AS view_evidence "
                             "FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
+                            "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
                             "WHERE e.device_id=? ORDER BY "
                             "CASE e.state WHEN 'checking' THEN 0 WHEN 'retry' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,"
                             "e.manual DESC,e.next_check,e.content_id", (device["id"],)):

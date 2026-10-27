@@ -202,9 +202,9 @@ class Database:
             if version < 16:
                 # Large retained model/catalogue bodies must be parsed only when
                 # evidence changes, never by every browser/ticker/planner read.
-                columns = {row[1] for row in db.execute("PRAGMA table_info(event_entitlements)")}
-                if "view_evidence" not in columns:
-                    db.execute("ALTER TABLE event_entitlements ADD COLUMN view_evidence TEXT NOT NULL DEFAULT '{}'")
+                db.execute("""CREATE TABLE IF NOT EXISTS entitlement_read_models (
+                    device_id TEXT NOT NULL, content_id TEXT NOT NULL, evidence TEXT NOT NULL,
+                    PRIMARY KEY(device_id,content_id))""")
                 projection = """json_object(
                     'identity',json_extract(evidence,'$.identity'),
                     'reason',json_extract(evidence,'$.reason'),
@@ -219,13 +219,20 @@ class Database:
                             'state',json_extract(value,'$.state'),
                             'error',json_extract(value,'$.error')))
                             FROM json_each(evidence,'$.audit.search_attempts')))))"""
-                db.execute(f"UPDATE event_entitlements SET view_evidence={projection}")
+                db.execute(f"INSERT OR REPLACE INTO entitlement_read_models "
+                           f"SELECT device_id,content_id,{projection} FROM event_entitlements")
                 for event, name in (("INSERT", "insert"), ("UPDATE OF evidence", "update")):
                     db.execute(f"""CREATE TRIGGER IF NOT EXISTS entitlement_view_{name}
                         AFTER {event} ON event_entitlements BEGIN
-                        UPDATE event_entitlements SET view_evidence={projection}
+                        INSERT OR REPLACE INTO entitlement_read_models
+                        SELECT device_id,content_id,{projection} FROM event_entitlements
                         WHERE device_id=NEW.device_id AND content_id=NEW.content_id;
                         END""")
+                db.execute("""CREATE TRIGGER IF NOT EXISTS entitlement_view_delete
+                    AFTER DELETE ON event_entitlements BEGIN
+                    DELETE FROM entitlement_read_models
+                    WHERE device_id=OLD.device_id AND content_id=OLD.content_id;
+                    END""")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:

@@ -400,6 +400,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
     [busy, setBusy] = useState(false),
     [connected, setConnected] = useState(true);
   const fetchVersion = useRef(0);
+  const loadError = useRef("");
   const mounted = useRef(true);
   const reader = useMemo(() => overviewRead((signal) => api<Overview>(
     "/overview" + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""),
@@ -412,27 +413,37 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
       if (mounted.current && serial === fetchVersion.current) {
         setData(next);
         setConnected(true);
+        const previous = loadError.current;
+        loadError.current = "";
+        setError((current) => current === previous ? "" : current);
       }
     } catch (e) {
       if (mounted.current && serial === fetchVersion.current) {
         setConnected(false);
+        loadError.current = (e as Error).message;
         setError((e as Error).message);
       }
     }
   }, [reader]);
   useEffect(() => {
     mounted.current = true;
-    void load();
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await load();
+      if (!stopped) timer = setTimeout(() => void poll(), 10000);
+    };
+    void poll();
     const source = new EventSource("/api/v1/updates");
     source.addEventListener("update", () => void load());
     source.onerror = () => setConnected(false);
-    const poll = setInterval(() => void load(), 10000);
     return () => {
+      stopped = true;
       mounted.current = false;
       reader.abort();
       ++fetchVersion.current;
       source.close();
-      clearInterval(poll);
+      clearTimeout(timer);
     };
   }, [load, reader]);
   const close = useCallback(() => setModal(null), []);

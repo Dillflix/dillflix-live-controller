@@ -135,6 +135,7 @@ function PublicWorkspace({ deviceId, selectDevice }: {
   const [busy, setBusy] = useState(false);
   const [detailsId, setDetailsId] = useState<string | null>(null);
   const loading = useRef(0);
+  const loadError = useRef("");
   const mounted = useRef(true);
   const submitting = useRef(false);
   // Device controls change, but independent browser viewing sessions stay mounted.
@@ -154,10 +155,14 @@ function PublicWorkspace({ deviceId, selectDevice }: {
       if (mounted.current && generation === selection.current.generation && serial === loading.current) {
         setData(next);
         setConnected(true);
+        const previous = loadError.current;
+        loadError.current = "";
+        setError((current) => current === previous ? "" : current);
       }
     } catch (e) {
       if (mounted.current && generation === selection.current.generation && serial === loading.current) {
         setConnected(false);
+        loadError.current = (e as Error).message;
         setError((e as Error).message);
       }
     }
@@ -170,12 +175,18 @@ function PublicWorkspace({ deviceId, selectDevice }: {
     setError("");
     setNotice("");
     setDetailsId(null);
-    void load();
-    const timer = setInterval(() => void load(), 5000);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await load();
+      if (!stopped) timer = setTimeout(() => void poll(), 5000);
+    };
+    void poll();
     return () => {
+      stopped = true;
       mounted.current = false;
       reader.abort();
-      clearInterval(timer);
+      clearTimeout(timer);
       ++loading.current;
     };
   }, [load, reader]);
