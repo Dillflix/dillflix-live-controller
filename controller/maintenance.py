@@ -16,6 +16,7 @@ TABLES = (
     "team_directory",
     "content_status",
     "event_entitlements",
+    "entitlement_migration_archive",
     "simulated_jobs",
     "simulated_cancellations",
     "executor_jobs",
@@ -143,6 +144,8 @@ def prune(database, settings, owner):
         )
         # Deduplicate reimports only for the bounded catalogue retention window.
         db.execute("DELETE FROM event_entitlements WHERE content_id NOT IN (SELECT id FROM contents) "
+                   "AND content_id NOT IN (SELECT id FROM keep_contents)")
+        db.execute("DELETE FROM entitlement_migration_archive WHERE content_id NOT IN (SELECT id FROM contents) "
                    "AND content_id NOT IN (SELECT id FROM keep_contents)")
         known = {r[0] for r in db.execute("SELECT id FROM contents")}
         for row in db.execute("SELECT id,before_payload,after_payload FROM edit_history").fetchall():

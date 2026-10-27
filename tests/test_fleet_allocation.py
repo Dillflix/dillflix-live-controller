@@ -48,8 +48,7 @@ def rig(capabilities, plan=("a", "b", "c", "d")):
     root = SimpleNamespace(runtimes={})
     for key in devices:
         root.runtimes[key] = SimpleNamespace(root=root, db=database,
-            items=lambda _db, device_id, key=key: copy.deepcopy(local[device_id]),
-            selection_items=lambda _db, device_id, key=key: copy.deepcopy(local[device_id]))
+            items=lambda _db, device_id, key=key: copy.deepcopy(local[device_id]))
 
     def select(key, reserve=True):
         runtime = root.runtimes[key]

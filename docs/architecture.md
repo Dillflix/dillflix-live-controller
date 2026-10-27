@@ -13,9 +13,9 @@ Prime completion is written atomically to the executor report and durable conten
 The optional server-side device registry binds stable IDs to player sockets and
 ADB serials. A controller runtime and executor worker belong to exactly one
 binding; serial mismatches are rejected before player mutations. Coordinator
-leases, worker locks, attempts, manual ownership, entitlement evidence and network
-state remain device-scoped. Feed discovery, lifecycle lookup and database
-maintenance run once for the shared catalogue.
+leases, worker locks, attempts, manual ownership and network state remain device-scoped. Feed discovery,
+subscription discovery, lifecycle lookup and database maintenance run once for
+the shared catalogue. All configured streams use the same Prime account.
 
 Schema 15 adds a canonical `fleet_plan` metadata record. Plan, rules, team ranks,
 manual completions, public permissions and global preferences are projected to
@@ -25,14 +25,25 @@ can still address `living-room`; selected-device overviews include safe stream
 summaries, and the shared schedule may use access confirmed on any stream.
 Execution still requires that stream's own access and network evidence.
 
-Allocation can nominate an unchecked event using positive entitlement evidence
-from another configured stream with the same event/route identity. This is a
-transient selection hint, not a copied entitlement, prepared feed, network
-context or playback observation. The chosen stream runs its normal foreground
-catalogue and network checks before launch, without waiting for its background
-queue to rediscover the entire schedule. Local denials and current route failures
-remain authoritative. Shared hints read compact receipts without rebuilding
-other streams' catalogues or reading full model-response archives.
+Schema 17 consolidates subscription discovery into one account catalogue and one
+background queue. Existing current-identity positive receipts are reused across
+streams; adding a device does not seed another schedule scan. The legacy
+`event_entitlements.device_id` column stores a stable account anchor from
+`entitlement_account`, not the player that must execute a check. Original
+per-device receipts are retained in `entitlement_migration_archive` until their
+events leave the normal retention window. Source device/session/network evidence
+remains in receipts. Older controllers cannot reopen this schema.
+
+Only the root runtime starts the entitlement worker. It selects an available
+player, prefers idle screens, and can use another player when one is busy or
+unavailable. One shared dispatch lock, account lease and atomic job claim prevent
+duplicate background searches; manual checks from either stream coalesce into the
+same job. All streams read the same compact entitlement projection and queue.
+Foreground positive evidence from either player settles that shared job and fences
+late background results. Local route failures stay in each device's `prime_access`.
+The selected player still checks its current feed, network, session and live
+playback before reporting success. Prepared playback data is not transferred
+between player sessions.
 
 Allocation reserves an event within the coordinator's write transaction before
 catalogue work starts. Other streams exclude pending assignments and retained

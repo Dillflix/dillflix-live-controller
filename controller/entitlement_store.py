@@ -9,6 +9,61 @@ from .planner import allowed_options
 from .prime_player.labels import prime_option
 
 
+def account_id(db, fallback="living-room"):
+    """One Prime account per controller; the legacy device_id column is its key."""
+    row = db.execute("SELECT value FROM metadata WHERE key='entitlement_account'").fetchone()
+    return json.loads(row[0]) if row else fallback
+
+
+def share_account(db, fallback=None):
+    """Consolidate old device queues once, retaining their original audit records.
+
+    Subscription positives for the current event identity outrank a denial on a
+    different route. Route failures remain in each device's prime_access state.
+    Read compact receipts to choose winners; copy large evidence only in SQLite.
+    """
+    if db.execute("SELECT 1 FROM metadata WHERE key='entitlement_account'").fetchone():
+        return
+    first = db.execute("SELECT id FROM devices ORDER BY rowid LIMIT 1").fetchone()
+    owner = first[0] if first else fallback
+    if owner is None:
+        return
+    db.execute("INSERT INTO metadata(key,value) VALUES ('entitlement_account',?)", (encode(owner),))
+    others = db.execute("SELECT 1 FROM event_entitlements WHERE device_id!=? LIMIT 1", (owner,)).fetchone()
+    if not others:
+        return
+    db.execute("INSERT INTO entitlement_migration_archive SELECT * FROM event_entitlements")
+    fingerprints = {}
+    for cid, raw in db.execute("SELECT id,snapshot FROM contents"):
+        snapshot = json.loads(raw)
+        fingerprints[cid] = identity({"snapshot": snapshot, "viewing_options": allowed_options(snapshot)})
+    groups = {}
+    for device, cid, status, state, checked, manual, raw in db.execute(
+        "SELECT e.device_id,e.content_id,e.status,e.state,e.checked_at,e.manual,v.evidence "
+        "FROM event_entitlements e JOIN entitlement_read_models v "
+        "ON v.device_id=e.device_id AND v.content_id=e.content_id"
+    ):
+        valid = bool(fingerprints.get(cid) and json.loads(raw).get("identity") == fingerprints[cid])
+        groups.setdefault(cid, []).append((valid, status == "entitled", checked or "", device, state, manual))
+    columns = [row[1] for row in db.execute("PRAGMA table_info(event_entitlements)") if row[1] != "device_id"]
+    names = ",".join(columns)
+    for cid, candidates in groups.items():
+        valid, _, _, source, state, _ = max(candidates)
+        if source != owner:
+            db.execute(f"INSERT OR REPLACE INTO event_entitlements(device_id,{names}) "
+                       f"SELECT ?,{names} FROM event_entitlements WHERE device_id=? AND content_id=?",
+                       (owner, source, cid))
+        # Preserve source provenance without changing the original archived receipt.
+        db.execute("UPDATE event_entitlements SET evidence=json_set(evidence,'$.device_id',?) "
+                   "WHERE device_id=? AND content_id=?", (source, owner, cid))
+        manual = any(candidate[5] for candidate in candidates)
+        if manual or not valid or state == "checking":
+            db.execute("UPDATE event_entitlements SET state='queued',next_check=0,check_id=NULL,manual=?,"
+                       "status=CASE WHEN ? THEN status ELSE 'unknown' END WHERE device_id=? AND content_id=?",
+                       (int(manual), valid, owner, cid))
+    db.execute("DELETE FROM event_entitlements WHERE device_id!=?", (owner,))
+
+
 def identity(item):
     snapshot = item["snapshot"]
     event = snapshot.get("event") or {}
@@ -40,13 +95,15 @@ def record_entitled(db, device_id, request, selected, *, source, provenance):
     fingerprint = identity({"snapshot": snapshot, "viewing_options": options})
     if fingerprint != identity({"snapshot": current, "viewing_options": allowed_options(current)}):
         return
+    observed_device = device_id
+    device_id = account_id(db, device_id)
     row = db.execute("SELECT e.status,v.evidence FROM event_entitlements e JOIN entitlement_read_models v "
                      "ON v.device_id=e.device_id AND v.content_id=e.content_id "
                      "WHERE e.device_id=? AND e.content_id=?",
                      (device_id, snapshot["id"])).fetchone()
     if row and row["status"] == "entitled" and json.loads(row["evidence"]).get("identity") == fingerprint:
         return  # Routine monitoring must not refresh a conclusive check or cancel an admin recheck.
-    evidence = {"identity": fingerprint, "source": source,
+    evidence = {"identity": fingerprint, "source": source, "device_id": observed_device,
                 "reason": "Included with your subscription", "selected": selected,
                 **provenance}
     db.execute("INSERT OR IGNORE INTO event_entitlements(device_id,content_id) VALUES (?,?)",

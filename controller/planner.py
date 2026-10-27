@@ -135,18 +135,6 @@ def entitlement_eligible(item):
     return entitlement is None or entitlement.get("status") == "entitled"
 
 
-def selection_eligible(item):
-    """Shared positive discovery can nominate a locally unchecked candidate.
-
-    This is not local playback evidence. The selected stream still performs its
-    own catalogue/network verification; a local denial is never overridden.
-    """
-    return entitlement_eligible(item) or (
-        (item.get("entitlement") or {}).get("status") == "unknown"
-        and bool(item.get("selection_entitlement"))
-    )
-
-
 def choose(device, items, now, real_now):
     indexed = {e["content_id"]: e for e in items}
     current_id = (device.get("observed") or {}).get("content_id")
@@ -162,7 +150,7 @@ def choose(device, items, now, real_now):
     for item in items:
         if not item["active"] and item["content_id"] not in committed | {current_id}:
             continue
-        if not selection_eligible(item) and item["content_id"] != current_id:
+        if not entitlement_eligible(item) and item["content_id"] != current_id:
             continue
         evidence = access.get(item["content_id"], {})
         if (evidence.get("scope") == device.get("prime_network_scope")

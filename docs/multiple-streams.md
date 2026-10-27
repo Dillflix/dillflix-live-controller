@@ -6,6 +6,13 @@ attempts, recovery, screen and manual-control ownership. The existing primary
 stream keeps the `living-room` ID and its history. Adding a stream does not create
 a second controller database or a separate watch plan.
 
+All streams in an instance use the same Prime account. Subscription discovery
+runs once through one shared queue, using whichever player is available. Existing
+results apply immediately to an added stream; its own network route and selected
+live playback are still verified. Use separate controllers for different Prime
+accounts. Schema 17 consolidates older per-device queues while retaining their
+original evidence for the normal catalogue retention window.
+
 The normal upgrade copies the existing stream's plan to the new stream. If an
 older database already contains conflicting independent plans, startup rejects
 the configuration before changing those plans. Reconcile those records with an

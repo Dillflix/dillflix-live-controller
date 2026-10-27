@@ -170,7 +170,6 @@ class CatalogueChecks:
             "state": "pending",
             "device_id": device["id"],
             "content_id": item["content_id"],
-            "selection_entitlement": item.get("selection_entitlement"),
             "revision": device["revision"],
             "intent": device["intent_version"],
             "requested_at": datetime.now(UTC).isoformat(),

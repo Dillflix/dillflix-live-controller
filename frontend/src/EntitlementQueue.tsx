@@ -2,6 +2,8 @@ import { useState } from "react";
 import { EntitlementStatus, type Entitlement } from "./EntitlementStatus";
 
 export interface EntitlementQueueView {
+  scope?: "account";
+  worker_device_name?: string;
   phase: string;
   reason: string | null;
   updated_at: string | null;
@@ -62,6 +64,7 @@ export function EntitlementQueue({
     >
       <h3 id="entitlement-queue-title">Entitlement checks</h3>
       <p className="df-subtitle">
+        {value.scope === "account" && "One shared subscription catalogue for all streams. "}
         Checks run during stable playback. Launches, recovery and manual control
         take priority; routine monitoring runs between catalogue searches.
       </p>
@@ -85,6 +88,9 @@ export function EntitlementQueue({
                       : "Queue idle"}
         </strong>
         <span>{value.reason}</span>
+        {value.counts.checking > 0 && value.worker_device_name && (
+          <small>Checking with {value.worker_device_name}</small>
+        )}
         {value.updated_at && (
           <small>Last worker update {date(value.updated_at)}</small>
         )}
