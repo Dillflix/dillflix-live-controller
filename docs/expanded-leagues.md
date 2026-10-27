@@ -23,6 +23,38 @@ Both use Teamarr's existing ESPN soccer providers. Prime Video entitlement and
 live availability checks still apply; a DAZN listing alone does not establish
 availability through the Prime channel.
 
+## Schema 19 startup recovery
+
+Schema 19 expanded device discovery selections but omitted the canonical
+`fleet_plan` metadata. Multi-stream installations could then fail startup with
+`Saved stream plans differ from the shared plan`. Schema 20 repairs this exact
+mismatch, including databases already upgraded to schema 19. It changes only
+the shared discovery list after verifying that all stream planning fields agree
+with the expected expansion. Other conflicts remain errors; watch plans,
+priorities, playback state and custom discovery lists are not overwritten.
+
+For the existing systemd-managed installation, retain its `.env`, Compose
+configuration and data volume. Teamarr needs no additional update for this fix.
+Run on the deployment host:
+
+```bash
+(
+set -euo pipefail
+cd /appdata/dillflix-live-controller
+git switch main
+git pull --ff-only origin main
+docker compose build controller
+sudo systemctl restart dillflix-controller.service
+docker compose ps -a controller
+docker compose logs --tail=60 controller
+)
+```
+
+The systemd unit starts the stack with its established Compose files. A successful
+oneshot service status alone does not prove application readiness; confirm that
+the container stays running and the existing web URL responds. Older controllers
+cannot open schema 20; retain the pre-upgrade backup for rollback.
+
 ## Original expansion
 
 The controller adds the following 25 competitions to the existing 11 defaults.

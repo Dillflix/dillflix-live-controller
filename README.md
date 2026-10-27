@@ -87,6 +87,12 @@ imports and web assets as the non-root runtime user.
 
 ## Update an existing installation
 
+Schema 20 fixes a schema-19 startup failure on installations with a shared
+multi-stream plan. It updates the shared discovery selection only when every
+saved stream matches the exact cup expansion; unrelated plan conflicts still
+stop startup. Installations already failing on schema 19 recover on upgrade
+without restoring the database. See [recovery commands](docs/expanded-leagues.md#schema-19-startup-recovery).
+
 Schema 19 adds EFL Cup / Carabao Cup (`eng.league_cup`) and DFB-Pokal
 (`ger.dfb_pokal`) to discovery, expanding previous 36-league defaults to 38.
 Custom selections stay unchanged. Update Teamarr too and add the two Prime Video

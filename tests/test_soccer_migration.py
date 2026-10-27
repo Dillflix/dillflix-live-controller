@@ -1,7 +1,76 @@
 import json
 
+import pytest
+from fastapi.testclient import TestClient
+
+from controller.api import create_app
+from controller.config import DeviceSettings, Settings
+
 from controller.database import Database, encode
 from controller.leagues import DEFAULT_LEAGUES
+
+
+@pytest.mark.parametrize("version", [18, 19])
+@pytest.mark.parametrize("selection", ["defaults", "reordered", "custom", "empty"])
+def test_cup_migration_two_stream_api_restarts(tmp_path, version, selection):
+    settings = Settings(
+        database=str(tmp_path / "fleet.db"), admin_auth_mode="trusted-lan",
+        devices=(DeviceSettings("living-room", "Dillflix 1"),
+                 DeviceSettings("stream-2", "Dillflix 2")),
+    )
+    cups = ["eng.league_cup", "ger.dfb_pokal"]
+    previous = [league for league in DEFAULT_LEAGUES if league not in cups]
+    selected = {"defaults": previous, "reordered": previous[::-1],
+                "custom": ["nfl"], "empty": []}[selection]
+    expanded = selected + cups if selection in {"defaults", "reordered"} else selected
+    app = create_app(settings, start_workers=False)
+    with TestClient(app):
+        pass
+    database = Database(settings.database)
+    with database.transaction() as db:
+        canonical = database.meta(db, "fleet_plan")
+        canonical["preferences"]["discovery_leagues"] = selected
+        database.set_meta(db, "fleet_plan", canonical)
+        for device_id in ("living-room", "stream-2"):
+            device = database.device(db, device_id)
+            device["preferences"]["discovery_leagues"] = expanded if version == 19 else selected
+            database.save_device(db, device)
+        db.execute(f"PRAGMA user_version={version}")
+        preserved = {key: canonical[key] for key in canonical if key != "preferences"}
+    for _ in range(2):
+        app = create_app(settings, start_workers=False)
+        with TestClient(app) as client:
+            for device_id in ("living-room", "stream-2"):
+                response = client.get("/api/v1/overview", params={"device_id": device_id})
+                assert response.status_code == 200, response.text
+                assert response.json()["device"]["preferences"]["discovery_leagues"] == expanded
+        with database.transaction() as db:
+            shared = database.meta(db, "fleet_plan")
+            assert shared["preferences"]["discovery_leagues"] == expanded
+            assert {key: shared[key] for key in preserved} == preserved
+
+
+def test_cup_repair_does_not_hide_unrelated_shared_plan_conflicts(tmp_path):
+    from controller.fixtures import default_device
+    from controller.fleet import planning_fields
+
+    path = str(tmp_path / "conflict.db")
+    database = Database(path)
+    cups = ["eng.league_cup", "ger.dfb_pokal"]
+    previous = [league for league in DEFAULT_LEAGUES if league not in cups]
+    device = default_device("demo")
+    device["preferences"]["discovery_leagues"] = previous
+    canonical = planning_fields(device)
+    device["preferences"]["discovery_leagues"] = previous + cups
+    device["preferences"]["timezone"] = "Europe/London"
+    with database.transaction() as db:
+        database.save_device(db, device)
+        database.set_meta(db, "fleet_plan", canonical)
+        db.execute("PRAGMA user_version=19")
+    repaired = Database(path)
+    with repaired.transaction() as db:
+        assert repaired.meta(db, "fleet_plan") == canonical
+        assert repaired.device(db)["preferences"] == device["preferences"]
 
 
 def test_cup_upgrade_preserves_custom_selections_and_restarts(tmp_path):

@@ -32,7 +32,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 19
+    SCHEMA_VERSION = 20
 
     def __init__(self, path):
         self.path = path
@@ -240,7 +240,7 @@ class Database:
                            "SELECT * FROM event_entitlements WHERE 0")
                 from .entitlement_store import share_account
                 share_account(db)
-            if version < 19:
+            if version < 20:
                 # Expand only the previous full selection; preserve custom lists and opt-outs.
                 cup_leagues = ["eng.league_cup", "ger.dfb_pokal"]
                 previous_defaults = {
@@ -251,7 +251,8 @@ class Database:
                     "pwhl", "chl", "ohl", "whl", "qmjhl", "mens-college-hockey",
                     "womens-college-hockey", "urc", "prem", "nrl", "afl", "pll", "f1",
                 }
-                for device_id, payload in db.execute("SELECT id,payload FROM devices").fetchall():
+                rows = db.execute("SELECT id,payload FROM devices").fetchall() if version < 19 else []
+                for device_id, payload in rows:
                     device = json.loads(payload)
                     selected = device.get("preferences", {}).get("discovery_leagues")
                     if isinstance(selected, list) and set(selected) == previous_defaults:
@@ -260,6 +261,22 @@ class Database:
                             "UPDATE devices SET payload=?, revision=revision+1 WHERE id=?",
                             (encode(device), device_id),
                         )
+                # Schema 19 updated device projections but omitted the canonical
+                # shared plan. Repair only that exact mismatch, including on
+                # databases whose first schema-19 startup already failed.
+                row = db.execute("SELECT value FROM metadata WHERE key='fleet_plan'").fetchone()
+                if row:
+                    canonical = json.loads(row[0])
+                    selected = canonical.get("preferences", {}).get("discovery_leagues")
+                    if isinstance(selected, list) and set(selected) == previous_defaults:
+                        from .fleet import planning_fields
+
+                        canonical["preferences"]["discovery_leagues"] = selected + cup_leagues
+                        projections = [planning_fields(json.loads(raw)) for (raw,) in
+                                       db.execute("SELECT payload FROM devices").fetchall()]
+                        if projections and all(fields == canonical for fields in projections):
+                            db.execute("UPDATE metadata SET value=? WHERE key='fleet_plan'",
+                                       (encode(canonical),))
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
