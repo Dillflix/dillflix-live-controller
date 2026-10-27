@@ -289,7 +289,7 @@ async def test_two_plex_items_keep_titles_artwork_and_fallback_deadlines_indepen
             cid = d["observed"]["content_id"]
             snapshot = json.loads(db.execute("SELECT snapshot FROM contents WHERE id=?", (cid,)).fetchone()[0])
             titles[device] = snapshot["title"]
-            snapshot["artwork"] = {"matchup_logo_url": f"http://images/{device}.png"}
+            snapshot["artwork"] = {"matchup_logo_url": f"http://images/{device}/logo.png?style=6"}
             db.execute("UPDATE contents SET snapshot=? WHERE id=?", (encode(snapshot), cid))
             service.db.save_device(db, d)
     assert len(set(titles.values())) == 2
