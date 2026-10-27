@@ -10,7 +10,7 @@ import pytest
 from broadcast_model import FixtureBroadcastModel
 from playback_fixtures import settings
 from test_entitlements import due, seed
-from test_prime_workflow import Player, cleanup, row
+from test_prime_workflow import Player, cleanup, rig, row
 
 from controller.config import DeviceSettings
 from controller.database import Database
@@ -240,7 +240,7 @@ async def test_foreground_positive_on_other_device_fences_background_result(shar
         assert json.loads(result["evidence"])["device_id"] == "living-room"
 
 
-async def test_reimport_and_added_stream_do_not_create_duplicate_jobs(shared):
+async def test_reimport_does_not_create_duplicate_jobs(shared):
     controller, second = shared
     for _ in range(2):
         with controller.db.transaction() as db:
@@ -250,6 +250,29 @@ async def test_reimport_and_added_stream_do_not_create_duplicate_jobs(shared):
         assert db.execute("SELECT COUNT(*) FROM event_entitlements").fetchone()[0] == 3
         assert {r[0] for r in db.execute("SELECT DISTINCT device_id FROM event_entitlements")} == {"living-room"}
         assert next(i for i in second.items(db) if i["content_id"] == "fixture-game")["entitlement"]["status"] == "entitled"
+
+
+async def test_adding_stream_reuses_existing_single_stream_catalogue(tmp_path):
+    first, _ = rig(tmp_path)
+    seed(first)
+    config = first.settings
+    try:
+        await first.check_entitlement_once()
+        with first.db.snapshot() as db:
+            receipt = dict(db.execute("SELECT * FROM event_entitlements").fetchone())
+    finally:
+        await cleanup(first)
+    controller = Controller(replace(config, devices=(
+        DeviceSettings("living-room", "One", "/test/one.sock", "fixture"),
+        DeviceSettings("second-tv", "Two", "/test/two.sock", "fixture-two"),
+    )))
+    try:
+        with controller.db.snapshot() as db:
+            assert db.execute("SELECT COUNT(*) FROM event_entitlements").fetchone()[0] == 1
+            assert dict(db.execute("SELECT * FROM event_entitlements").fetchone()) == receipt
+            assert controller.runtime("second-tv").items(db)[0]["entitlement"]["status"] == "entitled"
+    finally:
+        await cleanup(controller)
 
 
 async def test_only_one_background_discovery_worker(shared, monkeypatch):
