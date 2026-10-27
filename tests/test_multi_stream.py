@@ -198,6 +198,8 @@ def test_second_stream_diagnostics_use_its_own_entitlement_worker(fleet):
         service.db.set_meta(db, "entitlement_worker:second-tv", {"reason": "secondary"})
         service.db.set_meta(db, "entitlement_dispatch_after:second-tv", 123)
     exported = collect(service.settings.database, "second-tv")
+    assert {row["device_id"] for row in exported["stream_allocations"]} == {"living-room", "second-tv"}
+    assert all("preferences" not in row for row in exported["stream_allocations"])
     assert exported["entitlement_worker"]["entitlement_worker:second-tv"] == {"reason": "secondary"}
     assert exported["entitlement_worker"]["entitlement_dispatch_after:second-tv"] == 123
     assert "entitlement_worker" not in exported["entitlement_worker"]

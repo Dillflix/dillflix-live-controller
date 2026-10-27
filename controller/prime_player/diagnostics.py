@@ -136,6 +136,16 @@ def collect(path, device_id="living-room"):
                     "id": device["id"],
                     "revision": device["revision"],
                 },
+                "stream_allocations": [
+                    {"device_id": r["id"], "revision": r["revision"],
+                     **{field: payload.get(field) for field in (
+                         "intent_version", "automation", "desired", "stream_assignment", "playback_state")},
+                     "observed_content_id": (payload.get("observed") or {}).get("content_id"),
+                     "manual_control_active": bool(payload.get("manual_control")),
+                     "input_handoff_active": bool(payload.get("input_handoff"))}
+                    for r in db.execute("SELECT id,revision,payload FROM devices ORDER BY id")
+                    for payload in [json.loads(r["payload"])]
+                ],
                 "activity": activity,
                 "controller_jobs": controller_jobs,
                 "catalog_status": catalog,

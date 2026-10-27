@@ -5,9 +5,35 @@ import json
 from datetime import timedelta
 
 from .planner import choose, entitlement_eligible, ordered_plan, parse_time, preview_plan
+from .entitlement_store import identity
 
 
 SHARED_FIELDS = ("plan", "rules", "team_ranks", "manual_completions", "public_access")
+
+
+def catalogue_reservation(device, items, real):
+    """Keep an issued, bounded read assigned while temporary status ages out.
+
+    This reserves selection work only. The coordinator still requires current
+    eligibility and the completed Prime decision before issuing playback.
+    """
+    assignment = device.get("stream_assignment") or {}
+    pending = assignment.get("catalogue") or {}
+    item = next((item for item in items if item["content_id"] == assignment.get("content_id")), None)
+    if (
+        pending and item
+        and assignment.get("revision") == device["revision"]
+        and pending.get("intent") == device.get("intent_version")
+        and real.timestamp() < pending.get("expires", 0)
+        and device["automation"] == "active"
+        and not device.get("manual_control") and not device.get("input_handoff")
+        and (item["active"] or item["content_id"] in {p["content_id"] for p in device["plan"]})
+        and (item["playable"] or item["lifecycle"]["state"] == "unknown")
+        and entitlement_eligible(item)
+        and pending.get("identity") == identity(item)
+    ):
+        return item["content_id"]
+    return None
 
 
 def planning_fields(device):
@@ -111,6 +137,12 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
     available = [item for item in items if item["content_id"] not in reserved]
     idle = {key: value for key, value in devices.items() if not claims[key] and available_stream(key, value)}
     assignments = {}
+    held = catalogue_reservation(device, items, real)
+    if held and held not in reserved:
+        # Do not let one scheduler tick replace a still-running catalogue read
+        # with the previously playing event when feed status briefly expires.
+        return {"content_id": held, "manual": held in {p["content_id"] for p in device["plan"]},
+                "rule_id": None, "reason": "Checking Prime catalogue before switching playback"}
     if device["id"] in idle:
         occupied = set().union(*claims.values())
         candidates, indexed = {}, {}
