@@ -136,8 +136,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     self.db.save_device(db, device)
                 elif binding.id == "living-room":
                     device = self.db.device(db, binding.id)
-                    if device["name"] == "Living room":
-                        device["name"] = "Stream 1"
+                    if device["name"] in {"Living room", "Stream 1"}:
+                        device["name"] = "Dillflix 1"
                         self.db.save_device(db, device)
                 if binding.id != self.device_id:
                     runtime = copy.copy(self)

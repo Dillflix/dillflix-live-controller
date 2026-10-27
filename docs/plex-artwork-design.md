@@ -35,7 +35,7 @@ on October 5, 2026. This replaces the proposed standalone polling service.
 The existing controller will maintain the artwork on a configured Plex library
 item from its accepted live playback observations. The first binding is device
 `living-room` to the existing item `8`, currently titled
-`Dillflix Live - Stream 1`. The item ID is configurable and scoped to a verified
+`Dillflix Live - Dillflix 1`. The item ID is configurable and scoped to a verified
 Plex server identity; neither the title nor ID alone identifies a global item.
 
 Requirements:

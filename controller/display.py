@@ -68,9 +68,17 @@ class DisplaySchedule(BaseModel):
     valid_until: str | None
 
 
+class DisplayStream(BaseModel):
+    device_id: str
+    name: str
+    playback: DisplayPlayback
+
+
 class DisplayView(BaseModel):
     schema_version: Literal[1] = 1
     device_id: str
+    device_name: str
+    streams: list[DisplayStream]
     generated_at: str
     timezone: str
     playback: DisplayPlayback
@@ -141,7 +149,6 @@ def display_view(service, device_id):
     with service.db.snapshot() as db:
         now = datetime.now(UTC)
         device = service.db.device(db, device_id)
-        current = current_playback(service, db, device_id, now=now)
         items = service.items(db, device_id)
         planned = {entry["content_id"]: i for i, entry in enumerate(ordered_plan(device))}
         indexed = {item["content_id"]: item for item in items}
@@ -150,7 +157,6 @@ def display_view(service, device_id):
             item = indexed.get(content_id)
             return display_event(item, device, planned) if item else None
 
-        status, detail = playback_status(db, device, current)
         clock = service.now(db)
         eligible = [item for item in items if (
             item["active"]
@@ -178,20 +184,27 @@ def display_view(service, device_id):
         schedule_state = "unavailable" if not observed else (
             "ok" if health["state"] == "ok" and until > now else "stale"
         )
-        return DisplayView(
-            device_id=device_id,
-            generated_at=now.isoformat(),
-            timezone=device["preferences"]["timezone"],
-            playback=DisplayPlayback(
+        streams = []
+        for binding in service.settings.configured_devices:
+            stream_device = service.db.device(db, binding.id)
+            current = current_playback(service, db, binding.id, now=now)
+            status, detail = playback_status(db, stream_device, current)
+            playback = DisplayPlayback(
                 state=current.state, status=status, detail=detail,
                 observed_at=current.observed_at, valid_until=current.valid_until,
                 simulated=current.simulated if current.simulated is not None
                 else service.settings.executor.mode == "simulator",
                 event=card(current.event.content_id) if current.event else None,
-                last_event=card((device.get("observed") or {}).get("content_id"))
+                last_event=card((stream_device.get("observed") or {}).get("content_id"))
                 if current.state != "playing" else None,
-                target_event=card(device.get("desired")),
-            ),
+                target_event=card(stream_device.get("desired")),
+            )
+            streams.append(DisplayStream(device_id=binding.id, name=stream_device["name"], playback=playback))
+        return DisplayView(
+            device_id=device_id, device_name=device["name"], streams=streams,
+            generated_at=now.isoformat(),
+            timezone=device["preferences"]["timezone"],
+            playback=next(stream.playback for stream in streams if stream.device_id == device_id),
             events=[display_event(item, device, planned) for item in eligible],
             schedule=DisplaySchedule(
                 state=schedule_state,

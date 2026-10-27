@@ -80,7 +80,7 @@ def test_display_reads_one_snapshot_without_writes_or_external_calls(playing, mo
     assert not any(query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "BEGIN IMMEDIATE"))
                    for query in statements)
     data = response.json()
-    assert set(data) == {"schema_version", "device_id", "generated_at", "timezone", "playback", "events", "schedule"}
+    assert set(data) == {"schema_version", "device_id", "device_name", "streams", "generated_at", "timezone", "playback", "events", "schedule"}
     assert data["schema_version"] == 1
     assert datetime.now(UTC) - datetime.fromisoformat(data["generated_at"]) < timedelta(seconds=5)
     assert data["playback"]["state"] == data["playback"]["status"] == "playing"

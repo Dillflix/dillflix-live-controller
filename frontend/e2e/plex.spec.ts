@@ -49,7 +49,7 @@ test("Plex settings save a write-only credential and test without enabling", asy
   await page.route("**" + endpoint + "/test", (route) =>
     route.fulfill({
       json: {
-        title: "Dillflix Live - Stream 1",
+        title: "Dillflix Live - Dillflix 1",
         library: "Streams",
         version: "1.2.3",
       },
@@ -160,10 +160,10 @@ test("Plex title status distinguishes the requested default from the verified ev
           desired: {
             mode: "defaults",
             title: "Default artwork",
-            plex_title: "Stream 1",
+            plex_title: "Dillflix 1",
           },
           applied_title: {
-            value: "Stream 1 - Beijing Open: Day 7",
+            value: "Dillflix 1 - Beijing Open: Day 7",
             at: "2026-10-06T05:00:00Z",
           },
         },
@@ -174,10 +174,10 @@ test("Plex title status distinguishes the requested default from the verified ev
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const panel = page.getByRole("region", { name: "Plex item settings" });
   await expect(
-    panel.getByText("Requested title: Stream 1", { exact: true }),
+    panel.getByText("Requested title: Dillflix 1", { exact: true }),
   ).toBeVisible();
   await expect(
-    panel.getByText(/^Verified title: Stream 1 - Beijing Open: Day 7/),
+    panel.getByText(/^Verified title: Dillflix 1 - Beijing Open: Day 7/),
   ).toBeVisible();
   await expect(panel.getByText(/Update pending/)).toBeVisible();
   await expect(

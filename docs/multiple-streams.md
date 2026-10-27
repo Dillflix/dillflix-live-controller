@@ -5,7 +5,7 @@ to its configured streams. Each Fire TV has its own player socket, playback
 attempts, recovery, screen and manual-control ownership. The existing primary
 stream keeps the `living-room` ID and its history. Adding a stream does not create
 a second controller database or a separate watch plan. Its default display name
-is **Stream 1**. Upgrades replace the original **Living room** label in saved
+is **Dillflix 1**. Upgrades replace the original **Living room** label in saved
 state and legacy registry entries; custom names and internal IDs stay intact.
 
 All streams in an instance use the same Prime account. Subscription discovery
@@ -74,7 +74,7 @@ not publish configuration or install, enable or start another player:
 cd /appdata/dillflix-live-controller
 sudo python3 tools/add-stream.py \
   --player-repo "$HOME/dillflix-prime-player-stream-2" \
-  --id stream-2 --name 'Stream 2' \
+  --id stream-2 --name 'Dillflix 2' \
   --serial 192.168.0.164:5555
 ```
 
@@ -93,7 +93,7 @@ Use its existing network configuration and the approved host ADB identity:
 cd /appdata/dillflix-live-controller
 sudo python3 tools/add-stream.py \
   --player-repo "$HOME/dillflix-prime-player-stream-2" \
-  --id stream-2 --name 'Stream 2' --serial 192.168.0.164:5555 \
+  --id stream-2 --name 'Dillflix 2' --serial 192.168.0.164:5555 \
   --network-config "$HOME/.config/dillflix-prime-player/devices/stream-2/network.json" \
   --adb-key "$HOME/.android/adbkey" --activate
 ```
@@ -196,3 +196,8 @@ If taking the second device offline, stop and disable only
 `dillflix-prime-player@stream-2.service`. Do not run the original single-player
 stack installer to remove an instance, and do not delete the database volume or
 shared approved ADB key.
+
+Public names are **Dillflix 1** and **Dillflix 2**. Existing registry names
+`Stream 1`, `Stream 2`, and the original `Living room` are normalized at startup;
+internal IDs, sockets, ADB serials, Plex item bindings and saved plans remain intact.
+Plex titles use `Dillflix N` when idle and `Dillflix N - Event` during verified playback.

@@ -15,8 +15,8 @@ from controller.config import DeviceSettings, Settings
 def fleet(tmp_path):
     settings = Settings(database=str(tmp_path / "fleet.sqlite"), simulation_delay=0,
                         public_auth_mode="guest", admin_auth_mode="trusted-lan",
-                        devices=(DeviceSettings("living-room", "Stream 1"),
-                                 DeviceSettings("second-tv", "Stream 2")))
+                        devices=(DeviceSettings("living-room", "Dillflix 1"),
+                                 DeviceSettings("second-tv", "Dillflix 2")))
     app = create_app(settings, start_workers=False)
     with TestClient(app) as client:
         client.headers["origin"] = "http://testserver"
@@ -40,6 +40,37 @@ def command(client, device, action, revision=None):
 def tick_all(service):
     for runtime in service.runtimes.values():
         runtime.tick()
+
+
+def test_display_projects_fleet_with_one_catalog_read(fleet, monkeypatch):
+    client, service, _ = fleet
+    tick_all(service)
+    runtime = service.runtime("second-tv")
+    original = runtime.items
+    calls = []
+    def items(db, device_id):
+        calls.append(device_id)
+        return original(db, device_id)
+    monkeypatch.setattr(runtime, "items", items)
+    data = client.get("/api/v1/devices/second-tv/display").json()
+    assert calls == ["second-tv"]
+    assert data["device_name"] == "Dillflix 2"
+    assert [s["name"] for s in data["streams"]] == ["Dillflix 1", "Dillflix 2"]
+    assert all(s["playback"]["state"] == "playing" for s in data["streams"])
+    assert len({s["playback"]["event"]["content_id"] for s in data["streams"]}) == 2
+    assert data["playback"] == data["streams"][1]["playback"]
+
+
+@pytest.mark.parametrize("device_id,old,new", [
+    ("living-room", "Living room", "Dillflix 1"),
+    ("living-room", "Stream 1", "Dillflix 1"),
+    ("stream-2", "Stream 2", "Dillflix 2"),
+    ("custom", "Sports", "Sports"),
+])
+def test_legacy_names_preserve_device_bindings(device_id, old, new):
+    binding = DeviceSettings(device_id, old, "/socket/player", "192.0.2.1:5555")
+    assert (binding.id, binding.name, binding.prime_player_socket, binding.adb_serial) == (
+        device_id, new, "/socket/player", "192.0.2.1:5555")
 
 
 def test_two_streams_choose_distinct_live_events_and_remain_stable(fleet):
@@ -155,8 +186,8 @@ def test_vpn_edit_from_second_stream_shares_revision_and_undo(fleet):
 def test_legacy_vpn_policy_migrates_once_and_new_stream_inherits(tmp_path):
     from dataclasses import replace
     settings = Settings(database=str(tmp_path / "migration.sqlite"), simulation_delay=0,
-                        devices=(DeviceSettings("living-room", "Stream 1"),
-                                 DeviceSettings("second-tv", "Stream 2")))
+                        devices=(DeviceSettings("living-room", "Dillflix 1"),
+                                 DeviceSettings("second-tv", "Dillflix 2")))
     first = {"enabled": True, "locations": [{"target_id": "toronto", "team_cities": ["Toronto"]}]}
     second = {"enabled": False, "locations": []}
     app = create_app(settings, start_workers=False)
@@ -208,7 +239,7 @@ def test_duplicate_bindings_are_rejected():
                           DeviceSettings("two", "Two", "/run/player.sock")))
 
 
-@pytest.mark.parametrize("old_name,expected", [("Living room", "Stream 1"), ("Main coverage", "Main coverage")])
+@pytest.mark.parametrize("old_name,expected", [("Living room", "Dillflix 1"), ("Main coverage", "Main coverage")])
 def test_single_stream_upgrade_renames_only_legacy_label_without_changing_identity(tmp_path, old_name, expected):
     settings = Settings(database=str(tmp_path / "labels.sqlite"))
     app = create_app(settings, start_workers=False)
@@ -234,8 +265,8 @@ def test_adding_second_stream_preserves_existing_plan_and_receipts(tmp_path):
         assert command(client, "living-room", {"type": "add", "content_id": "demo:lions"}).status_code == 200
         original = read(client)["device"]["plan"]
     # Registration order must not make a fresh stream the missing primary row.
-    settings = Settings(database=path, devices=(DeviceSettings("second-tv", "Stream 2"),
-                                                DeviceSettings("living-room", "Stream 1")))
+    settings = Settings(database=path, devices=(DeviceSettings("second-tv", "Dillflix 2"),
+                                                DeviceSettings("living-room", "Dillflix 1")))
     with TestClient(create_app(settings, start_workers=False)) as client:
         assert read(client)["device"]["plan"] == original
         assert read(client, "second-tv")["device"]["plan"] == original
