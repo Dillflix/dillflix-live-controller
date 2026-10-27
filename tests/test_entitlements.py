@@ -590,7 +590,7 @@ async def test_existing_verified_playback_repairs_entitlement_without_another_se
 
 
 @pytest.mark.parametrize("change", ["event", "route", "not_entitled", "other_route", "other_device"])
-async def test_foreground_evidence_must_match_current_event_route_and_device(tmp_path, change):
+async def test_foreground_evidence_matches_event_and_route_but_is_shared_across_devices(tmp_path, change):
     controller, workflow = rig(tmp_path)
     entries = seed(controller)
     request = {"content_snapshot": entries[0], "allowed_viewing_options": entries[0]["viewing_options"]}
@@ -615,7 +615,7 @@ async def test_foreground_evidence_must_match_current_event_route_and_device(tmp
                             selected, source="foreground_catalogue", provenance={})
         with controller.db.transaction() as db:
             row = db.execute("SELECT status FROM event_entitlements WHERE device_id='living-room'").fetchone()
-        assert row[0] == "unknown"
+        assert row[0] == ("entitled" if change == "other_device" else "unknown")
     finally:
         await cleanup(controller)
 
