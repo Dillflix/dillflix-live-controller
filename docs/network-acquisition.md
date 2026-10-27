@@ -1,14 +1,14 @@
 # Optional Prime network acquisition
 
-Requires the coordinated Prime Player API 12 branch, Android VPN bridge, operator-provisioned OpenVPN for Android profiles/service credentials, and completed device qualification. Disabled by default. This controller never installs VPN software, receives credentials, sends ADB input, or lets a chooser model invent network routes.
+Requires Prime Player API 12, Android VPN bridge, operator-provisioned OpenVPN for Android profiles/service credentials, consent and confirmed app routing. Prime Player 0.1.0a47 allows configured profiles on their first request without a manual qualification sequence. Disabled by default. This controller never installs VPN software, receives credentials, sends ADB input, or lets a chooser model invent network routes.
 
-Use the player's [versioned signed bundle and provisioning command](https://github.com/Dillflix/dillflix-prime-player/blob/feat/vpn-network-transitions/docs/vpn-provisioning.md)
+Use the player's [versioned signed bundle and provisioning command](https://github.com/Dillflix/dillflix-prime-player/blob/main/docs/vpn-provisioning.md)
 for new, additional, or wiped sticks. Builds and signing run in CI. Keep a pinned
-bundle and reusable profile recipe; pairing, profile UUIDs, and qualification
+bundle and reusable profile recipe; pairing, profile UUIDs, consent and app routing
 belong to each device installation. Each controller instance must use its own
 player socket/state directory. Reprovisioning does not restore old network
 contexts or automatically enable this policy. Pause controller automation during
-installation and repeat player qualification after a wipe.
+installation and restore consent and app routing after a wipe.
 
 ## Configure in Settings
 
@@ -34,14 +34,22 @@ retain matched cities and per-location outcomes.
 
 Defaults allow a shared 30-minute deadline and at most four switches to accommodate
 multi-minute Prime startups. These are ceilings; unrelated locations are never
-visited. Successful playback stays on its current network. The player still
-enforces qualification, which is shown separately from playback success in Settings.
+visited. Successful playback stays on its current network. The controller uses
+the player's `connectable` inventory field, which reflects enabled networking
+and confirmed app routing. Legacy `qualified` history is not an activation gate.
+For older players without `connectable`, their existing `qualified` requirement
+still applies; update the player to allow first-use switching.
 
 The controller first performs the usual same-network catalogue preflight. A configured fallback result allows a new durable playback intent with the acquisition deadline. The workflow searches the current verified network, then tries configured alternatives within its transition limit. Every actual change retires and restarts Prime through the player's managed operation. Catalogue and playback results must belong to the new session and network context. A lost transition response is inspected using the same recorded operation ID and deadline. Controller restart preserves attempted targets and the deadline. A planned replacement session is accepted only with matching completed-operation evidence.
 
 Old network catalogue results and access exclusions expire or become invalid on network/policy changes. Acquisition does not mark a sporting event complete. Failure retains the watch plan. Pause, cancellation, manual input, and policy changes require settling submitted work; they never restore or disconnect a VPN automatically. Manual control remains unavailable while settlement is uncertain.
 
-Enabling fallback authorizes playback interruption. Keep this feature disabled during initial player qualification. Validate direct → configured VPN → direct, Prime playback on each network, per-app routing, continued ADB/scrcpy access, manual handoff during transition, provider reconnect, and service/device restarts before activation. Player documentation contains setup and qualification commands. CI verifies host contracts and builds the APK; Fire TV behavior still requires hardware acceptance.
+Enabling fallback authorizes playback interruption. No manual direct/VPN/direct
+sequence is required before enabling it. Each actual switch verifies the bridge,
+network and replacement Prime session before catalogue or playback work resumes.
+First-use eligibility does not claim successful regional playback or entitlement.
+Updating the host player/controller for this change requires no bridge reinstall
+or profile import.
 
 ## Coordinated contract tests
 

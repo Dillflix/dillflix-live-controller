@@ -22,6 +22,7 @@ test("city VPN policies persist, reorder and undo without changing the watch pla
             id: "montreal",
             city: "Montreal",
             qualified: false,
+            connectable: true,
             routing_confirmed: true,
           },
         ],
@@ -40,9 +41,9 @@ test("city VPN policies persist, reorder and undo without changing the watch pla
   await panel.getByRole("button", { name: "Add location policy" }).click();
   await expect(
     panel.getByText(
-      "Player qualification not recorded; automatic switching is blocked",
+      "Available for automatic switching",
     ),
-  ).toBeVisible();
+  ).toHaveCount(2);
   await panel.getByLabel("Enable location fallback").check();
   await panel.getByRole("button", { name: "Save VPN policies" }).click();
   await expect

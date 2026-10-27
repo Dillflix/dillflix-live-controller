@@ -15,7 +15,8 @@ NETWORK_ERRORS = {
     "network_permission_required": "VPN setup requires Android and OpenVPN API consent",
     "network_profile_missing": "The configured OpenVPN profile is missing from the device",
     "network_auth_failed": "OpenVPN authentication failed; check provisioned service credentials",
-    "network_profile_unqualified": "The configured VPN profile requires device qualification",
+    "network_profile_unqualified": "Update Prime Player to enable first-use VPN switching",
+    "network_routing_unconfirmed": "Confirm Prime Video and VPN Bridge app routing for this profile",
     "network_target_unknown": "The configured network target is absent from Prime Player",
     "network_transition_budget": "Network transition rate limit reached; allow the device to settle",
     "network_deadline_expired": "Network acquisition deadline expired",
@@ -143,7 +144,8 @@ class NetworkAcquisition:
                     inventory = await self.player.vpn_locations()
                     await self.database_call(self._network_allowed, token, acquisition)
                     available = {p["id"] for p in inventory.get("locations", [])
-                                 if p.get("qualified") is True and p.get("routing_confirmed") is True}
+                                 if p.get("connectable", p.get("qualified")) is True
+                                 and p.get("routing_confirmed") is True}
                     skipped = [t for t in choices if t != "direct" and t not in available]
                     acquisition["unavailable_targets"] = skipped
                     choices = [t for t in choices if t == "direct" or t in available]

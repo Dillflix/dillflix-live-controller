@@ -53,7 +53,7 @@ class NetworkPlayer(Player):
 
     async def vpn_locations(self):
         return {"enabled": True, "locations": [
-            {"id": target, "qualified": True, "routing_confirmed": True}
+            {"id": target, "connectable": True, "qualified": False, "routing_confirmed": True}
             for target in ("toronto", "montreal", "calgary")
         ]}
 
@@ -323,7 +323,12 @@ async def test_city_fallback_is_selective_and_never_revisits(tmp_path, monkeypat
         await cleanup(c)
 
 
-async def test_unqualified_city_does_not_prevent_direct_fallback(tmp_path, monkeypatch):
+@pytest.mark.parametrize("availability", [
+    {"qualified": False},
+    {"connectable": False, "qualified": True},
+    {"connectable": True, "qualified": True, "routing_confirmed": False},
+])
+async def test_unavailable_city_does_not_prevent_direct_fallback(tmp_path, monkeypatch, availability):
     c, w = network_rig(tmp_path)
     try:
         with c.db.transaction() as db:
@@ -332,7 +337,7 @@ async def test_unqualified_city_does_not_prevent_direct_fallback(tmp_path, monke
             c.db.save_device(db, device)
         w.player.target, w.player.context = "toronto", "network-toronto"
         async def inventory():
-            return {"locations": [{"id": "montreal", "qualified": False, "routing_confirmed": True}]}
+            return {"locations": [{"id": "montreal", "routing_confirmed": True, **availability}]}
         w.player.vpn_locations = inventory
         request = payload()
         request["content_snapshot"]["event"]["home_team_details"]["city"] = "Montreal"

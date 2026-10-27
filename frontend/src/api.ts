@@ -10,11 +10,13 @@ export async function api<T>(
   path: string,
   body?: unknown,
   method?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch("/api/v1" + path, {
     method: method || (body ? "POST" : "GET"),
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   if (!response.ok) {
     let message = "Request failed";

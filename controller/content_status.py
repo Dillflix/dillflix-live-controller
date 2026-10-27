@@ -236,7 +236,7 @@ class ContentStatusCoordinator:
             ids.update(pins)
         return ids - {None}
 
-    def content_lifecycle(self, row, check, now, real, pinned, completed_at=None):
+    def content_lifecycle(self, row, check, now, real, pinned, completed_at=None, *, snapshot=None):
         if completed_at:
             # Device-scoped human intent takes precedence over provider/cache results,
             # including a status lookup already in flight when the user completed it.
@@ -280,7 +280,7 @@ class ContentStatusCoordinator:
         if observation is None:
             try:
                 observation = source_observation(
-                    json.loads(row["snapshot"]),
+                    snapshot if snapshot is not None else json.loads(row["snapshot"]),
                     row["seen_at"],
                     now,
                     real,

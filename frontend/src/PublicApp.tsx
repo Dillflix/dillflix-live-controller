@@ -1,7 +1,8 @@
 import { leagueName } from "./leagues";
 import { eventSchedule } from "./eventSchedule";
 import { ScheduleCalendar, ScheduleViewToggle, useScheduleView } from "./ScheduleCalendar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { overviewRead } from "./overviewRead";
 import { createRoot } from "react-dom/client";
 import { Clock3, Play, Plus, Radio, ShieldCheck, Tv } from "lucide-react";
 import { commandId } from "./api";
@@ -94,12 +95,13 @@ function EventDetails({
   );
 }
 
-async function publicApi<T>(path: string, body?: unknown): Promise<T> {
+async function publicApi<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch("/api/public/v1" + path, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
     cache: "no-store",
+    signal,
   });
   if (!response.ok) {
     const value = await response.json().catch(() => null);
@@ -133,6 +135,7 @@ function PublicWorkspace({ deviceId, selectDevice }: {
   const [busy, setBusy] = useState(false);
   const [detailsId, setDetailsId] = useState<string | null>(null);
   const loading = useRef(0);
+  const loadError = useRef("");
   const mounted = useRef(true);
   const submitting = useRef(false);
   // Device controls change, but independent browser viewing sessions stay mounted.
@@ -142,22 +145,28 @@ function PublicWorkspace({ deviceId, selectDevice }: {
   }
   const generation = selection.current.generation;
   const deviceQuery = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
+  const reader = useMemo(() => overviewRead((signal) =>
+    publicApi<PublicOverview>("/overview" + deviceQuery, undefined, signal)), [deviceQuery]);
   const load = useCallback(async () => {
     if (!mounted.current || generation !== selection.current.generation) return;
     const serial = ++loading.current;
     try {
-      const next = await publicApi<PublicOverview>("/overview" + deviceQuery);
+      const next = await reader.read();
       if (mounted.current && generation === selection.current.generation && serial === loading.current) {
         setData(next);
         setConnected(true);
+        const previous = loadError.current;
+        loadError.current = "";
+        setError((current) => current === previous ? "" : current);
       }
     } catch (e) {
       if (mounted.current && generation === selection.current.generation && serial === loading.current) {
         setConnected(false);
+        loadError.current = (e as Error).message;
         setError((e as Error).message);
       }
     }
-  }, [deviceQuery, generation]);
+  }, [reader, generation]);
   useEffect(() => {
     mounted.current = true;
     submitting.current = false;
@@ -166,14 +175,21 @@ function PublicWorkspace({ deviceId, selectDevice }: {
     setError("");
     setNotice("");
     setDetailsId(null);
-    void load();
-    const timer = setInterval(() => void load(), 5000);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await load();
+      if (!stopped) timer = setTimeout(() => void poll(), 5000);
+    };
+    void poll();
     return () => {
+      stopped = true;
       mounted.current = false;
-      clearInterval(timer);
+      reader.abort();
+      clearTimeout(timer);
       ++loading.current;
     };
-  }, [load]);
+  }, [load, reader]);
   const request = async (event: PublicEvent, action: "add" | "play_now") => {
     if (!data || !connected || submitting.current ||
         (deviceId && (data.device?.id || data.device_id) !== deviceId)) return;

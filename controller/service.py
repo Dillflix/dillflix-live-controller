@@ -162,11 +162,14 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
 
     def planning_items(self, db, device_id=None):
         """Shared browsing may use access on any stream; execution still checks its own."""
-        items = self.items(db, device_id or self.device_id)
+        device_id = device_id or self.device_id
+        items = self.items(db, device_id)
         if len(self.root.runtimes) < 2:
             return items
         indexed = {item["content_id"]: item for item in items}
         for runtime in self.root.runtimes.values():
+            if runtime.device_id == device_id:
+                continue
             for item in runtime.items(db):
                 previous = indexed.get(item["content_id"])
                 if previous is None or ((item.get("entitlement") or {}).get("status") == "entitled"
@@ -307,7 +310,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     or r["id"] in pins
                 ),
                 self.content_lifecycle(
-                    r, checks.get(r["id"]), now, real, r["id"] in pins, completions.get(r["id"])
+                    r, checks.get(r["id"]), now, real, r["id"] in pins, completions.get(r["id"]),
+                    snapshot=snapshot,
                 ),
                 prime_search_at=real if self.executor else None,
             )

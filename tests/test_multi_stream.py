@@ -100,6 +100,21 @@ def test_pause_and_runtime_failure_do_not_stop_other_stream(fleet):
     assert service.playback_lock is not service.runtime("second-tv").playback_lock
 
 
+@pytest.mark.parametrize("device_id", ["living-room", "second-tv"])
+def test_shared_catalogue_reads_each_stream_once(fleet, monkeypatch, device_id):
+    _, service, _ = fleet
+    calls = []
+    for key, runtime in service.runtimes.items():
+        original = runtime.items
+        def counted(db, selected=None, *, key=key, original=original):
+            calls.append(selected or key)
+            return original(db, selected)
+        monkeypatch.setattr(runtime, "items", counted)
+    with service.db.snapshot() as db:
+        assert service.runtime(device_id).planning_items(db)
+    assert sorted(calls) == ["living-room", "second-tv"]
+
+
 def test_local_network_preferences_are_never_copied(fleet):
     client, service, _ = fleet
     with service.db.transaction() as db:

@@ -108,6 +108,15 @@ in workers rather than taking the writer lock. Large overview/events responses
 and diagnostic redaction/JSON rendering are also constructed off the event loop.
 The thread-stack watchdog remains enabled to identify further synchronous paths.
 
+Schema 16 stores a compact entitlement read projection alongside full retained
+evidence. Insert/update triggers maintain it in the same transaction; migration
+backfills existing records once. Page, ticker and planner reads use this summary
+instead of repeatedly parsing full model/catalogue responses in SQLite. Shared
+browsing projects each stream once and reuses decoded event snapshots for lifecycle
+evaluation. Neither optimization caches playback freshness or creates new evidence.
+Browser polling and update notifications share one in-flight overview read with
+a 30-second timeout; a later poll cannot permanently discard a slower response.
+
 For physical acceptance using the deployed supervisor and persisted adaptation,
 see [production recovery acceptance](production-recovery-acceptance.md).
 
