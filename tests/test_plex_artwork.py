@@ -8,8 +8,11 @@ from xml.sax.saxutils import quoteattr
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from PIL import Image
 
+from controller.api import create_app
+from controller.config import DeviceSettings, Settings
 from controller.database import encode
 from controller.diagnostic_log import scrub
 from controller.plex.client import (
@@ -31,7 +34,8 @@ def picture(color):
 
 
 class Plex:
-    def __init__(self):
+    def __init__(self, key="8"):
+        self.key = key
         self.images = {"thumb": picture("black"), "art": picture("gray")}
         self.calls = []
         self.machine = "server-1"
@@ -56,10 +60,10 @@ class Plex:
         self.fail_identity = False
 
     def metadata(self):
-        return f'''<MediaContainer><Video ratingKey="8" type="movie" guid="local://stream1"
+        return f'''<MediaContainer><Video ratingKey="{self.key}" type="movie" guid="local://stream{self.key}"
         title={quoteattr(self.title)} titleSort={quoteattr(self.sort_title)} summary="Live stream" duration="{self.duration}"
-        librarySectionID="1" librarySectionTitle="Streams" thumb="/library/metadata/8/thumb/{self.version}"
-        art="/library/metadata/8/art/{self.version}"><Media id="9" duration="{self.duration}"
+        librarySectionID="1" librarySectionTitle="Streams" thumb="/library/metadata/{self.key}/thumb/{self.version}"
+        art="/library/metadata/{self.key}/art/{self.version}"><Media id="9" duration="{self.duration}"
         bitrate="{self.bitrate}" videoCodec="h264" width="1920" height="1080">
         <Part id="10" file="/stream.mkv" duration="{self.duration}" size="1000">
         <Stream id="11" codec="h264" bitrate="19000" streamType="1"/></Part></Media>
@@ -78,13 +82,13 @@ class Plex:
             return httpx.Response(
                 200, text=f'<MediaContainer machineIdentifier="{self.machine}" version="1.2.3"/>'
             )
-        if path == "/library/metadata/8":
+        if path == f"/library/metadata/{self.key}":
             return httpx.Response(200, text=self.metadata())
         if request.method == "PUT":
             assert path == "/library/sections/1/all"
             params = dict(request.url.params)
             assert set(params) == {"id", "type", "title.value", "title.locked"}
-            assert params["id"] == "8" and params["type"] == "1" and params["title.locked"] == "1"
+            assert params["id"] == self.key and params["type"] == "1" and params["title.locked"] == "1"
             assert not request.content
             self.title_requests.append(params)
             if self.title_status != 200:
@@ -103,10 +107,10 @@ class Plex:
                 self.title_timeout = False
                 raise httpx.ReadTimeout("private title timeout details", request=request)
             return httpx.Response(200)
-        slot = path.split("/")[4] if path.startswith("/library/metadata/8/") else None
+        slot = path.split("/")[4] if path.startswith(f"/library/metadata/{self.key}/") else None
         if request.method == "POST":
             # Independently model PlexAPI's upload contract; singular image paths return 404.
-            uploads = {"/library/metadata/8/posters": "thumb", "/library/metadata/8/arts": "art"}
+            uploads = {f"/library/metadata/{self.key}/posters": "thumb", f"/library/metadata/{self.key}/arts": "art"}
             if path not in uploads:
                 return httpx.Response(404)
             slot = uploads[path]
@@ -212,6 +216,118 @@ def ready_retry(service):
 
 async def red_image(_url):
     return image_asset(picture("red"))
+
+
+@pytest.fixture
+def plex_fleet(tmp_path):
+    app = create_app(Settings(
+        database=str(tmp_path / "fleet.sqlite"), simulation_delay=0,
+        devices=(DeviceSettings("living-room", "Stream 1"), DeviceSettings("stream-2", "Stream 2")),
+    ), start_workers=False)
+    service = app.state.controller
+    items = {"8": Plex("8"), "9": Plex("9")}
+    items["9"].images = {"thumb": picture("blue"), "art": picture("yellow")}
+
+    async def handle(request):
+        key = request.url.params.get("id")
+        if request.url.path.startswith("/library/metadata/"):
+            key = request.url.path.split("/")[3]
+        return await items[key or "8"].handle(request)
+
+    service.plex.worker.client_factory = lambda url, token: PlexClient(url, token, httpx.MockTransport(handle))
+    with TestClient(app) as browser:
+        browser.headers["origin"] = "http://testserver"
+        yield browser, service, items
+
+
+def bind_plex_stream(browser, device, key):
+    path = f"/api/v1/devices/{device}/plex"
+    response = browser.put(path, json={
+        "command_id": "bind", "expected_revision": 0,
+        "base_url": "http://plex:32400", "rating_key": key, "token": TOKEN,
+    })
+    assert response.status_code == 200, response.text
+    response = browser.post(path + "/defaults/capture", json={"command_id": "capture", "expected_revision": 1})
+    assert response.status_code == 200, response.text
+
+
+def test_unconfigured_stream_has_no_implicit_plex_target_and_cannot_reuse_another_binding(plex_fleet):
+    browser, _, items = plex_fleet
+    bind_plex_stream(browser, "living-room", "8")
+    path = "/api/v1/devices/stream-2/plex"
+    info = browser.get(path).json()
+    assert info["rating_key"] == "" and not info["enabled"]
+    assert not info["credential_configured"] and not info["default_images"]
+    payload = {"command_id": "bind", "expected_revision": 0, "base_url": "http://plex:32400", "token": TOKEN}
+    before = len(items["8"].calls)
+    assert browser.put(path, json=payload).status_code == 422
+    assert browser.post(path + "/test", json={"base_url": payload["base_url"], "token": TOKEN}).status_code == 422
+    assert len(items["8"].calls) == before
+    response = browser.put(path, json={**payload, "rating_key": "8"})
+    assert response.status_code == 409, response.text
+    assert browser.get(path).json()["rating_key"] == ""
+    assert browser.get(PATH).json()["rating_key"] == "8"
+    assert not items["8"].mutations() and not items["9"].mutations()
+
+
+@pytest.mark.asyncio
+async def test_two_plex_items_keep_titles_artwork_and_fallback_deadlines_independent(plex_fleet):
+    browser, service, items = plex_fleet
+    for device, key in (("living-room", "8"), ("stream-2", "9")):
+        bind_plex_stream(browser, device, key)
+    for player in service.runtimes.values():
+        player.tick()
+    service.settings = replace(service.settings, mode="teamarr", executor=replace(service.settings.executor, mode="prime-player"))
+    now = datetime.now(UTC)
+    service.plex.now = lambda: now
+    titles = {}
+    with service.db.transaction() as db:
+        for device in service.runtimes:
+            d = service.db.device(db, device)
+            d["observed"].update(simulated=False, observed_at=now.isoformat(), valid_until=(now + timedelta(seconds=300)).isoformat())
+            cid = d["observed"]["content_id"]
+            snapshot = json.loads(db.execute("SELECT snapshot FROM contents WHERE id=?", (cid,)).fetchone()[0])
+            titles[device] = snapshot["title"]
+            snapshot["artwork"] = {"matchup_logo_url": f"http://images/{device}.png"}
+            db.execute("UPDATE contents SET snapshot=? WHERE id=?", (encode(snapshot), cid))
+            service.db.save_device(db, d)
+    assert len(set(titles.values())) == 2
+
+    async def download(url):
+        return image_asset(picture("red" if "living-room" in url else "green"))
+    service.plex.worker.download = download
+    for device, key in (("living-room", "8"), ("stream-2", "9")):
+        response = browser.put(f"/api/v1/devices/{device}/plex", json={
+            "command_id": "enable", "expected_revision": 2, "base_url": "http://plex:32400",
+            "rating_key": key, "enabled": True,
+        })
+        assert response.status_code == 200, response.text
+        await service.plex.worker.run_once(device)
+        assert items[key].title == titles[device]
+    assert items["8"].images == {"thumb": picture("red"), "art": picture("gray")}
+    assert items["9"].images == {"thumb": picture("green"), "art": picture("yellow")}
+
+    # Only Stream 2 receives a fresh confirmation. Stream 1 must revert alone.
+    service.plex.now = lambda: now + timedelta(seconds=60)
+    with service.db.transaction() as db:
+        d = service.db.device(db, "stream-2")
+        d["observed"].update(observed_at=(now + timedelta(seconds=60)).isoformat(), valid_until=(now + timedelta(seconds=360)).isoformat())
+        service.db.save_device(db, d)
+    service.plex.now = lambda: now + timedelta(seconds=301)
+    second_writes = list(items["9"].mutations())
+    for device in service.runtimes:
+        await service.plex.worker.run_once(device)
+    assert items["8"].title == "Dillflix Live"
+    assert items["8"].images == {"thumb": picture("black"), "art": picture("gray")}
+    assert items["9"].title == titles["stream-2"]
+    assert items["9"].images == {"thumb": picture("green"), "art": picture("yellow")}
+    assert items["9"].mutations() == second_writes
+    first = browser.get(PATH).json()
+    second = browser.get("/api/v1/devices/stream-2/plex").json()
+    assert first["status"]["desired"]["mode"] == "defaults"
+    assert second["status"]["desired"]["mode"] == "event"
+    assert second["status"]["fallback_at"] - first["status"]["fallback_at"] == 60
+    assert first["default_images"]["poster"]["digest"] != second["default_images"]["poster"]["digest"]
 
 
 async def test_plex_delivery_with_contended_writer_keeps_loop_responsive(setup, monkeypatch):
@@ -655,6 +771,7 @@ def test_settings_revision_validation_and_idempotency(setup):
             "command_id": "bad",
             "expected_revision": 0,
             "base_url": "http://plex:32400",
+            "rating_key": "8",
             "token": TOKEN,
             "enabled": False,
         },
@@ -666,11 +783,11 @@ def test_settings_revision_validation_and_idempotency(setup):
         ).status_code
         == 200
     )
-    response = browser.post(PATH + "/test", json={"base_url": "http://plex", "token": {"value": TOKEN}})
+    response = browser.post(PATH + "/test", json={"base_url": "http://plex", "rating_key": "8", "token": {"value": TOKEN}})
     assert response.status_code == 422 and TOKEN not in response.text
     response = browser.post(
         PATH + "/test",
-        json={"base_url": "http://plex", "token": TOKEN},
+        json={"base_url": "http://plex", "rating_key": "8", "token": TOKEN},
         headers={"Origin": "https://evil.example"},
     )
     assert response.status_code == 403

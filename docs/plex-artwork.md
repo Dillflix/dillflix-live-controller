@@ -2,6 +2,7 @@
 
 The optional **Settings → Plex title and artwork** integration updates an existing Plex
 video library item's title, poster and background from accepted controller playback.
+Each stream has a separate binding, token, default images and update status.
 It is disabled by default. It adds no separate service, now-playing HTTP polling,
 player status checks, scans, analysis, or media-property editing operations.
 
@@ -9,7 +10,8 @@ player status checks, scans, analysis, or media-property editing operations.
 
 1. Deploy the controller with your normal Compose files. Keep the
    existing `.env`, Prime Player socket configuration and persistent volume.
-2. Open **Settings → Plex title and artwork**. Enter the Plex server URL reachable from
+2. Open **Settings → Plex title and artwork** and choose the stream using
+   **Configure Plex for**. Enter the Plex server URL reachable from
    the controller container, a Plex token with metadata-edit permission, and the
    numeric item ID (for example `8`) or the item's Plex link.
 3. Use **Test Plex connection** to verify read access and the target title, then
@@ -25,6 +27,13 @@ player status checks, scans, analysis, or media-property editing operations.
 Do not use `localhost` for a Plex server outside the controller container.
 A LAN address such as `http://PLEX_HOST:32400` works when reachable from that
 container. Existing nginx authentication protects the settings and previews.
+
+For multiple streams, repeat setup for each stream's own Plex item. The existing
+primary stream keeps its saved binding (including item `8` where configured).
+An additional stream has no prefilled item ID and stays disabled until configured.
+Create its library item in Plex before connecting it here; the controller does
+not create Plex items or capture outputs. Two streams cannot bind the same item
+on the same Plex server. Switching streams clears unsaved connection/token drafts.
 
 ## Behavior
 
@@ -46,6 +55,8 @@ container. Existing nginx authentication protects the settings and previews.
 - A new accepted positive observation renews the fallback deadline. Re-reading
   an old sample does not. Defaults are due **five minutes after the last fresh
   accepted confirmation**, without an extra grace period after evidence expiry.
+  Each stream's deadline uses only that stream's playback evidence. Its fallback
+  restores only its own Plex item and default images.
 - Brief lost verification, pause, manual handoff, or completion holds the current
   title and artwork until that deadline. Automation pause alone does not invalidate
   continuing verified playback.

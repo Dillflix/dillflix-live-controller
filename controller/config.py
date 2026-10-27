@@ -21,6 +21,10 @@ class DeviceSettings:
             raise ValueError("Device IDs must contain lowercase letters, numbers and hyphens")
         if not self.name.strip() or len(self.name) > 80:
             raise ValueError("Device names must contain 1–80 characters")
+        # Preserve the original device ID and bindings while retiring the old
+        # room label, including registries written by the first add-stream tool.
+        if self.id == "living-room" and self.name == "Living room":
+            object.__setattr__(self, "name", "Stream 1")
 
 
 @dataclass(frozen=True)
@@ -99,7 +103,7 @@ class Settings:
     @property
     def configured_devices(self):
         return self.devices or (DeviceSettings(
-            self.device_id, "Living room", self.prime_player_socket or self.executor.prime_socket,
+            self.device_id, "Stream 1", self.prime_player_socket or self.executor.prime_socket,
             self.screen_adb_serial,
         ),)
 

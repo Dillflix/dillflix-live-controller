@@ -12,7 +12,7 @@ test("screen decodes real H.264, reconnects and releases video when hidden", asy
   await expect(page.getByTestId("screen-state")).toHaveText("Live screen", {
     timeout: 15000,
   });
-  const video = page.getByLabel("Living room live screen");
+  const video = page.getByLabel("Stream 1 live screen");
   await expect
     .poll(() => video.evaluate((node: HTMLVideoElement) => node.videoWidth))
     .toBe(320);

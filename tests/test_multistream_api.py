@@ -57,6 +57,15 @@ def test_health_detects_failed_worker_on_second_stream(fleet, monkeypatch):
     assert client.get("/healthz").json() == {"ok": True}  # Process liveness is deliberately separate.
 
 
+def test_legacy_registry_label_is_stream_one_on_admin_and_public_surfaces(fleet):
+    client, _ = fleet
+    for path in ("/api/v1/overview", "/api/public/v1/overview"):
+        view = client.get(path).json()
+        assert view["device"]["id"] == "living-room"
+        assert view["device"]["name"] == "Stream 1"
+        assert next(stream for stream in view["streams"] if stream["id"] == "living-room")["name"] == "Stream 1"
+
+
 def test_selection_preview_respects_other_stream_claim_without_mutation(fleet):
     client, app = fleet
     root = app.state.controller

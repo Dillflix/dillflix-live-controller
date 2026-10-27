@@ -134,6 +134,11 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                         device["observed"]["verified"] = False
                         device["playback_state"] = "unverified"
                     self.db.save_device(db, device)
+                elif binding.id == "living-room":
+                    device = self.db.device(db, binding.id)
+                    if device["name"] == "Living room":
+                        device["name"] = "Stream 1"
+                        self.db.save_device(db, device)
                 if binding.id != self.device_id:
                     runtime = copy.copy(self)
                     runtime.settings = self.settings.for_device(binding)

@@ -30,6 +30,7 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
   dynamic feed catalog, quality selection and audio. Watching a feed does not
   change the shared device or its watch plan.
 - Optional [Plex title and artwork updates](docs/plex-artwork.md), configured in Settings,
+  with a separate library item, defaults and update status for each stream,
   driven by accepted playback with durable five-minute fallback and narrow, verified API writes.
 - A read-only [now-playing diagnostic endpoint](docs/now-playing.md), including
   matchup thumbnails and provider artwork for tennis coverage.

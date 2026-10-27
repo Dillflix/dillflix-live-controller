@@ -87,7 +87,7 @@ def prepare_update(env_text, state_root, *, device_id, name, serial):
         original_serial = env_value(env_text, "SCREEN_ADB_SERIAL")
         if not original_serial or any(c in original_serial for c in "$`\n\r"):
             raise ValueError("Existing .env must contain the first stick's literal SCREEN_ADB_SERIAL")
-        records = [{"id": "living-room", "name": "Living room",
+        records = [{"id": "living-room", "name": "Stream 1",
                     "prime_player_socket": str(MOUNT / "player.sock"), "adb_serial": original_serial}]
     validate_devices(records)
     original_serial = env_value(env_text, "SCREEN_ADB_SERIAL")

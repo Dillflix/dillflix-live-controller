@@ -32,15 +32,21 @@ type PlexInfo = {
 
 export function PlexSettings({
   deviceId,
+  deviceName,
+  streams,
+  selectDevice,
   refreshKey,
 }: {
   deviceId: string;
+  deviceName: string;
+  streams: { id: string; name: string }[];
+  selectDevice: (id: string) => void;
   refreshKey: string;
 }) {
   const path = `/devices/${deviceId}/plex`;
   const [info, setInfo] = useState<PlexInfo | null>(null);
   const [url, setUrl] = useState("");
-  const [key, setKey] = useState("8");
+  const [key, setKey] = useState("");
   const [token, setToken] = useState("");
   const [enabled, setEnabled] = useState(false);
   const [removeToken, setRemoveToken] = useState(false);
@@ -137,11 +143,28 @@ export function PlexSettings({
       className="df-panel df-spacer df-plex"
       aria-label="Plex item settings"
     >
-      <h2>Plex title and artwork</h2>
+      <h2>Plex title and artwork · {deviceName}</h2>
+      {streams.length > 1 && (
+        <label>
+          Configure Plex for
+          <select
+            aria-label="Plex stream"
+            value={deviceId}
+            onChange={(e) => selectDevice(e.target.value)}
+          >
+            {streams.map((stream) => (
+              <option key={stream.id} value={stream.id}>
+                {stream.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <p>
-        Show the verified live event's title and artwork on a Plex library item.
-        The title returns to “Dillflix Live” with your default images five
-        minutes after the last fresh playback confirmation.
+        Show {deviceName}'s verified live event on its own Plex library item.
+        Each stream has its own item, token and default artwork. The title
+        returns to “Dillflix Live” with your default images five minutes after
+        the last fresh playback confirmation.
       </p>
       {error && (
         <div role="alert" className="df-plex-error">
@@ -153,6 +176,12 @@ export function PlexSettings({
         <p>Loading Plex settings…</p>
       ) : (
         <>
+          {!info.rating_key && (
+            <p>
+              No Plex item is configured for {deviceName}. Create its Plex
+              library item, then enter its ID or link below.
+            </p>
+          )}
           <div className="df-plex-grid">
             <label>
               Plex server URL
@@ -172,6 +201,7 @@ export function PlexSettings({
               Plex item ID or link
               <input
                 aria-label="Plex item ID or link"
+                placeholder={`Plex item for ${deviceName}`}
                 value={key}
                 disabled={busy}
                 onChange={(e) => {
@@ -242,7 +272,7 @@ export function PlexSettings({
           <div className="df-plex-actions">
             <button
               className="df-button"
-              disabled={busy || !url}
+              disabled={busy || !url.trim() || !key.trim()}
               onClick={() =>
                 void run(async () => {
                   const result = await api<{
@@ -260,7 +290,7 @@ export function PlexSettings({
             </button>
             <button
               className="df-button"
-              disabled={busy || !url}
+              disabled={busy || !url.trim() || !key.trim()}
               onClick={() =>
                 void run(
                   () =>
@@ -299,8 +329,8 @@ export function PlexSettings({
           )}
           {info.title && (
             <p>
-              Target: <strong>{info.title}</strong> · {info.library} · Item{" "}
-              {info.rating_key}
+              {deviceName} target: <strong>{info.title}</strong> ·{" "}
+              {info.library} · Item {info.rating_key}
             </p>
           )}
           <h3>Default artwork</h3>
