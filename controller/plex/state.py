@@ -22,7 +22,7 @@ def configuration(db, device):
             "revision": 0,
             "enabled": False,
             "base_url": "",
-            "rating_key": "8",
+            "rating_key": "",
             "machine_id": None,
             "target": None,
             "credential_ref": None,

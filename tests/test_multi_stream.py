@@ -150,6 +150,25 @@ def test_duplicate_bindings_are_rejected():
                           DeviceSettings("two", "Two", "/run/player.sock")))
 
 
+@pytest.mark.parametrize("old_name,expected", [("Living room", "Stream 1"), ("Main coverage", "Main coverage")])
+def test_single_stream_upgrade_renames_only_legacy_label_without_changing_identity(tmp_path, old_name, expected):
+    settings = Settings(database=str(tmp_path / "labels.sqlite"))
+    app = create_app(settings, start_workers=False)
+    with TestClient(app):
+        service = app.state.controller
+        with service.db.transaction() as db:
+            device = service.db.device(db, "living-room")
+            device["name"] = old_name
+            service.db.save_device(db, device)
+            before = device.copy()
+    with TestClient(create_app(settings, start_workers=False)) as client:
+        after = read(client)["device"]
+        assert after["id"] == "living-room" and after["name"] == expected
+        for field in ("plan", "revision", "intent_version"):
+            assert after[field] == before[field]
+    assert DeviceSettings("living-room", "Main coverage").name == "Main coverage"
+
+
 def test_adding_second_stream_preserves_existing_plan_and_receipts(tmp_path):
     path = str(tmp_path / "upgrade.sqlite")
     app = create_app(Settings(database=path), start_workers=False)

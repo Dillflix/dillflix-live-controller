@@ -5,7 +5,7 @@ const empty = () => ({
   revision: 0,
   enabled: false,
   base_url: "",
-  rating_key: "8",
+  rating_key: "",
   credential_configured: false,
   real_playback: false,
   default_images: {},
@@ -62,6 +62,9 @@ test("Plex settings save a write-only credential and test without enabling", asy
     panel.getByLabel("Automatic Plex title and artwork updates"),
   ).toBeDisabled();
   await panel.getByLabel("Plex server URL").fill("http://plex:32400");
+  await expect(panel.getByLabel("Plex item ID or link")).toHaveValue("");
+  await expect(panel.getByRole("button", { name: "Save Plex settings" })).toBeDisabled();
+  await panel.getByLabel("Plex item ID or link").fill("8");
   await panel
     .getByLabel("Plex token", { exact: true })
     .fill("test-private-token");
@@ -98,6 +101,7 @@ test("Plex settings preserve a conflicted draft and fit a 320 pixel phone", asyn
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const panel = page.getByRole("region", { name: "Plex item settings" });
   await panel.getByLabel("Plex server URL").fill("http://draft-plex:32400");
+  await panel.getByLabel("Plex item ID or link").fill("8");
   await panel.getByRole("button", { name: "Save Plex settings" }).click();
   await expect(panel.getByRole("alert")).toContainText("Reload and review");
   await expect(panel.getByLabel("Plex server URL")).toHaveValue(

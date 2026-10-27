@@ -19,7 +19,7 @@ class PlexCommand(StrictModel):
 
 class PlexConnection(StrictModel):
     base_url: str = Field(max_length=2048)
-    rating_key: str = Field(default="8", max_length=2048)
+    rating_key: str = Field(min_length=1, max_length=2048)
     token: SecretStr | None = Field(default=None, max_length=1024)
 
     @field_validator("base_url")

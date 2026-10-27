@@ -1710,6 +1710,9 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                 <PlexSettings
                   key={`plex-${d.id}`}
                   deviceId={d.id}
+                  deviceName={d.name}
+                  streams={streams}
+                  selectDevice={selectDevice}
                   refreshKey={data.meta.server_time}
                 />
                 <ConfigurationTools

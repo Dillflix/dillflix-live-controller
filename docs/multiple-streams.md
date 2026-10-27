@@ -4,7 +4,9 @@ One controller manages a shared watch plan and assigns different eligible events
 to its configured streams. Each Fire TV has its own player socket, playback
 attempts, recovery, screen and manual-control ownership. The existing primary
 stream keeps the `living-room` ID and its history. Adding a stream does not create
-a second controller database or a separate watch plan.
+a second controller database or a separate watch plan. Its default display name
+is **Stream 1**. Upgrades replace the original **Living room** label in saved
+state and legacy registry entries; custom names and internal IDs stay intact.
 
 All streams in an instance use the same Prime account. Subscription discovery
 runs once through one shared queue, using whichever player is available. Existing
@@ -170,6 +172,11 @@ Omitting `--device-id` retains the legacy `living-room` target.
 
 Plex publication/capture is a separate output integration. Adding a Fire TV does
 not automatically provision a second capture path or Plex stream.
+In **Settings → Plex title and artwork**, select the stream being configured.
+Each stream needs its own existing Plex library item; its title, defaults and
+fallback timer are independent. The existing primary binding is preserved.
+Additional streams start unconfigured, with no assumed item ID. See
+[Plex setup](plex-artwork.md).
 
 ## Roll back configuration
 

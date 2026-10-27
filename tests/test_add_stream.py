@@ -35,7 +35,7 @@ def test_first_add_preserves_existing_primary_and_every_other_environment_settin
     assert env.startswith(ENV)
     assert helper.env_value(env, "CONTROLLER_DEVICES_FILE") == "/run/prime-player/controller-devices.json"
     assert records == [
-        {"id": "living-room", "name": "Living room", "prime_player_socket": "/run/prime-player/player.sock", "adb_serial": "first:5555"},
+        {"id": "living-room", "name": "Stream 1", "prime_player_socket": "/run/prime-player/player.sock", "adb_serial": "first:5555"},
         {"id": "stream-2", "name": "Stream 2", "prime_player_socket": "/run/prime-player/instances/stream-2/player.sock", "adb_serial": "second:5555"},
     ]
     assert not registry.exists()

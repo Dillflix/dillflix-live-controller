@@ -223,7 +223,7 @@ def default_device(mode):
     return {
         "id": "living-room",
         "revision": 0,
-        "name": "Living room",
+        "name": "Stream 1",
         "rules": rules,
         "team_ranks": {},
         "plan": [],
