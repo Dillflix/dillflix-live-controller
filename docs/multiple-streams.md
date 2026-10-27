@@ -29,7 +29,9 @@ repeating pairing, profile import or app routing.
 Controller deployment can proceed with this setup. Regional VPN playback and
 simultaneous playback on the shared Prime account remain unverified on the
 physical devices; those observations are deferred until eligible events are
-available. The player only offers network targets with the required evidence.
+available. With Prime Player 0.1.0a47, routing-confirmed profiles are eligible on
+their first controller request; connection and Prime readiness are checked during
+the switch. A manual qualification sequence is not required for activation.
 Do not represent deferred checks as completed. The `karat` root tools must not
 be run on `sheldon`; its model-specific root setup is separate and must be
 available after a device reboot.

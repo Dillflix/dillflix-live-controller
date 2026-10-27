@@ -6,6 +6,7 @@ type Location = {
   id: string;
   city: string;
   qualified: boolean;
+  connectable?: boolean;
   routing_confirmed: boolean;
 };
 const defaults: VPNPolicy = {
@@ -110,9 +111,13 @@ export function VPNSettings({
             </label>
             <p>
               {location
-                ? location.qualified
-                  ? "Player qualification recorded"
-                  : "Player qualification not recorded; automatic switching is blocked"
+                ? !location.routing_confirmed
+                  ? "Confirm app routing on this TV before switching"
+                  : (location.connectable ?? location.qualified)
+                    ? "Available for automatic switching"
+                    : location.connectable === undefined
+                      ? "Update Prime Player to allow first-use switching"
+                      : "Managed networking is disabled in Prime Player"
                 : "Location is not currently available from the player"}
             </p>
             <label>

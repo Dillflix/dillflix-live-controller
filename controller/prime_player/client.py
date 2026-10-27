@@ -21,7 +21,7 @@ rpc_context = ContextVar("prime_rpc_context", default={})
 
 COMPATIBILITY_MESSAGES = {
     "prime_network_recovering": "Prime network transition is pending; watch plan retained",
-    "prime_network_disabled": "Managed networking must be enabled and qualified in Prime Player",
+    "prime_network_disabled": "Managed networking must be enabled in Prime Player",
     "prime_runtime_recovering": "Prime runtime update is being handled automatically; watch plan retained",
     "prime_runtime_unsupported": "Prime runtime unsupported; player adapter update required",
     "prime_api_incompatible": "Prime Player API unsupported; player service update required",
