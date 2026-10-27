@@ -57,6 +57,11 @@ export function VPNSettings({
     >
       <h2>VPN location policies</h2>
       <p>
+        These rules are shared by all streams. Each stream uses its own paired
+        VPN profiles; the location availability below is for the selected
+        stream.
+      </p>
+      <p>
         Always try the current connection first. If no suitable feed is found,
         try matching VPN locations in the order below, then direct. Direct is
         always permitted. Each switch interrupts playback and may take three

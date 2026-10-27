@@ -37,13 +37,15 @@ on the same Plex server. Switching streams clears unsaved connection/token draft
 
 ## Behavior
 
-- The title follows the currently verified event, for example **Beijing Open:
-  Day 7**, including events without an image. The default title is **Dillflix Live**.
+- The title includes the stream name and verified event, for example **Stream 1 -
+  Beijing Open: Day 7**, including events without an image. Idle streams use
+  **Stream 1** or **Stream 2** and their saved default artwork. Uncertain playback
+  retains the existing five-minute confirmation grace period.
   Requested and last verified titles are shown separately in settings and diagnostics.
 - Upgrading an enabled 0.15.x installation schedules the current title on startup;
   no new playback request or settings change is required. Version 0.16.1 also
   clears suspensions caused solely by the retired media-property checks. Other
-  suspensions require **Retry Plex update**. The database remains schema 9.
+  suspensions require **Retry Plex update**.
 - The poster prefers the current event's game-thumbs matchup thumbnail,
   retaining its URL/style and landscape proportions. Without a matchup, it uses
   Teamarr's supplied `artwork.cover_url` unchanged. DAZN tennis day/court coverage
@@ -57,9 +59,10 @@ on the same Plex server. Switching streams clears unsaved connection/token draft
   accepted confirmation**, without an extra grace period after evidence expiry.
   Each stream's deadline uses only that stream's playback evidence. Its fallback
   restores only its own Plex item and default images.
-- Brief lost verification, pause, manual handoff, or completion holds the current
+- Brief lost verification, pause, or manual handoff holds the current
   title and artwork until that deadline. Automation pause alone does not invalidate
-  continuing verified playback.
+  continuing verified playback. Waiting with no observed playback restores the
+  idle stream title and defaults immediately.
 - A new event without an image uses the default poster. A failed image download
   for a new event also uses its default and retries; a failed refresh for the
   same event retains that event's last good image.
@@ -69,7 +72,7 @@ on the same Plex server. Switching streams clears unsaved connection/token draft
 - Demo/simulator mode cannot write Plex titles or artwork, including defaults.
 - Disabling prevents new writes and leaves the current title and images in place. A request
   already transmitted can still complete. **Restore defaults and disable**
-  explicitly disables automation and queues **Dillflix Live** and both default images.
+  explicitly disables automation and queues the stream name and both default images.
 
 The worker uses committed desired state and deadline/retry wake-ups. Ordinary
 controller restart retains the existing deadline and resolves uncertain writes

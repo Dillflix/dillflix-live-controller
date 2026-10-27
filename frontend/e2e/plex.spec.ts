@@ -160,10 +160,10 @@ test("Plex title status distinguishes the requested default from the verified ev
           desired: {
             mode: "defaults",
             title: "Default artwork",
-            plex_title: "Dillflix Live",
+            plex_title: "Stream 1",
           },
           applied_title: {
-            value: "Beijing Open: Day 7",
+            value: "Stream 1 - Beijing Open: Day 7",
             at: "2026-10-06T05:00:00Z",
           },
         },
@@ -174,10 +174,10 @@ test("Plex title status distinguishes the requested default from the verified ev
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const panel = page.getByRole("region", { name: "Plex item settings" });
   await expect(
-    panel.getByText("Requested title: Dillflix Live", { exact: true }),
+    panel.getByText("Requested title: Stream 1", { exact: true }),
   ).toBeVisible();
   await expect(
-    panel.getByText(/^Verified title: Beijing Open: Day 7/),
+    panel.getByText(/^Verified title: Stream 1 - Beijing Open: Day 7/),
   ).toBeVisible();
   await expect(panel.getByText(/Update pending/)).toBeVisible();
   await expect(

@@ -34,6 +34,7 @@ test("city VPN policies persist, reorder and undo without changing the watch pla
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const panel = page.getByRole("region", { name: "VPN location policies" });
+  await expect(panel.getByText(/These rules are shared by all streams/)).toBeVisible();
   await panel.getByRole("button", { name: "Add location policy" }).click();
   await panel
     .getByLabel("Permitted team cities 1")

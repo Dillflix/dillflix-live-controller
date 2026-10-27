@@ -32,7 +32,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 17
+    SCHEMA_VERSION = 18
 
     def __init__(self, path):
         self.path = path

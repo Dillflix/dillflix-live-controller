@@ -39,16 +39,42 @@ def catalogue_reservation(device, items, real):
 def planning_fields(device):
     return {**{key: copy.deepcopy(device.get(key, {} if key != "plan" else []))
                for key in SHARED_FIELDS},
-            "preferences": {key: copy.deepcopy(value) for key, value in device["preferences"].items()
-                            if key != "vpn_policy"}}
+            "preferences": {**copy.deepcopy(device["preferences"]),
+                            "vpn_policy": copy.deepcopy(device["preferences"].get("vpn_policy"))}}
 
 
 def apply_planning(device, fields):
     for key in SHARED_FIELDS:
         device[key] = copy.deepcopy(fields[key])
-    device["preferences"] = {**copy.deepcopy(fields["preferences"]),
-                             **({"vpn_policy": device["preferences"]["vpn_policy"]}
-                                if "vpn_policy" in device["preferences"] else {})}
+    device["preferences"] = copy.deepcopy(fields["preferences"])
+
+
+def share_vpn_policy(service, db):
+    """Adopt the primary policy once; retain legacy values for recovery."""
+    if service.db.meta(db, "shared_vpn_policy_migrated"):
+        return
+    devices = {row[0]: service.db.device(db, row[0]) for row in db.execute("SELECT id FROM devices")}
+    if not devices:
+        return
+    policies = {key: copy.deepcopy(d["preferences"].get("vpn_policy")) for key, d in devices.items()}
+    selected = policies.get(service.device_id)
+    if selected is None:
+        selected = next((policies.get(binding.id) for binding in service.settings.configured_devices
+                         if policies.get(binding.id) is not None), None)
+    service.db.set_meta(db, "legacy_device_vpn_policies", policies)
+    for device in devices.values():
+        if device["preferences"].get("vpn_policy") != selected:
+            device["revision"] += 1
+            device["force_switch"] = True
+            device["preferences"]["vpn_policy"] = copy.deepcopy(selected)
+            service.db.save_device(db, device)
+        # Do not resave unchanged legacy payloads: device() provides read-time
+        # defaults that must not rewrite existing configuration/restore receipts.
+    canonical = service.db.meta(db, "fleet_plan")
+    if canonical is not None:
+        canonical["preferences"]["vpn_policy"] = copy.deepcopy(selected)
+        service.db.set_meta(db, "fleet_plan", canonical)
+    service.db.set_meta(db, "shared_vpn_policy_migrated", True)
 
 
 def validate_saved_plan(service, db):
@@ -60,7 +86,13 @@ def validate_saved_plan(service, db):
     if not devices:
         return
     canonical = service.db.meta(db, "fleet_plan", planning_fields(devices[service.device_id]))
-    conflicting = [key for key, device in devices.items() if planning_fields(device) != canonical]
+    def comparable(fields):
+        fields = copy.deepcopy(fields)
+        if not service.db.meta(db, "shared_vpn_policy_migrated"):
+            fields["preferences"].pop("vpn_policy", None)
+        return fields
+    conflicting = [key for key, device in devices.items()
+                   if comparable(planning_fields(device)) != comparable(canonical)]
     if conflicting:
         raise ValueError(
             "Saved stream plans differ from the shared plan: " + ", ".join(conflicting)
@@ -73,7 +105,7 @@ def synchronize_plan(service, db):
 
     Device payloads retain the legacy contract. The canonical metadata record
     detects edits, including confirmed completion and undo, before commit.
-    Playback, ownership, network evidence and VPN preferences are never copied.
+    Playback, ownership and network evidence are never copied.
     """
     if len(service.runtimes) < 2:
         return

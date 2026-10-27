@@ -7,7 +7,6 @@ from ..database import encode
 from ..planner import parse_time
 from .state import configuration, runtime, save_runtime
 
-DEFAULT_TITLE = "Dillflix Live"
 RETIRED_MEDIA_CHECK_ERRORS = {
     "Protected Plex metadata changed; artwork updates suspended",
     "Protected Plex metadata changed; updates suspended",
@@ -31,6 +30,10 @@ def reconcile(service, db, device_id, *, now=None):
             state.update(desired=None, generation=state["generation"] + 1)
         state.update(pending=False, fallback_at=None, retry_at=None, hold=False)
     else:
+        device = service.db.device(db, device_id)
+        stream_name = device["name"].strip()
+        if device_id == "living-room" and stream_name == "Living room":
+            stream_name = "Stream 1"
         view = current_playback(service, db, device_id, now=now)
         confirmed = view.state == "playing" and view.simulated is False
         if confirmed:
@@ -38,14 +41,16 @@ def reconcile(service, db, device_id, *, now=None):
             state["last_confirmed_at"] = max(stamp, state["last_confirmed_at"] or stamp)
         due = (state["last_confirmed_at"] or config["enabled_at"] or now.timestamp()) + 300
         state["fallback_at"] = due if config["enabled"] else None
-        state["hold"] = not confirmed and now.timestamp() < due and not config.get("one_shot")
+        idle = (view.state == "idle" and device["playback_state"] == "waiting"
+                and not device.get("manual_control") and not device.get("input_handoff"))
+        state["hold"] = not confirmed and not idle and now.timestamp() < due and not config.get("one_shot")
         wanted = None
-        if config.get("one_shot") or now.timestamp() >= due:
+        if idle or config.get("one_shot") or now.timestamp() >= due:
             wanted = {
                 "mode": "defaults",
                 "content_id": None,
                 "title": "Default artwork",
-                "plex_title": DEFAULT_TITLE,
+                "plex_title": stream_name,
                 "sources": {
                     slot: {"asset": config["defaults"].get(slot)} for slot in ("poster", "background")
                 },
@@ -56,7 +61,7 @@ def reconcile(service, db, device_id, *, now=None):
                 "mode": "event",
                 "content_id": event.content_id,
                 "title": event.title,
-                "plex_title": event.title.strip() or DEFAULT_TITLE,
+                "plex_title": (f"{stream_name} - {event.title.strip()}" if event.title.strip() else stream_name)[:2048],
                 "sources": {
                     "poster": {"url": event.thumbnail_url}
                     if event.thumbnail_url
