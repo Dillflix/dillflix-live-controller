@@ -66,8 +66,10 @@ def share_vpn_policy(service, db):
         if device["preferences"].get("vpn_policy") != selected:
             device["revision"] += 1
             device["force_switch"] = True
-        device["preferences"]["vpn_policy"] = copy.deepcopy(selected)
-        service.db.save_device(db, device)
+            device["preferences"]["vpn_policy"] = copy.deepcopy(selected)
+            service.db.save_device(db, device)
+        # Do not resave unchanged legacy payloads: device() provides read-time
+        # defaults that must not rewrite existing configuration/restore receipts.
     canonical = service.db.meta(db, "fleet_plan")
     if canonical is not None:
         canonical["preferences"]["vpn_policy"] = copy.deepcopy(selected)

@@ -86,9 +86,9 @@ async def test_shared_startup_cleanup_updates_canonical_plan_without_resurrectio
         device = service.db.device(db, "living-room")
         device["plan"] = [service.entry("demo:lions"), service.entry("demo:golf")]
         device["manual_completions"]["demo:lions"] = datetime.now(UTC).isoformat()
+        device["preferences"]["vpn_policy"] = {"enabled": True, "locations": []}
         service.db.save_device(db, device)
         second = service.db.device(db, "second-tv")
-        second["preferences"]["vpn_policy"] = {"local": "toronto"}
         second["automation"] = "paused"
         service.db.save_device(db, second)
     await service.stop()
@@ -102,7 +102,7 @@ async def test_shared_startup_cleanup_updates_canonical_plan_without_resurrectio
                     assert service.db.meta(db, "fleet_plan") == planning_fields(device)
                 second = service.db.device(db, "second-tv")
                 assert second["automation"] == "paused"
-                assert second["preferences"]["vpn_policy"] == {"local": "toronto"}
+                assert second["preferences"]["vpn_policy"] == {"enabled": True, "locations": []}
                 service.db.set_meta(db, "unrelated_worker", {"state": "idle"})
         finally:
             await service.stop()
