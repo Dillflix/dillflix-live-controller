@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+from .event_attempts import exhausted
+
 
 def parse_time(value):
     if not value:
@@ -147,10 +149,14 @@ def choose(device, items, now, real_now):
     committed = {p["content_id"] for p in device["plan"]}
     eligible = []
     candidates = []
+    exhausted_live = False
     for item in items:
         if not item["active"] and item["content_id"] not in committed | {current_id}:
             continue
         if not entitlement_eligible(item) and item["content_id"] != current_id:
+            continue
+        if exhausted(device, item["content_id"]):
+            exhausted_live |= item["playable"]
             continue
         evidence = access.get(item["content_id"], {})
         if (evidence.get("scope") == device.get("prime_network_scope")
@@ -204,6 +210,8 @@ def choose(device, items, now, real_now):
             "rule_id": rule["id"] if rule else None,
             "reason": f"Priority {priority(device, target) + 1} · {rule['name']}"
             if rule
+            else "Automatic attempt limit reached; use Play now to retry an event"
+            if exhausted_live
             else "Waiting for an eligible live event",
         }
     # A backoff timer expiring must not repeatedly abort the fallback search it
@@ -260,6 +268,7 @@ def choose(device, items, now, real_now):
     )
     route_present = (
         current
+        and not exhausted(device, current_id)
         and not current_locked
         and observed.get("viewing_option_id") in {o["id"] for o in current["viewing_options"]}
     )

@@ -388,10 +388,16 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         return True
 
     def complete_search(self, token, state, selected=None, *, error=None):
+        from ..event_attempts import CONCLUSIVE_FAILURES
         with self.db.transaction() as db:
             row = self.store.allowed(db, token, navigation=True)
             report = json.loads(row["report"])
             report["prime_player"].update(selected=selected, readiness=state)
+            acquisition = report["prime_player"].get("network_acquisition") or {}
+            report["prime_player"]["nontechnical_failure"] = bool(
+                state in CONCLUSIVE_FAILURES and not error
+                and not acquisition.get("unavailable_targets")
+            )
             report["operation"].update(
                 state=state, phase=state, finished_at=utc(), updated_at=utc(), error=error
             )

@@ -21,6 +21,7 @@ from .content_status import (
 from .coordinator import PlaybackCoordinator
 from .database import Database, encode
 from .entitlements import EntitlementChecks
+from .event_attempts import attempt_status, DEFAULT_ATTEMPT_LIMIT
 from .fixtures import default_device, fixtures, make_team
 from .launch_progress import launch_progress
 from .leagues import LEAGUE_NAMES
@@ -336,6 +337,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 card["priority"] = priority(device, item)
                 failed = device["failures"].get(item["content_id"])
                 card["failure"] = failed
+                card["playback_retry"] = attempt_status(device, item["content_id"])
                 cards.append(card)
             cards.sort(key=lambda c: (c["start_time"], c["content_id"]))
             activity = [
@@ -584,11 +586,17 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             else:
                 device["plan"].append(entry)
             device["plan"] = ordered_plan(device)
-            selected = choose(device, list(items.values()), self.now(db), datetime.now(UTC))
+            candidate = copy.deepcopy(device)
+            if op == "play_now":
+                candidate.get("event_attempts", {}).pop(content_id, None)
+                candidate.get("prime_access", {}).pop(content_id, None)
+                candidate["failures"].pop(content_id, None)
+            selected = choose(candidate, list(items.values()), self.now(db), datetime.now(UTC))
             if op == "play_now" and (not public or selected["content_id"] == content_id):
                 device["automation"] = "active"
                 device["failures"].pop(content_id, None)
                 device.setdefault("prime_access", {}).pop(content_id, None)
+                device.get("event_attempts", {}).pop(content_id, None)
                 device["retry_playback"] = content_id
         elif op == "remove":
             entry_id = action.get("entry_id")
@@ -682,6 +690,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         if "vpn_policy" not in update.preferences.model_fields_set:
             data["preferences"].pop("vpn_policy", None)
 
+        if "event_attempt_limit" not in update.preferences.model_fields_set:
+            data["preferences"].pop("event_attempt_limit", None)
+
         def apply(db, device):
             if len({r["id"] for r in data["rules"]}) != len(data["rules"]):
                 raise HTTPException(422, "Rule IDs must be unique")
@@ -692,6 +703,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 team_ranks=data["team_ranks"],
                 preferences={
                     **data["preferences"],
+                    "event_attempt_limit": data["preferences"].get(
+                        "event_attempt_limit", device["preferences"].get("event_attempt_limit", DEFAULT_ATTEMPT_LIMIT)
+                    ),
                     "vpn_policy": data["preferences"].get("vpn_policy", device["preferences"].get("vpn_policy")),
                     "discovery_leagues": data["preferences"].get(
                         "discovery_leagues", device["preferences"]["discovery_leagues"]

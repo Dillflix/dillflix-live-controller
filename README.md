@@ -51,6 +51,15 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 - Automatic history retention that preserves commitments, undo, current playback, and unresolved recovery work.
 - Configuration export and reviewed import, with validation, cross-mode warnings, and protection against overwriting newer edits.
 - Minimum viewing time, automatic-switch cooldown, same-priority switching, and timezone settings.
+- An overall unsuccessful playback limit, shared in Settings and defaulting to
+  **two complete cycles per event on each stream**, including the first attempt.
+  A cycle checks the applicable direct/VPN routes. Conclusive unavailable,
+  locked or missing-feed results count once; technical errors, uncertain results,
+  upcoming feeds and incomplete VPN setup do not. After the limit, automatic
+  selection skips the event but retains its watch-plan entry. **Play now** resets
+  that event's count on the selected stream. Verified playback also clears it.
+  Counts survive restarts, network changes, schedule refreshes and plan reordering.
+  Increasing the limit permits additional cycles; lowering it applies immediately.
 - Separate desired and observed playback, pause/resume, decision history, and side-effect-free selection/conflict previews.
 - Versioned SQLite migrations, optimistic concurrency, command idempotency, a durable request queue, and a coordinator lease.
 - A separate persistent playback simulator with idempotent delivery, restart reconciliation, cancellation retries, and navigation deadlines. Acknowledgement alone does not verify playback.

@@ -234,6 +234,7 @@ def default_device(mode):
         "playback_state": "waiting",
         "reason": "Starting",
         "preferences": {
+            "event_attempt_limit": 2,
             "timezone": "America/Vancouver",
             "minimum_viewing_seconds": 300,
             "switch_cooldown_seconds": 30,

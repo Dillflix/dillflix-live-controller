@@ -161,6 +161,8 @@ def prune(database, settings, owner):
                        (*payloads, row["id"]))
         for d in devices:
             d["failures"] = {key: value for key, value in d["failures"].items() if key in known}
+            if "event_attempts" in d:
+                d["event_attempts"] = {key: value for key, value in d["event_attempts"].items() if key in known}
             d["manual_completions"] = {
                 key: value for key, value in d.get("manual_completions", {}).items() if key in known
             }

@@ -59,6 +59,7 @@ class PlaybackRecovery:
             recovery["reason"] = reason
 
     def note_verified_playback(self, device, now):
+        device.get("event_attempts", {}).pop(device["observed"]["content_id"], None)
         recovery = device.get("recovery")
         if not recovery:
             return
