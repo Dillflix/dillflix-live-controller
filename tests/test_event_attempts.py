@@ -89,6 +89,45 @@ def test_success_resets_budget_and_other_device_is_independent(rig):
     assert not overview(client)["device"]["event_attempts"]
 
 
+def test_technical_failure_preserves_prior_nontechnical_count(rig):
+    client, service, _ = rig
+    first = pending(rig)
+    finish(service, first)
+    expire(service, first["content_id"])
+    service.stage_playback()
+    finish(service, jobs(client)[0], "failed", conclusive=False)
+    status = attempt_status(overview(client)["device"], first["content_id"])
+    assert status["attempts"] == 1 and not status["exhausted"]
+
+
+def test_rejected_completion_cannot_charge_event_budget(rig):
+    client, service, _ = rig
+    job = pending(rig)
+    report = successful_report(service, job)
+    report.update(state="feeds_locked", observation=None, nontechnical_failure=True,
+                  content_id="different-event", finished_at=datetime.now(UTC).isoformat())
+    service.receive_playback_report(job["id"], report)
+    assert not overview(client)["device"].get("event_attempts")
+
+
+def test_fleet_allocates_exhausted_event_only_to_stream_with_budget():
+    from test_fleet_allocation import NOW, rig as fleet_rig
+    from controller.fleet import select_for_stream
+
+    fleet = fleet_rig({"one": ["a", "b"], "two": ["a", "b"]})
+    db = fleet.db
+    try:
+        for n in range(2):
+            record_failure(fleet.devices["one"], "a", str(n), "feeds_locked", NOW.isoformat())
+        for key, expected in (("one", "b"), ("two", "a")):
+            service = fleet.root.runtimes[key]
+            device = fleet.devices[key]
+            result = select_for_stream(service, db, device, service.items(db, key), NOW, NOW, reserve=False)
+            assert result["content_id"] == expected
+    finally:
+        db.close()
+
+
 def test_configurable_limit_preserved_by_legacy_clients_and_idempotent(rig):
     client, service, _ = rig
     first = pending(rig)
@@ -118,6 +157,41 @@ def test_configurable_limit_preserved_by_legacy_clients_and_idempotent(rig):
 def test_attempt_limit_validation(limit):
     with pytest.raises(ValueError):
         Preferences(event_attempt_limit=limit)
+
+
+async def test_legacy_fleet_defaults_and_shared_setting_do_not_share_counters(tmp_path):
+    from controller.config import DeviceSettings, Settings
+    from controller.models import RulesUpdate
+
+    settings = Settings(database=str(tmp_path / "fleet.sqlite"), devices=(
+        DeviceSettings("living-room", "Dillflix 1"), DeviceSettings("stream-2", "Dillflix 2"),
+    ))
+    controller = Controller(settings)
+    try:
+        # Mimic a saved shared plan written before the new setting existed.
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            device["preferences"].pop("event_attempt_limit", None)
+            record_failure(device, "demo:lions", "first", "feeds_locked", "before")
+            controller.db.save_device(db, device)
+        await controller.stop()
+        controller = Controller(settings)
+        with controller.db.snapshot() as db:
+            device = controller.db.device(db)
+            assert attempt_status(device, "demo:lions")["limit"] == 2
+            assert not controller.db.device(db, "stream-2").get("event_attempts")
+        controller.rules_command("living-room", RulesUpdate(
+            command_id=str(uuid4()), expected_revision=device["revision"],
+            rules=device["rules"], team_ranks=device["team_ranks"],
+            preferences={**device["preferences"], "event_attempt_limit": 1},
+        ))
+        with controller.db.snapshot() as db:
+            for device_id in ("living-room", "stream-2"):
+                assert controller.db.device(db, device_id)["preferences"]["event_attempt_limit"] == 1
+            assert exhausted(controller.db.device(db), "demo:lions")
+            assert not exhausted(controller.db.device(db, "stream-2"), "demo:lions")
+    finally:
+        await controller.stop()
 
 
 @pytest.mark.parametrize("unavailable", [False, True])

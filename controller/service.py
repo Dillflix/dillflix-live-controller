@@ -849,6 +849,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     {
                         "failures": {},
                         "prime_access": {},
+                        "event_attempts": {},
                         "manual_completions": {},
                         "observed": None,
                         "desired": None,
