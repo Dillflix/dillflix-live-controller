@@ -362,6 +362,9 @@ class PlaybackCoordinator(PlaybackRecovery):
                     db, d, job, "Executor response identity does not match the request", "rejected"
                 )
             elif completed_search:
+                from .event_attempts import attempt_status, record_failure
+                if report.get("nontechnical_failure") is True:
+                    record_failure(d, job["content_id"], job["id"], readiness, finished.isoformat())
                 reason = {
                     "waiting_for_feed": "Waiting for the live feed; search will retry in 60 seconds",
                     "access_unknown": "Prime access or readiness is unknown; search will retry in 60 seconds",
@@ -371,10 +374,14 @@ class PlaybackCoordinator(PlaybackRecovery):
                 }[readiness]
                 if readiness == "access_unknown" and report.get("reason"):
                     reason = str(report["reason"])[:1000] + "; search will retry in 60 seconds"
+                budget = attempt_status(d, job["content_id"])
+                if budget and budget["exhausted"]:
+                    reason = budget["message"]
                 d.setdefault("prime_access", {})[job["content_id"]] = {
                     "state": readiness,
                     "scope": d.get("prime_network_scope"),
-                    "expires_at": (time.time() + self.executor.network_policy.ttl) if self.executor and d.get("prime_network_scope") else None,
+                    "expires_at": (time.time() + (self.executor.network_policy.ttl if self.executor else 300))
+                    if d.get("prime_network_scope") or report.get("nontechnical_failure") else None,
                     "reason": reason,
                     "observed_at": finished.isoformat(),
                     "retry_after": (finished + timedelta(seconds=60)).isoformat()

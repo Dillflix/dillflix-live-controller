@@ -207,6 +207,23 @@ bounds remain; exhausting labels does not prove catalogue-wide absence.
 
 ## State and recovery
 
+`preferences.event_attempt_limit` is shared fleet configuration (integer 1–10,
+default 2, including the initial cycle). Each device persists `event_attempts`
+by opaque content ID independently of its expiring `prime_access` network cache.
+Only accepted, conclusive, error-free completed selection outcomes consume a
+cycle. A network preflight and its individual locations never count separately;
+missing/unconnectable configured profiles, deadlines, transport failures, runtime
+recovery, upcoming feeds and unknown availability do not consume the budget.
+Duplicate completion receipts are idempotent. Existing access TTL controls the
+wait between conclusive failures; exhaustion itself has no TTL and is checked
+by both automatic and watch-plan selection, including fleet allocation.
+The plan entry remains. Explicit Play now on a stream or verified playback
+resets that event's count on that stream. Session, network, route, schedule and
+unrelated configuration changes do not reset it. Retention removes counters
+only when the associated catalog entry is pruned. Legacy configurations default
+to 2 without rewriting stored configuration or requiring a schema migration;
+old settings clients preserve a separately configured limit.
+
 The device record separates configuration revision, manual plan, desired content, monotonically increasing intent version, and observed playback. A configuration edit increments the revision; ordinary status observations do not. A stale client gets HTTP 409 rather than overwriting another browser's changes.
 
 Command receipts are persisted with a payload hash. While its receipt remains retained, repeating the exact command returns the previous receipt even after the configuration revision changes. Reusing a retained ID with different content is rejected. A transaction saves desired intent and a pending job together. Before accepting an asynchronous playback result, the worker reevaluates selection and checks that the intent and content still match. Superseded requests cannot become observed playback.

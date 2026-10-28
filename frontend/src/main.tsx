@@ -714,7 +714,9 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
               {e.phase === "unknown" ? e.kind : e.phase.replaceAll("_", " ")}
             </span>
             <span className={`df-event-status ${live ? "df-live" : ""}`}>
-              {fail
+              {e.playback_retry?.exhausted
+                ? "Attempt limit reached"
+                : fail
                 ? "Retry pending"
                 : live
                   ? "Live"
@@ -770,6 +772,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
             </span>
           </div>
           {assignment(e.content_id) && <p className="df-assignment">{assignment(e.content_id)}</p>}
+          {e.playback_retry?.exhausted && <p className="df-footnote">{e.playback_retry.message}</p>}
         </div>
         <div className="df-event-footer">
           <div className="df-event-status">
@@ -1209,7 +1212,9 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                             </p>
                             <p>
                               {event?.lifecycle.state} ·{" "}
-                              {event?.failure
+                              {event?.playback_retry?.exhausted
+                                ? "Attempt limit reached; use Play now to try again"
+                                : event?.failure
                                 ? "Retry pending; commitment retained"
                                 : "Protected until completion"}
                             </p>
@@ -1672,6 +1677,27 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                         preference({ same_tier_switching: e.target.checked })
                       }
                     />
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
+                      <strong>Unsuccessful playback attempt limit</strong>
+                      <p>
+                        Total failed cycles per event on each stream, including
+                        the first attempt. Each cycle tries the applicable direct
+                        and VPN routes. Technical errors and upcoming feeds do
+                        not count. Play now resets the count.
+                      </p>
+                    </div>
+                    <select
+                      aria-label="Unsuccessful playback attempt limit"
+                      value={d.preferences.event_attempt_limit ?? 2}
+                      disabled={busy}
+                      onChange={(e) => preference({ event_attempt_limit: Number(e.target.value) })}
+                    >
+                      {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                        <option key={n} value={n}>{n} {n === 1 ? "cycle" : "cycles"}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="df-setting">
                     <div className="df-row-copy">
@@ -2380,6 +2406,9 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                     ? "on"
                     : "off"}
                   .
+                  <br />
+                  Unsuccessful playback attempt limit:{" "}
+                  {modal.preview.configuration.preferences.event_attempt_limit ?? 2} cycles per event and stream.
                 </p>
               </details>
               <div className="df-info df-spacer">

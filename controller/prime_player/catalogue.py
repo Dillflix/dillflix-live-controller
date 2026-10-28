@@ -390,6 +390,14 @@ class CatalogueChecks:
                 "no_matching_feed": "No matching live or upcoming Prime feed found; watch plan retained",
             }
             reason = reasons[state]
+            from ..event_attempts import CONCLUSIVE_FAILURES, attempt_status, record_failure
+            # A fallback-eligible preflight becomes network_acquisition_required
+            # above. Count only the completed cycle, not each individual route.
+            if not error:
+                record_failure(device, probe["content_id"], probe["id"], state, now.isoformat())
+            budget = attempt_status(device, probe["content_id"])
+            if budget and budget["exhausted"]:
+                reason = budget["message"]
             if state == "access_unknown":
                 error = evidence.get("error") or (evidence.get("audit") or {}).get("error") or {}
                 reason = CATALOGUE_ERROR_MESSAGES.get(error.get("code"), reason)
@@ -401,7 +409,8 @@ class CatalogueChecks:
             device.setdefault("prime_access", {})[probe["content_id"]] = {
                 "state": state,
                 "scope": device.get("prime_network_scope"),
-                "expires_at": (time.time() + self.network_policy.ttl) if device.get("prime_network_scope") else None,
+                "expires_at": (time.time() + self.network_policy.ttl)
+                if device.get("prime_network_scope") or (not error and state in CONCLUSIVE_FAILURES) else None,
                 "reason": reason,
                 "observed_at": now.isoformat(),
                 "retry_after": (now + timedelta(seconds=retry_seconds)).isoformat()

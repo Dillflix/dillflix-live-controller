@@ -92,6 +92,7 @@ class VPNPolicy(StrictModel):
 
 
 class Preferences(StrictModel):
+    event_attempt_limit: int = Field(default=2, ge=1, le=10, strict=True)
     vpn_policy: VPNPolicy | None = None
     timezone: str = "America/Vancouver"
     minimum_viewing_seconds: int = Field(default=300, ge=0, le=3600)

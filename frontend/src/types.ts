@@ -58,6 +58,7 @@ export interface Content {
   scores: (number | null)[];
   status_detail: string | null;
   failure: { attempts: number; retry_after: string; reason: string } | null;
+  playback_retry?: { attempts: number; limit: number; exhausted: boolean; message: string } | null;
 }
 export interface Rule {
   id: string;
@@ -77,6 +78,7 @@ export interface VPNPolicy {
   access_ttl: number;
 }
 export interface Preferences {
+  event_attempt_limit?: number;
   vpn_policy?: VPNPolicy | null;
   discovery_leagues: string[];
   timezone: string;
