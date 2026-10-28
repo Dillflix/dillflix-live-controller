@@ -18,7 +18,10 @@ def finish(service, job, state="feeds_unavailable", *, conclusive=True):
     report = successful_report(service, job)
     report.update(state=state, observation=None, finished_at=datetime.now(UTC).isoformat(),
                   nontechnical_failure=conclusive)
-    assert service.receive_playback_report(job["id"], report)
+    service.receive_playback_report(job["id"], report)
+    with service.db.snapshot() as db:
+        saved_state = db.execute("SELECT state FROM jobs WHERE id=?", (job["id"],)).fetchone()[0]
+    assert saved_state == ("failed" if state == "timed_out" else state)
     return report
 
 
