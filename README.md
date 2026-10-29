@@ -11,6 +11,9 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
 
 ## What works
 
+- [National Squash League and Beatdown MMA](docs/dazn-sports.md) broadcast discovery
+  through DAZN Canada, with competition priorities and existing Prime entitlement checks.
+
 - [Multiple Fire TV streams](docs/multiple-streams.md) with one shared watch plan
   and priorities. Each stream receives a different eligible event and has its own
   playback worker, player service, recovery, screen and manual controls. Existing

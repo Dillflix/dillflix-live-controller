@@ -2,6 +2,8 @@ const labels: Record<string, string> = {
   "college-football": "College Football",
   pga: "Golf",
   tennis: "Tennis",
+  nsl: "National Squash League",
+  beatdown: "Beatdown MMA",
   "uefa.champions": "UEFA Champions League",
   "eng.2": "EFL Championship",
   "ger.1": "Bundesliga",

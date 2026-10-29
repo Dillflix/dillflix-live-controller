@@ -71,7 +71,9 @@ class TeamarrClient:
                     else:
                         # Omitting league would restore Teamarr's defaults. Keep
                         # other configured coverage sources but skip game discovery.
-                        params["source"] = ["nfl_redzone", "golf", "special_events", "dazn_tennis"]
+                        params["source"] = [
+                            "nfl_redzone", "golf", "special_events", "dazn_tennis", "dazn_sports"
+                        ]
                 if sources is not None:
                     params["source"] = sources
                 if lookback_hours is not None:
@@ -124,7 +126,7 @@ class TeamarrClient:
         league = snapshot.get("competition") or (snapshot.get("event") or {}).get("league")
         source = snapshot.get("source")
         if not start or not league or source not in {
-            "games", "nfl_redzone", "golf", "special_events", "dazn_tennis"
+            "games", "nfl_redzone", "golf", "special_events", "dazn_tennis", "dazn_sports"
         }:
             raise ValueError("Content is missing its historical feed query context")
         entries, _ = await self.fetch_snapshot(
