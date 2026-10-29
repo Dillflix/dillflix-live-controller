@@ -173,11 +173,16 @@ class EntitlementChecks:
         for field, reason in (
             ("manual_control", "Manual control is active"),
             ("input_handoff", "Device control is changing"),
-            ("recovery", "Playback recovery is in progress"),
             ("player_recovery", "Prime runtime recovery is in progress"),
         ):
             if device.get(field):
                 return reason
+        recovery = device.get("recovery") or {}
+        # Retained retry history is not active device work. It can outlive the
+        # old assignment, or remain during the stable-playback observation window.
+        current = {device.get("desired"), (device.get("observed") or {}).get("content_id")} - {None}
+        if recovery.get("since") and recovery.get("content_id") in current:
+            return "Playback recovery is in progress"
         if device.get("playback_state") in {"navigating", "unverified"}:
             return "Waiting for playback to become stable"
         if device.get("prime_network", {}).get("state") == "transitioning":

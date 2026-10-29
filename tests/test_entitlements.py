@@ -196,6 +196,35 @@ async def test_entitled_provider_wins_and_identified_denial_needs_no_exhaustive_
         await cleanup(controller)
 
 
+@pytest.mark.parametrize("assignment", ["idle", "different", "stable", "desired", "observed"])
+async def test_only_active_current_event_recovery_blocks_entitlement_checks(tmp_path, assignment):
+    controller, workflow = rig(tmp_path)
+    seed(controller)
+    recovery = {"content_id": "old-event", "attempts": 2,
+                "since": datetime.now(UTC).isoformat(), "retry_after": None,
+                "stable_since": None}
+    blocked = assignment in {"desired", "observed"}
+    try:
+        with controller.db.transaction() as db:
+            device = controller.db.device(db)
+            device.update(desired=None, observed=None, playback_state="waiting", recovery=recovery)
+            if assignment in {"desired", "stable", "different"}:
+                device["desired"] = "other-event" if assignment == "different" else "old-event"
+            if assignment == "observed":
+                device["observed"] = {"content_id": "old-event"}
+            if assignment == "stable":
+                recovery.update(since=None, stable_since=datetime.now(UTC).isoformat())
+            controller.db.save_device(db, device)
+        await controller.check_entitlement_once()
+        assert [c[0] for c in workflow.player.calls] == ([] if blocked else ["search"])
+        assert record(controller)["status"] == ("unknown" if blocked else "entitled")
+        with controller.db.snapshot() as db:
+            # Preserve the retry history; only its scheduling effect changes.
+            assert controller.db.device(db)["recovery"] == recovery
+    finally:
+        await cleanup(controller)
+
+
 async def test_first_import_checks_once_and_persists_across_restart(tmp_path):
     controller, workflow = rig(tmp_path)
     entries = seed(controller)
