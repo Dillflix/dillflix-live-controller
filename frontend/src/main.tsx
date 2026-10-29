@@ -328,6 +328,7 @@ function RuleForm({
           <option value="nfl_redzone">NFL RedZone</option>
           <option value="golf">Golf coverage</option>
           <option value="dazn_tennis">Tennis coverage · DAZN</option>
+          <option value="dazn_sports">Squash & MMA · DAZN</option>
           <option value="games">Games</option>
           <option value="special_events">Special events</option>
         </select>
@@ -525,6 +526,8 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
       ...d.preferences.discovery_leagues,
       "pga",
       "tennis",
+      "nsl",
+      "beatdown",
     ]),
   ].sort();
   const observed = find(d.observed?.content_id || null),
