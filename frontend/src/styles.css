@@ -1475,7 +1475,7 @@ select:focus-visible {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    font-size: 0.68rem;
+    font-size: clamp(0.55rem, 2.5vw, 0.68rem);
     text-align: center;
     padding: 8px 2px;
     white-space: normal;

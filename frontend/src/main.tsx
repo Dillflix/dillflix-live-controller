@@ -69,7 +69,7 @@ const navs = [
   ["events", "Events", LayoutGrid],
   ["plan", "Watch plan", CalendarDays],
   ["rules", "Priorities", ListFilter],
-  ["entitlements", "Entitlement checks", ShieldCheck],
+  ["entitlements", "Entitlements", ShieldCheck],
   ["activity", "Activity", Activity],
   ["settings", "Settings", Settings2],
 ] as const;
@@ -688,7 +688,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
         onClick={() => setView(key)}
       >
         <Icon size={18} />
-        <span>{mobile && key === "entitlements" ? "Checks" : label}</span>
+        <span>{label}</span>
         {key === "plan" && !mobile && (
           <span className="df-count">{d.plan.length}</span>
         )}
@@ -1399,7 +1399,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
               <>
                 {heading(
                   "Shared account access",
-                  "Entitlement checks",
+                  "Entitlements",
                   "Check progress, review failures, and retry event access checks.",
                 )}
                 <EntitlementQueue value={data.entitlement_queue} timezone={d.preferences.timezone}
