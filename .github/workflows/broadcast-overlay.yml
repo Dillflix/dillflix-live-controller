@@ -1,0 +1,24 @@
+name: broadcast overlay
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  synthetic-video:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system Python and native overlay dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            python3-gi python3-pil python3-pytest \
+            gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 gir1.2-gdkpixbuf-2.0 \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
+      - name: Check opt-in fanout, state leases, rendering, and shutdown
+        run: |
+          bash -n tools/broadcast_overlay/dillflix_gstreamer.sh
+          /usr/bin/python3 -m pytest -q --noconftest \
+            tests/test_broadcast_pipeline.py tests/test_broadcast_client.py
+      - name: Exercise pixel changes in running YUY2 and NV12 pipelines
+        run: /usr/bin/python3 tools/broadcast_overlay/self_test.py

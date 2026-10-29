@@ -39,6 +39,9 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
   matchup thumbnails and provider artwork for tennis coverage.
 - A compact [LED display API](docs/display-api.md) with verified playback,
   startup/status labels, entitled schedule entries, scores and team artwork.
+- An opt-in [public video overlay](docs/broadcast-overlay.md) for the capture
+  pipeline, with per-stream waiting, switching, recovery and standby cards.
+  Verified or started playback hides it; operational details stay off the feed.
 
 - Live Prime playback using service results, deterministic or LLM label matching, durable tokens, scoped cancellation/stop, and current attempt monitoring.
 
@@ -335,6 +338,7 @@ Interactive request schemas are available at `/docs`; the generated OpenAPI docu
 | `GET` or `PUT /api/v1/devices/{id}/rules` | Rules, per-league team ranks, and preferences |
 | `POST /api/v1/devices/{id}/undo` | Undo the latest available plan or configuration edit |
 | `GET /api/v1/devices/{id}/configuration` | Export versioned configuration JSON |
+| `GET /api/v1/devices/{id}/broadcast-overlay` | Small retained-state public overlay projection with a five-second lease |
 | `POST /api/v1/devices/{id}/configuration/import/preview` | Validate and review an import without saving |
 | `POST /api/v1/devices/{id}/configuration/import` | Apply a reviewed configuration at its expected revision |
 | `POST /api/v1/devices/{id}/automation` | Pause or resume automation |

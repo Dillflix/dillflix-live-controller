@@ -8,6 +8,19 @@ Prime completion is written atomically to the executor report and durable conten
 
 ## Responsibilities
 
+### Capture overlay
+
+The optional broadcast overlay is a read-only projection of one stream's
+accepted playback and current executor request. It reads retained records in one
+snapshot without constructing the catalogue, polling a player or changing
+intent. Fresh physical playback takes precedence over a desired replacement;
+acknowledged or uncertain Play dispatch suppresses the card only within its
+existing ownership and deadline. Merely entering a launch phase is insufficient.
+The capture process polls off-thread, enforces a five-second maximum lease and
+renders fixed public copy. Expired/unavailable data hides the card independently
+of HTTP progress. One optional GStreamer overlay precedes the hardware fanout;
+video/audio keep their existing outputs. See [deployment and state table](broadcast-overlay.md).
+
 ### Shared plan and independent streams
 
 The optional server-side device registry binds stable IDs to player sockets and
