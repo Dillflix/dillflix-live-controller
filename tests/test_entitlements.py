@@ -708,6 +708,9 @@ async def test_background_work_defers_without_consuming_attempt(tmp_path, condit
             with controller.db.transaction() as db:
                 device = controller.db.device(db)
                 device[condition] = {"test": True}
+                if condition == "recovery":
+                    device["desired"] = "fixture-game"
+                    device["recovery"] = {"content_id": "fixture-game", "since": datetime.now(UTC).isoformat()}
                 controller.db.save_device(db, device)
         await controller.check_entitlement_once()
         assert record(controller)["state"] == "queued"
