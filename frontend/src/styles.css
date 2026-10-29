@@ -1463,7 +1463,7 @@ select:focus-visible {
   }
   #df-app .df-mobile-nav {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     background: var(--df-surface);
     border-top: 1px solid var(--df-line);
     padding: 7px 4px;
