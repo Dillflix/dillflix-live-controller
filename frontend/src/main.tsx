@@ -69,6 +69,7 @@ const navs = [
   ["events", "Events", LayoutGrid],
   ["plan", "Watch plan", CalendarDays],
   ["rules", "Priorities", ListFilter],
+  ["entitlements", "Entitlement checks", ShieldCheck],
   ["activity", "Activity", Activity],
   ["settings", "Settings", Settings2],
 ] as const;
@@ -682,11 +683,12 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
         type="button"
         key={key}
         className="df-nav"
+        aria-label={label}
         aria-current={view === key ? "page" : undefined}
         onClick={() => setView(key)}
       >
         <Icon size={18} />
-        <span>{label}</span>
+        <span>{mobile && key === "entitlements" ? "Checks" : label}</span>
         {key === "plan" && !mobile && (
           <span className="df-count">{d.plan.length}</span>
         )}
@@ -1393,6 +1395,17 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                 </div>
               </>
             )}
+            {view === "entitlements" && (
+              <>
+                {heading(
+                  "Shared account access",
+                  "Entitlement checks",
+                  "Check progress, review failures, and retry event access checks.",
+                )}
+                <EntitlementQueue value={data.entitlement_queue} timezone={d.preferences.timezone}
+                  busy={busy} onCheck={checkEntitlement} />
+              </>
+            )}
             {view === "activity" && (
               <>
                 {heading(
@@ -1400,8 +1413,6 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                   "Activity",
                   "Selections, switches, manual choices, and recovery.",
                 )}
-                <EntitlementQueue value={data.entitlement_queue} timezone={d.preferences.timezone}
-                  busy={busy} onCheck={checkEntitlement} />
                 <section className="df-panel">
                   <h3>Playback monitoring</h3>
                   {d.prime_network && (

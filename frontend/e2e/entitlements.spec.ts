@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { disableBrowserStreams } from "./public-stream-fixture";
 test.beforeEach(async ({ page }) => disableBrowserStreams(page));
 
-test("Activity shows entitlement queue blockers, failures and manual retry on phone", async ({
+test("Entitlement checks shows entitlement queue blockers, failures and manual retry on phone", async ({
   page,
 }) => {
   const requests: Record<string, unknown>[] = [];
@@ -80,7 +80,7 @@ test("Activity shows entitlement queue blockers, failures and manual retry on ph
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByLabel("Entitlement", { exact: true }).selectOption("all");
-  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await page.getByRole("button", { name: "Entitlement checks", exact: true }).click();
   const queue = page.getByRole("region", { name: "Entitlement checks" });
   await expect(queue).toContainText("Playback monitoring has priority");
   await expect(queue).toContainText("1 with errors");
