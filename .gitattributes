@@ -1,0 +1,2 @@
+tools/broadcast_overlay/*.sh text eol=lf
+tools/broadcast_overlay/*.py text eol=lf

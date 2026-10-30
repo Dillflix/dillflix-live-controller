@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .access import ProxyAccess
+from .broadcast_overlay import BroadcastOverlay, broadcast_overlay
 from .config import Settings
 from .current_playback import NowPlaying, current_playback
 from .device_input import DeviceInput, same_origin
@@ -319,6 +320,12 @@ def create_app(settings=None, *, start_workers=True):
         with service.db.snapshot() as db:
             view = current_playback(runtime, db, device_id)
         return JSONResponse(view.model_dump(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v1/devices/{device_id}/broadcast-overlay", response_model=BroadcastOverlay)
+    def video_overlay(device_id: str):
+        """Public-safe video text from retained state; existing admin authentication applies."""
+        runtime = service.runtime(device_id)
+        return JSONResponse(broadcast_overlay(runtime, device_id).model_dump(), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/devices/{device_id}/display", response_model=DisplayView)
     def display(device_id: str):
