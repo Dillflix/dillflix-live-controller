@@ -218,7 +218,15 @@ async def test_network_observation_outage_preserves_operation_and_launch(tmp_pat
         assert w.store.report(token)["observation_status"]["error"] is None
         assert len(w.player.transitions) == 1
         assert all(op == w.player.transitions[0] for op in waits)
-        assert len([call for call in w.player.calls if call[0] == "play"]) == 1
+        # The fixture first refuses a direct-route trial, then succeeds on VPN.
+        # Observation failures must not repeat either attempt.
+        plays = [call for call in w.player.calls if call[0] == "play"]
+        workflow = w.store.report(token)["prime_player"]
+        assert len(plays) == 2
+        assert len(workflow["unavailable_trials"]) == 1
+        assert plays[0][2] == workflow["unavailable_trials"][0]["attempt_id"]
+        assert plays[1][2] == workflow["attempt_id"]
+        assert plays[0][2] != plays[1][2]
         assert not any(call[0] in {"cancel", "stop"} for call in w.player.calls)
     finally:
         await cleanup(c)
