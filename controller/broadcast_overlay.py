@@ -74,6 +74,32 @@ def _pending(service, db, device, now):
     return row, deadline, snapshot.get("title") or None
 
 
+def _recovery_title(service, db, device, now):
+    """Name interrupted physical playback during the gap before a retry job exists."""
+    observed = device.get("observed") or {}
+    content_id = observed.get("content_id")
+    recovery_id = (device.get("recovery") or {}).get("content_id")
+    if (not content_id or observed.get("simulated") is not False
+            or (recovery_id and recovery_id != content_id)
+            or device.get("desired") not in {None, content_id}
+            or device["manual_completions"].get(content_id)):
+        return None
+    # Expired evidence can identify the interrupted event, but does not establish
+    # current playback. Keep its original device/request association intact.
+    job = db.execute("SELECT content_id FROM jobs WHERE id=? AND device_id=?",
+                     (observed.get("request_id"), device["id"])).fetchone()
+    if not job or job["content_id"] != content_id:
+        return None
+    content = db.execute("SELECT * FROM contents WHERE id=?", (content_id,)).fetchone()
+    if not content:
+        return None
+    check = db.execute("SELECT * FROM content_status WHERE content_id=?", (content_id,)).fetchone()
+    lifecycle = service.content_lifecycle(content, check, service.now(db), now, True, None)
+    if lifecycle["state"] in {"ended", "cancelled"}:
+        return None
+    return json.loads(content["snapshot"]).get("title") or None
+
+
 def _possibly_started(db, device, job, now):
     """An accepted controller request or phase name alone never proves a Play."""
     row = db.execute(
@@ -196,6 +222,8 @@ def broadcast_overlay(service, device_id, *, now=None):
                     if job:
                         title = target_title
                         until = min(until, deadline)
+                    elif state == "recovering":
+                        title = _recovery_title(service, db, device, now)
         return BroadcastOverlay(
             device_id=device_id, device_name=device["name"], generated_at=now.isoformat(),
             valid_until=until.isoformat(), visible=state != "hidden", state=state,

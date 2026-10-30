@@ -382,3 +382,29 @@ def test_explicit_recovery_request_is_reconnecting(pending):
         payload["purpose"] = "recovery"
         db.execute("UPDATE jobs SET payload=? WHERE id='overlay-job'", (encode(payload),))
     assert project(service)["state"] == "recovering"
+
+
+@pytest.mark.parametrize("invalid", [None, "superseded", "completed", "simulated", "foreign", "missing"])
+def test_interrupted_event_title_survives_gap_before_recovery_job(playing, invalid):
+    _, service, _ = playing
+    with service.db.transaction() as db:
+        device = service.db.device(db)
+        observed = device["observed"]
+        observed["verified"] = False
+        device["recovery"] = {"content_id": observed["content_id"], "since": datetime.now(UTC).isoformat()}
+        if invalid == "superseded":
+            device["desired"] = "another-event"
+        elif invalid == "completed":
+            device["manual_completions"][observed["content_id"]] = datetime.now(UTC).isoformat()
+        elif invalid == "simulated":
+            observed["simulated"] = True
+        elif invalid == "foreign":
+            db.execute("UPDATE jobs SET device_id='other-stream' WHERE id=?", (observed["request_id"],))
+        elif invalid == "missing":
+            observed["request_id"] = "missing-request"
+        service.db.save_device(db, device)
+        expected = json.loads(db.execute("SELECT snapshot FROM contents WHERE id=?", (observed["content_id"],)).fetchone()[0])["title"]
+    view = project(service)
+    assert view["state"] == "recovering"
+    assert view["headline"] == "Reconnecting live coverage"
+    assert view["event_title"] == (expected if invalid is None else None)
