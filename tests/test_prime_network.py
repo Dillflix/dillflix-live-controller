@@ -183,6 +183,85 @@ async def test_recovery_inspects_durable_operation_instead_of_resending(tmp_path
         await cleanup(c)
 
 
+@pytest.mark.parametrize("failed_read", ["health", "vpn_status"])
+@pytest.mark.parametrize("error_code", ["prime_busy", "prime_transport_unknown", "prime_operation_unknown"])
+async def test_network_observation_outage_preserves_operation_and_launch(tmp_path, monkeypatch, failed_read, error_code):
+    c, w = network_rig(tmp_path)
+    original = getattr(w.player, failed_read)
+    failures = 0
+    waits = []
+    try:
+        report, _ = w.store.submit(payload())
+        token = report["token"]
+        deadline = report["operation"]["deadline_at"]
+
+        async def interrupted(*args):
+            nonlocal failures
+            if w.player.operations and failures < 2:
+                failures += 1
+                raise ExecutorError(error_code, "Player restarting")
+            return await original(*args)
+
+        async def no_wait(_):
+            if failures:
+                current = w.store.report(token)
+                assert current["operation"]["deadline_at"] == deadline
+                assert row(w, token)["cancel_requested"] == 0
+                assert current["observation_status"]["error"]["code"] == error_code
+                waits.append(current["prime_player"]["network_acquisition"]["operation"])
+
+        setattr(w.player, failed_read, interrupted)
+        monkeypatch.setattr("controller.prime_player.network.asyncio.sleep", no_wait)
+        await w.navigate(row(w, token))
+        assert failures == 2
+        assert w.store.report(token)["operation"]["state"] == "playing_verified"
+        assert w.store.report(token)["observation_status"]["error"] is None
+        assert len(w.player.transitions) == 1
+        assert all(op == w.player.transitions[0] for op in waits)
+        assert len([call for call in w.player.calls if call[0] == "play"]) == 1
+        assert not any(call[0] in {"cancel", "stop"} for call in w.player.calls)
+    finally:
+        await cleanup(c)
+
+
+@pytest.mark.parametrize("fence", ["deadline", "cancel", "policy"])
+async def test_network_observation_retry_honors_original_guards(tmp_path, monkeypatch, fence):
+    c, w = network_rig(tmp_path)
+    from controller.planner import parse_time
+    try:
+        request = payload()
+        report, _ = w.store.submit(request)
+        token = report["token"]
+        op = {"operation_id": "saved", "target_id": "calgary",
+              "deadline_at": parse_time(request["deadline_at"]).timestamp(), "interrupt_playback": True}
+        acquisition = {"operation": op, "policy_revision": w.network_policy.revision,
+                       "deadline_at": op["deadline_at"], "tried": ["direct"], "transitions": 1}
+        w.save_workflow(token, network_acquisition=acquisition)
+        await w.player.vpn_connect(op, {})
+        w.recover()
+
+        async def unavailable(*args):
+            raise ExecutorError("prime_transport_unknown", "Status unavailable")
+
+        async def invalidate(_):
+            if fence == "deadline":
+                acquisition["deadline_at"] = time.time() - 1
+            elif fence == "policy":
+                acquisition["policy_revision"] = "replaced"
+            else:
+                with w.db.transaction() as db:
+                    db.execute("UPDATE executor_jobs SET cancel_requested=1 WHERE token=?", (token,))
+
+        w.player.vpn_status = unavailable
+        monkeypatch.setattr("controller.prime_player.network.asyncio.sleep", invalidate)
+        with pytest.raises(ExecutorError):
+            await w.network_transition(token, acquisition, "calgary")
+        assert len(w.player.transitions) == 1
+        assert not w.player.calls
+    finally:
+        await cleanup(c)
+
+
 async def test_network_cancel_must_settle_before_handoff(tmp_path):
     c, w = network_rig(tmp_path)
     try:

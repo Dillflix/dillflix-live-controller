@@ -51,6 +51,23 @@ class NetworkAcquisition:
         self._network_allowed(token, acquisition)
         self.save_workflow(token, network_acquisition=acquisition)
 
+    async def _network_read(self, token, acquisition, read):
+        """Losing an observation does not cancel a durable network operation."""
+        while True:
+            await self.database_call(self._network_allowed, token, acquisition)
+            try:
+                value = await read()
+            except ExecutorError as exc:
+                # This wrapper is only for reads. Mutations retain their own
+                # idempotency and uncertain-delivery reconciliation below.
+                if exc.code not in {"prime_busy", "prime_transport_unknown", "prime_operation_unknown"}:
+                    raise
+                await self.database_call(self.defer_launch_observation, token, exc)
+                await asyncio.sleep(2)
+                continue
+            await self.database_call(self._network_allowed, token, acquisition)
+            return value
+
     async def network_transition(self, token, acquisition, target):
         """One operation ID and exact request survive transport/process failures."""
         op = acquisition.get("operation")
@@ -63,14 +80,17 @@ class NetworkAcquisition:
             await self.database_call(self._save_network, token, acquisition)  # Must precede the first RPC.
         while True:
             await self.database_call(self._network_allowed, token, acquisition)
-            health = await self.check_session(control=True)
+            health = await self._network_read(token, acquisition, lambda: self.check_session(control=True))
             self.player.require(health, "vpn_status", "vpn_connect", "vpn_cancel")
             if health.get("api_version", 0) < 12 or not health.get("network", {}).get("enabled"):
                 raise ExecutorError("prime_network_disabled", "Managed networking is not enabled in Prime Player")
-            receipt = self.player.control_ownership(health)
-            status = await self.player.vpn_status(op["operation_id"])
+            status = await self._network_read(token, acquisition, lambda: self.player.vpn_status(op["operation_id"]))
             await self.database_call(self._network_allowed, token, acquisition)
             if status["state"] == "not_found":
+                # A status retry may cross a player restart. Acquire the current
+                # control receipt before submitting the original operation ID.
+                health = await self._network_read(token, acquisition, lambda: self.check_session(control=True))
+                receipt = self.player.control_ownership(health)
                 if receipt.get("mode") != "automatic" or not receipt.get("acknowledged"):
                     raise ExecutorError("prime_ownership_unavailable", "Waiting for automatic device ownership")
                 def invalidate_observation():
@@ -90,7 +110,7 @@ class NetworkAcquisition:
                 # Inspect this ID, including after uncertain delivery. Never
                 # allocate a new request ID merely because the response was lost.
             elif status["state"] == "ready":
-                latest = await self.check_session(control=True)
+                latest = await self._network_read(token, acquisition, lambda: self.check_session(control=True))
                 network = latest.get("network", {})
                 if (latest["session_id"] != status.get("session_id") or network.get("context_id") != status.get("context_id")
                         or network.get("state") != "ready"):
@@ -124,7 +144,7 @@ class NetworkAcquisition:
         timezone = await self.database_call(read_timezone)
         while True:
             await self.database_call(self._network_allowed, token, acquisition)
-            health = await self.check_session(control=True)
+            health = await self._network_read(token, acquisition, lambda: self.check_session(control=True))
             network = health.get("network", {})
             if not network.get("enabled"):
                 raise ExecutorError("prime_network_disabled", "Configured network acquisition requires enabled Prime Player networking")
