@@ -100,6 +100,13 @@ launch or trigger cancellation, stopping, another play request, or network
 fallback. The original navigation deadline and ownership/cancellation checks
 still apply; successful verification clears the observation error.
 
+Network acquisition also retains its operation ID and original deadline when a
+health or VPN-status read is busy or unavailable. Read-only inspection retries
+every two seconds, rechecking intent, cancellation and policy revision. A player
+service restart does not itself fail the job or send VPN cancellation. Only an
+explicit `not_found` status permits submission of the saved request, using a fresh
+control receipt; terminal failure and expired deadlines still settle normally.
+
 Admin/public overviews, executor reports and queue selection use SQLite read-only
 snapshots instead of reserving the writer lock. Executor maintenance and queue reads
 run off the event loop. SQLite BUSY/LOCKED errors defer the worker with 1, 2, 4, then

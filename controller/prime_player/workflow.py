@@ -490,7 +490,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             await asyncio.sleep(2)
 
     def defer_launch_observation(self, token, error):
-        """A lost read cannot establish failure of an already dispatched launch."""
+        """A lost read cannot establish failure of a durable player operation."""
         if error.code not in {"prime_busy", "prime_transport_unknown", "prime_operation_unknown"}:
             raise error
         with self.db.transaction() as db:
