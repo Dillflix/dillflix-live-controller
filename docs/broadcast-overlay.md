@@ -13,7 +13,7 @@ it therefore appears in HLS, Plex and any other consumer of those RTMP outputs.
 | Current Play has been invoked and verification is pending | Hidden until that attempt's existing deadline |
 | Play dispatch may have succeeded but acknowledgement was lost | Hidden until that attempt's existing deadline |
 | Active request preparing a new event, before Play | Switching live coverage + event title |
-| Explicit player/network recovery or executor outage | Reconnecting live coverage; target title only if the current request is still valid |
+| Explicit player/network recovery or executor outage | Reconnecting live coverage in the header, with the current target or interrupted event title beneath it |
 | Idle, no eligible event, unavailable/upcoming feeds, retry exhausted | Waiting for live sports |
 | Manual takeover/input handoff, paused without accepted playback, incompatible player runtime | Live coverage on standby |
 | Controller unreachable, wrong device, malformed or expired response | Hidden |
@@ -24,6 +24,11 @@ The controller's `navigating`/`verifying` labels alone do not establish a Play.
 Old, cancelled, superseded, expired and simulated evidence cannot suppress the
 overlay. A manually controlled screen cannot be verified by the controller, so
 it receives neutral standby copy.
+
+During the gap before a recovery request exists, retained physical playback can
+still identify the interrupted event. Its title is used only for this recovery
+card, never as proof playback is ongoing. Completed events, other devices'
+requests, simulated playback and superseded desired events cannot supply it.
 
 There is no video-pixel detection here. A frozen physical picture can outlive
 its evidence; a successful physical Play can precede acknowledgement. The
