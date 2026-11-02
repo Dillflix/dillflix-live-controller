@@ -129,8 +129,40 @@ class TeamarrClient:
             "games", "nfl_redzone", "golf", "special_events", "dazn_tennis", "dazn_sports"
         }:
             raise ValueError("Content is missing its historical feed query context")
+        if source == "nfl_redzone" and snapshot.get("timing_basis") == "rule":
+            return await self._redzone_status(snapshot, start, league)
         entries, _ = await self.fetch_snapshot(
             [league], start=start - timedelta(hours=1), end=start + timedelta(hours=1),
             sources=[source], lookback_hours=0,
         )
         return next((entry for entry in entries if entry["id"] == snapshot["id"]), None)
+
+    async def _redzone_status(self, snapshot, start, league):
+        """Complete rule-based coverage from its linked games, never from its clock.
+
+        Keep the saved identities when a later response omits a game. The broad
+        query window locates results; it does not define which games count or
+        provide evidence that any game has ended.
+        """
+        entries, _ = await self.fetch_snapshot(
+            [league], start=start - timedelta(hours=1), end=start + timedelta(days=1),
+            sources=["games", "nfl_redzone"], lookback_hours=0,
+        )
+        indexed = {entry["id"]: entry for entry in entries}
+        current = indexed.get(snapshot["id"])
+        related = set(snapshot.get("related_ids") or []) | set((current or {}).get("related_ids") or [])
+        result = {**(current or snapshot), "status": "unknown", "status_received_at": None}
+        if not related:
+            return result
+        games = [indexed.get(identity) for identity in related]
+        if not all(game and game.get("kind") == "event" and game.get("source") == "games"
+                   and game.get("competition") == league
+                   and game.get("status") in {"final", "cancelled"} for game in games):
+            return result
+        result["status"] = "final" if any(game["status"] == "final" for game in games) else "cancelled"
+        result["status_basis"] = "related_events"
+        # Preserve the oldest supplied acquisition timestamp; a cache hit must
+        # not make stale evidence fresh. Missing timestamps use receipt time.
+        timestamps = [game["status_received_at"] for game in games if game.get("status_received_at")]
+        result["status_received_at"] = min(timestamps, key=parse_time) if timestamps else None
+        return result

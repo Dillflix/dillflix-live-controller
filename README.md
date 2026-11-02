@@ -238,6 +238,20 @@ Settings shows content-status health independently of schedule and team-director
 
 ## Connect the Teamarr catalog
 
+Rule-based **NFL RedZone** completes when every linked NFL game has an explicit
+final or cancelled result. The status worker checks the saved game identities
+and any newly linked games through Teamarr, including after the broadcast leaves
+discovery. An unrelated evening game does not keep RedZone open. Missing games,
+unknown/delayed/postponed results, failed lookups and elapsed estimated end times
+do not complete it. Date-specific override broadcasts retain the existing
+explicit/manual completion policy. No Teamarr or player upgrade is required.
+Existing retained RedZone entries reconcile on the next status check.
+
+Inactive unknown entries remain available in the watch plan but are excluded from
+schedule browsing. Live coverage uses live status or current launch eligibility,
+not the start time alone. Once a stream has no playback target, its old playback
+recovery is cleared and the capture overlay displays **Waiting for live sports**.
+
 **College Football:** update Teamarr and the controller, then enable **Settings →
 Leagues in your schedule → College Football** on existing installations. New
 installations include it by default. The feed and team-directory code is

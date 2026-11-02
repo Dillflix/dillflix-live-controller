@@ -156,6 +156,22 @@ def _possibly_started(db, device, job, now):
     return possible, deadline if possible else None
 
 
+def _active_recovery(service, db, device, now):
+    """A retained recovery record is not evidence of a current recovery intent."""
+    content_id = (device.get("recovery") or {}).get("content_id")
+    if not content_id or content_id != device.get("desired"):
+        return False
+    completed = device["manual_completions"].get(content_id)
+    if completed:
+        return False
+    content = db.execute("SELECT * FROM contents WHERE id=?", (content_id,)).fetchone()
+    if not content:
+        return False
+    check = db.execute("SELECT * FROM content_status WHERE content_id=?", (content_id,)).fetchone()
+    lifecycle = service.content_lifecycle(content, check, service.now(db), now, True, completed)
+    return lifecycle["state"] not in {"ended", "cancelled"}
+
+
 def broadcast_overlay(service, device_id, *, now=None):
     """Read one snapshot and at most the current/target events, without catalogue work."""
     now = now or datetime.now(UTC)
@@ -185,7 +201,7 @@ def broadcast_overlay(service, device_id, *, now=None):
                     # A provider refusal is not a connection outage. Conversely,
                     # normal runtime/VPN preparation for a new request is a switch,
                     # even while its runtime is validating or its network changes.
-                    recovery = bool(device.get("recovery") or device.get("player_recovery")
+                    recovery = bool(_active_recovery(service, db, device, now) or device.get("player_recovery")
                                     or (device.get("executor_health") or {}).get("state") == "offline"
                                     or network_state == "recovering" or adaptation_state == "backoff"
                                     or purpose == "recovery")

@@ -857,14 +857,11 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
     </div>
   );
   const onNow = (e: Content) =>
-    e.lifecycle.state === "live" ||
-    (["unknown", "delayed", "suspended", "scheduled"].includes(
-      e.lifecycle.state,
-    ) &&
-      new Date(e.start_time) <= new Date(data.meta.now));
+    e.lifecycle.state === "live" || e.playable;
   const filteredEvents = data.events.filter(
     (e) =>
       matchesEntitlement(e.entitlement, entitlementFilter) &&
+      (e.active || e.lifecycle.state === "live" || e.playable) &&
       (sport === "all" || e.league === sport) &&
       (!query ||
         (e.title + " " + e.teams.map((t) => t.full_name).join(" "))
