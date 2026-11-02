@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased - RedZone completion and idle recovery
+
+- Complete rule-based NFL RedZone from explicit final/cancelled results for all
+  linked games, including historical results after discovery ends. Missing or
+  unresolved results preserve the watch plan.
+- Exclude inactive unknown commitments from schedule browsing; keep them in the
+  watch plan without advertising them as live merely because their start passed.
+- Clear abandoned playback recovery and ignore obsolete records in the overlay.
+- No database migration, Teamarr update or player update is required.
+
 ## Unreleased - shared plan across multiple streams
 
 - Configure multiple Fire TVs with separate player sockets and ADB identities while retaining the existing living-room stream.

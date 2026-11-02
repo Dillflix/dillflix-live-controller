@@ -8,6 +8,15 @@ Prime completion is written atomically to the executor report and durable conten
 
 ## Responsibilities
 
+For rule-based RedZone, the independent status adapter queries the original day's
+NFL results and broadcast links in one paginated Teamarr snapshot. Completion
+requires a nonempty union of saved/current linked identities, with every game
+present and explicitly final/cancelled. It reports `teamarr_related_events`,
+preserving the oldest supplied status acquisition time. No games, missing games,
+unknown status, overrides or expired estimates do not establish completion.
+Nonterminal checks preserve fresh listing evidence and its launch eligibility.
+This runs in the shared status worker, never during a UI or overlay read.
+
 ### Capture overlay
 
 The optional broadcast overlay is a read-only projection of one stream's

@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from .database import encode
-from .planner import choose, parse_time
+from .planner import parse_time
 from .recovery import PlaybackRecovery, compatible_options
 
 
@@ -46,6 +46,12 @@ class PlaybackCoordinator(PlaybackRecovery):
                 return False
             d = self.db.device(db, self.device_id)
             self.prune_completed_plan(db, d)
+            recovery_id = (d.get("recovery") or {}).get("content_id")
+            if recovery_id and recovery_id not in {d.get("desired"), (d.get("observed") or {}).get("content_id")}:
+                d["recovery"] = None
+                if d.get("retry_playback") == recovery_id:
+                    d["retry_playback"] = None
+                self.db.save_device(db, d)
             if d.get("manual_control") or d.get("input_handoff") or d["automation"] == "paused":
                 return True
             if d.get("executor_health", {}).get("state") == "offline":
@@ -240,6 +246,13 @@ class PlaybackCoordinator(PlaybackRecovery):
                 else:
                     d["playback_state"], d["observed"] = "waiting", None
                     self.log(db, now.isoformat(), "Waiting for live sports", decision["reason"])
+            if not target:
+                # Also reconcile records left by older versions, where desired
+                # was already cleared but playback recovery survived forever.
+                d["playback_state"], d["observed"] = "waiting", None
+                d["recovery"] = d["retry_playback"] = d["automatic_attempt"] = None
+            elif d.get("recovery") and d["recovery"].get("content_id") != target:
+                d["recovery"] = None
             self.db.save_device(db, d)
             return True
 

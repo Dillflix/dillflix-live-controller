@@ -1,5 +1,37 @@
 import { test, expect } from "@playwright/test";
 
+test("inactive unknown RedZone stays in the plan without being advertised as live or upcoming", async ({ page }) => {
+  await page.route("**/api/v1/overview", async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    const original = data.events.find((e: { content_id: string }) => e.content_id === "demo:redzone");
+    const redzone = {
+      ...original, active: false, playable: false, watch_entry_id: "retained-redzone",
+      start_time: new Date(Date.parse(data.meta.now) - 86400000).toISOString(),
+      lifecycle: { ...original.lifecycle, state: "unknown", stale: false, source: "teamarr_history" },
+    };
+    data.events = [redzone, {
+      ...original, content_id: "test:live", title: "Confirmed live game", active: false,
+      playable: true, lifecycle: { ...original.lifecycle, state: "live" },
+    }];
+    data.device.plan = [{ id: "retained-redzone", content_id: redzone.content_id,
+      created_at: redzone.start_time, actor: { type: "admin", id: "admin", name: "Admin" } }];
+    data.device.desired = null;
+    data.device.observed = null;
+    data.device.playback_state = "waiting";
+    data.device.recovery = null;
+    await route.fulfill({ response, json: data });
+  });
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Live 1", exact: true })).toBeVisible();
+  await expect(page.getByTestId("event-demo:redzone")).toHaveCount(0);
+  await expect(page.getByTestId("event-test:live")).toBeVisible();
+  await page.getByRole("button", { name: "Upcoming 0", exact: true }).click();
+  await expect(page.getByTestId("event-demo:redzone")).toHaveCount(0);
+  await page.getByRole("button", { name: "Watch plan", exact: false }).first().click();
+  await expect(page.locator(".df-plan-row").filter({ hasText: "NFL RedZone" })).toContainText("unknown");
+});
+
 test.beforeEach(async ({ request }) => {
   await request.post("/api/v1/simulation", {
     data: { action: "scenario", scenario: "normal" },

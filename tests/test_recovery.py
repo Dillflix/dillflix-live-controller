@@ -319,6 +319,21 @@ def test_no_confirmed_fallback_waits_without_repeated_requests(rig, monkeypatch)
     assert overview(c)["device"]["playback_state"] == "waiting"
     assert overview(c)["device"]["plan"] == before["plan"]
     assert len(jobs(c)) == 1
+    assert overview(c)["device"]["recovery"] is None
+    assert overview(c)["device"]["retry_playback"] is None
+
+
+@pytest.mark.parametrize("fields", [{"automation": "paused"}, {"executor_health": {"state": "offline"}}])
+def test_orphaned_recovery_is_repaired_even_when_planning_exits_early(rig, fields):
+    _, service, _ = rig
+    edit_device(service, lambda device: device.update(
+        **fields, desired=None, observed=None,
+        recovery={"content_id": "demo:redzone"}, retry_playback="demo:redzone",
+    ))
+    service.stage_playback()
+    with service.db.snapshot() as db:
+        device = service.db.device(db)
+        assert device["recovery"] is None and device["retry_playback"] is None
 
 
 def test_manual_selection_preempts_the_recovery_grace(rig, monkeypatch):

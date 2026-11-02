@@ -382,3 +382,17 @@ def test_explicit_recovery_request_is_reconnecting(pending):
         payload["purpose"] = "recovery"
         db.execute("UPDATE jobs SET payload=? WHERE id='overlay-job'", (encode(payload),))
     assert project(service)["state"] == "recovering"
+
+
+@pytest.mark.parametrize("desired,expected", [(None, "waiting"), ("demo:golf", "waiting"), ("demo:lions", "recovering")])
+def test_recovery_record_must_match_current_intent(rig, desired, expected):
+    _, service, _ = rig
+    device_update(service, desired=desired, recovery={"content_id": "demo:lions", "attempts": 0})
+    assert project(service)["state"] == expected
+
+
+def test_completed_recovery_cannot_advertise_reconnection(rig):
+    _, service, _ = rig
+    device_update(service, desired="demo:lions", recovery={"content_id": "demo:lions"},
+                  manual_completions={"demo:lions": datetime.now(UTC).isoformat()})
+    assert project(service)["state"] == "waiting"

@@ -78,13 +78,22 @@ class TeamarrContentStatusAdapter:
             request["content_snapshot"], request["catalog_seen_at"], now, now, "teamarr", self.ttl
         )
         source = "teamarr_feed"
-        if observation["state"] not in TERMINAL and observation_expiry(observation, self.ttl) <= now:
+        redzone = (request["content_snapshot"].get("source") == "nfl_redzone"
+                   and request["content_snapshot"].get("timing_basis") == "rule"
+                   and parse_time(request["content_snapshot"]["start_time"]) <= now)
+        if observation["state"] not in TERMINAL and (redzone or observation_expiry(observation, self.ttl) <= now):
             entry = await self.client.fetch_content_status(request["content_snapshot"])
             if entry is None:
                 return None
             now = datetime.now(UTC)
-            observation = source_observation(entry, now.isoformat(), now, now, "teamarr", self.ttl)
-            source = "teamarr_history"
+            refreshed = source_observation(entry, now.isoformat(), now, now, "teamarr", self.ttl)
+            # An unresolved completion check must not replace a fresh active
+            # listing's eligibility with an out-of-window history observation.
+            if not (redzone and refreshed["state"] == "unknown"
+                    and observation_expiry(observation, self.ttl) > now):
+                observation, source = refreshed, "teamarr_history"
+                if redzone and entry.get("status_basis") == "related_events" and observation["state"] in TERMINAL:
+                    source = "teamarr_related_events"
         observation.update(source=source, simulated=False)
         return {"schema_version": 1, "request_id": request["request_id"],
                 "content_id": request["content_id"], "observation": observation}
