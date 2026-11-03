@@ -78,6 +78,23 @@ def test_missing_partial_and_oversized_records_are_explicit(tmp_path):
     assert source["records"][0]["data"]["truncated"]
 
 
+def test_large_rpc_response_keeps_stream_method_and_error_correlation(tmp_path):
+    recorder = Recorder(tmp_path)
+    recorder.record("rpc", "player_rpc", device_id="living-room", call_id="call-1",
+                    token="token-1", request={"method": "search", "params": {"query": "game"}},
+                    phase="finished", http_status=200, duration_seconds=3,
+                    response={"results": "x" * 400000},
+                    error={"type": "ValueError", "message": "Bearer private-credential"})
+    recorder.close()
+    value = read_logs(tmp_path)["sources"]["rpc"]["records"][0]["data"]
+    assert value["truncated"]
+    assert value["device_id"] == "living-room" and value["method"] == "search"
+    assert value["call_id"] == "call-1" and value["token"] == "token-1"
+    assert value["phase"] == "finished" and value["duration_seconds"] == 3
+    assert value["error"]["type"] == "ValueError"
+    assert "private-credential" not in json.dumps(value)
+
+
 def test_storage_failure_does_not_break_producer(tmp_path):
     directory = tmp_path / "file"
     directory.write_text("not a directory")

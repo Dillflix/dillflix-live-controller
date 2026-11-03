@@ -194,8 +194,9 @@ class EntitlementChecks:
         if db.execute("SELECT 1 FROM jobs WHERE device_id=? AND state='pending' LIMIT 1", (device["id"],)).fetchone():
             return "A playback request has priority"
         if db.execute(
-            "SELECT 1 FROM executor_jobs WHERE device_id=? AND (cancel_requested=1 OR "
-            "(cancel_requested=0 AND state IN ('accepted','navigating'))) LIMIT 1", (device["id"],),
+            "SELECT 1 FROM executor_jobs WHERE device_id=? AND cancel_requested=1 UNION ALL "
+            "SELECT 1 FROM executor_jobs WHERE device_id=? AND cancel_requested=0 "
+            "AND state IN ('accepted','navigating') LIMIT 1", (device["id"], device["id"]),
         ).fetchone():
             return "Playback launch or cancellation has priority"
         if not device_read:
@@ -205,10 +206,12 @@ class EntitlementChecks:
         if workflow.active and not workflow.active.done():
             return "Playback monitoring has priority"
         if db.execute(
-            "SELECT 1 FROM executor_jobs WHERE device_id=? AND (cancel_requested=1 OR "
-            "(cancel_requested=0 AND (state IN ('accepted','navigating') OR "
-            "(state='playing_verified' AND next_check<=?)))) LIMIT 1",
-            (device["id"], time.time()),
+            "SELECT 1 FROM executor_jobs WHERE device_id=? AND cancel_requested=1 UNION ALL "
+            "SELECT 1 FROM executor_jobs WHERE device_id=? AND cancel_requested=0 "
+            "AND state IN ('accepted','navigating') UNION ALL "
+            "SELECT 1 FROM executor_jobs WHERE device_id=? AND cancel_requested=0 "
+            "AND state='playing_verified' AND next_check<=? LIMIT 1",
+            (device["id"], device["id"], device["id"], time.time()),
         ).fetchone():
             return "Playback monitoring has priority"
         return None

@@ -6,6 +6,8 @@ Schema 21 adds indexes for executor queue polling and retained device claims.
 Scheduling no longer needs to walk historical request/report bodies to find
 pending cancellations or due playback work. The migration preserves the saved
 requests, reports, cancellation obligations and playback intent.
+The overview's entitlement-priority check uses the same indexed lookups; loading
+a page does not reserve a writer or scan historical playback report bodies.
 
 The runtime log records write transactions lasting at least one second. A SQLite
 busy/locked error also records the active writer's phase, elapsed time, entry
@@ -14,6 +16,9 @@ instance. Only file/function/line locations are captured, never frame locals or
 SQL values. `holder: not_observed` means no holder was observed in that instance;
 it does not prove another process holds the lock. These logs appear in diagnostic
 exports and help distinguish a slow writer from its blocked callers.
+Oversized RPC logs retain the stream ID, method, call ID, phase, duration and
+bounded client error even when the response body is truncated. Correlate both
+request and completion by call ID; missing body details do not imply a hung RPC.
 
 With Prime Player 0.1.0a36, controller 0.16.10 distinguishes resource download,
 packaging-validation and loaded-library verification failures from actual runtime

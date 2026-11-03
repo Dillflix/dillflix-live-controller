@@ -52,6 +52,24 @@ def test_polling_does_not_walk_retained_history(tmp_path, monkeypatch):
     assert row is None  # Even a deferred cancellation retains precedence.
 
 
+def test_overview_entitlement_blockers_use_indexed_queue_lookups(tmp_path):
+    controller, workflow = rig(tmp_path)
+    token = seed_history(workflow)
+    with controller.db.transaction() as db:
+        db.execute("UPDATE executor_jobs SET state='failed',cancel_requested=2 WHERE token=?", (token,))
+    with controller.db.snapshot() as db:
+        device = controller.db.device(db)
+        db.set_progress_handler(lambda: 1, 2000)
+        assert controller.entitlement_blocker(db, device) is None
+    with controller.db.transaction() as db:
+        db.execute("UPDATE executor_jobs SET state='playing_verified',cancel_requested=0,next_check=0 "
+                   "WHERE token=?", (token,))
+    with controller.db.snapshot() as db:
+        db.set_progress_handler(lambda: 1, 2000)
+        assert controller.entitlement_blocker(db, device) == "Playback monitoring has priority"
+        assert controller.entitlement_blocker(db, device, device_read=False) is None
+
+
 def test_schema_20_upgrade_only_adds_indexes(tmp_path):
     controller, workflow = rig(tmp_path)
     token = seed_history(workflow)
