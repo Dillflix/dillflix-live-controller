@@ -162,7 +162,7 @@ class AdbCapture:
             f"max_size={self.settings.screen_max_size}",
             f"max_fps={self.settings.screen_max_fps}",
             f"video_bit_rate={self.settings.screen_bit_rate}",
-            "video_codec_options=profile=1,i-frame-interval=1",
+            "video_codec_options=i-frame-interval=1",
         ]
 
     async def read_metadata(self):
