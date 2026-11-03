@@ -153,7 +153,10 @@ class ScreenStream:
                 else ("The device screen stream stopped. Check ADB connectivity and the controller logs.")
             )
             self.state = "error"
-            log.warning("Screen capture failed: %s", error)
+            # TimeoutError often has no message. Retain its type and traceback
+            # so startup, metadata and frame-read failures remain distinguishable.
+            log.warning("Screen capture failed for %s (%s): %s",
+                        self.device_id, type(error).__name__, error, exc_info=True)
             for viewer in self.viewers:
                 viewer.fail(self.error)
 
