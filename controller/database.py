@@ -1,10 +1,26 @@
 import json
+import logging
 import sqlite3
+import sys
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from .leagues import DEFAULT_LEAGUES
 from .storage_lock import database_guard
+
+log = logging.getLogger(__name__)
+
+
+def stack_locations(frame):
+    """Locations only: never retain frame locals, SQL values or credentials."""
+    frames = []
+    while frame is not None and len(frames) < 32:
+        frames.append({"file": frame.f_code.co_filename, "line": frame.f_lineno,
+                       "function": frame.f_code.co_name})
+        frame = frame.f_back
+    return frames
 
 
 def encode(value):
@@ -32,12 +48,14 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 20
+    SCHEMA_VERSION = 22
 
     def __init__(self, path):
         self.path = path
         self.before_commit = None
         self.after_commit = None
+        self._writer_lock = threading.Lock()
+        self._writer = None
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with database_guard(path):
             self.initialize(path)
@@ -277,6 +295,19 @@ class Database:
                         if projections and all(fields == canonical for fields in projections):
                             db.execute("UPDATE metadata SET value=? WHERE key='fleet_plan'",
                                        (encode(canonical),))
+            if version < 21:
+                # State columns follow large request/report JSON in the table.
+                # Polling history through (device_id,intent) repeatedly walks
+                # those overflow pages even when no active work exists.
+                db.execute("CREATE INDEX IF NOT EXISTS executor_queue ON executor_jobs "
+                           "(device_id,cancel_requested,state,next_check,intent,token)")
+                db.execute("CREATE INDEX IF NOT EXISTS executor_cancellations ON executor_jobs "
+                           "(device_id,intent,next_check,token) WHERE cancel_requested=1")
+                db.execute("CREATE INDEX IF NOT EXISTS executor_claims ON executor_jobs "
+                           "(device_id,touched_device,retired_at,content_id)")
+            if version < 22:
+                from .acquisition import migrate_acquisition_timeout
+                migrate_acquisition_timeout(db)
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
@@ -307,22 +338,56 @@ class Database:
     @contextmanager
     def connection_transaction(self):
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None, factory=TransactionConnection)
+        writer = None
         try:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA busy_timeout=10000")
             db.execute("BEGIN IMMEDIATE")
+            writer = {"thread_id": threading.get_ident(), "started": time.monotonic(),
+                      "phase": "transaction", "caller": stack_locations(sys._getframe(1))}
+            with self._writer_lock:
+                self._writer = writer
             yield db
+            writer["phase"] = "before_commit"
             notify = bool(self.before_commit(db)) if db.total_changes and self.before_commit else False
+            writer["phase"] = "commit"
             db.commit()
+            self._finish_writer(writer)
+            writer = None
             for callback in getattr(db, "commit_callbacks", ()):
                 callback()
             if notify and self.after_commit:
                 self.after_commit()
-        except BaseException:
+        except BaseException as exc:
+            if is_database_busy(exc):
+                # The blocked caller's traceback alone never identifies the
+                # holder. Capture its current stack while it is still blocked.
+                log.warning("SQLite writer contention: %s", encode(self.writer_diagnostic()))
             db.rollback()
             raise
         finally:
+            if writer is not None:
+                self._finish_writer(writer)
             db.close()
+
+    def writer_diagnostic(self):
+        with self._writer_lock:
+            writer = dict(self._writer) if self._writer else None
+        if writer is None:
+            return {"holder": "not_observed", "scope": "this_database_instance"}
+        writer["held_seconds"] = round(time.monotonic() - writer.pop("started"), 3)
+        writer["frames"] = stack_locations(sys._current_frames().get(writer["thread_id"]))
+        return writer
+
+    def _finish_writer(self, writer):
+        elapsed = time.monotonic() - writer["started"]
+        with self._writer_lock:
+            if self._writer is writer:
+                self._writer = None
+        if elapsed >= 1:
+            log.warning("Slow SQLite write transaction: %s", encode({
+                "held_seconds": round(elapsed, 3), "phase": writer["phase"], "caller": writer["caller"],
+            }))
 
     @staticmethod
     def meta(db, key, default=None):

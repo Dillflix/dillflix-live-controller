@@ -162,13 +162,20 @@ class AdbCapture:
             f"max_size={self.settings.screen_max_size}",
             f"max_fps={self.settings.screen_max_fps}",
             f"video_bit_rate={self.settings.screen_bit_rate}",
-            "video_codec_options=profile=1,i-frame-interval=1",
+            "video_codec_options=i-frame-interval=1",
         ]
 
     async def read_metadata(self):
-        async with asyncio.timeout(10):
-            name = (await self.reader.readexactly(64)).split(b"\x00", 1)[0].decode(errors="replace")
-            codec, width, height = struct.unpack(">III", await self.reader.readexactly(12))
+        stage = "device name"
+        try:
+            async with asyncio.timeout(10):
+                name = (await self.reader.readexactly(64)).split(b"\x00", 1)[0].decode(errors="replace")
+                stage = "video codec metadata"
+                codec, width, height = struct.unpack(">III", await self.reader.readexactly(12))
+        except TimeoutError as error:
+            raise CaptureError(
+                f"The capture server connected but did not send {stage} within 10 seconds."
+            ) from error
         if codec != 0x68323634 or not (0 < width <= 8192 and 0 < height <= 8192):
             raise CaptureError("The device did not provide a supported H.264 screen stream.")
         self.metadata = {

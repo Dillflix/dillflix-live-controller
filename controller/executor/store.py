@@ -6,6 +6,7 @@ import secrets
 import time
 from datetime import UTC, datetime, timedelta
 
+from ..acquisition import MAX_ACQUISITION_SECONDS
 from ..content_status import source_observation
 from ..database import encode
 from ..planner import parse_time
@@ -111,6 +112,9 @@ class ExecutorStore:
                     report["operation"].update(state="superseded", phase="superseded", finished_at=utc())
                 self.write(db, old["token"], report, cancel_requested=1, next_check=0)
             token, now = "pb_" + secrets.token_urlsafe(24), utc()
+            deadline = body["deadline_at"]
+            if self.settings.executor.mode == "prime-player":
+                deadline = min(parse_time(deadline), parse_time(now) + timedelta(seconds=MAX_ACQUISITION_SECONDS)).isoformat()
             report = {
                 "schema_version": 1,
                 "token": token,
@@ -125,7 +129,7 @@ class ExecutorStore:
                     "created_at": now,
                     "updated_at": now,
                     "finished_at": None,
-                    "deadline_at": body["deadline_at"],
+                    "deadline_at": deadline,
                     "error": None,
                     "attempts": [],
                 },
@@ -233,6 +237,14 @@ class ExecutorStore:
             (*fields.values(), token),
         )
 
+    def navigation_deadline(self, row):
+        deadline = parse_time(json.loads(row["request"])["deadline_at"])
+        if self.settings.executor.mode == "prime-player":
+            operation = json.loads(row["report"])["operation"]
+            deadline = min(deadline, parse_time(operation["deadline_at"]),
+                           parse_time(operation["created_at"]) + timedelta(seconds=MAX_ACQUISITION_SECONDS))
+        return deadline
+
     def allowed(self, db, token, *, navigation=False):
         row = self.get_row(db, token)
         device = self.db.device(db, row["device_id"])
@@ -253,7 +265,7 @@ class ExecutorStore:
             )
         if navigation and (
             device["automation"] == "paused"
-            or parse_time(json.loads(row["request"])["deadline_at"]) <= datetime.now(UTC)
+            or self.navigation_deadline(row) <= datetime.now(UTC)
         ):
             raise ExecutorError(
                 "navigation_expired",

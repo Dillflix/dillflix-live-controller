@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import unicodedata
 
+from .acquisition import MAX_ACQUISITION_SECONDS
+
 
 def city_key(value):
     return " ".join("".join(c for c in unicodedata.normalize("NFKD", value).casefold() if not unicodedata.combining(c)).split())
@@ -26,6 +28,12 @@ class NetworkPolicy:
         value = value or {}
         if not isinstance(value, dict) or set(value) - {"enabled", "routes", "acquisition_timeout", "max_transitions", "access_ttl", "locations"}:
             raise ValueError("Invalid Prime network policy")
+        # Accept legacy deployment files without retaining their 10/30-minute
+        # budgets. New API configuration is validated against the five-minute cap.
+        timeout = value.get("acquisition_timeout", MAX_ACQUISITION_SECONDS)
+        if type(timeout) is not int or not 120 <= timeout <= 1800:
+            raise ValueError("Invalid network policy bounds")
+        value = {**value, "acquisition_timeout": min(timeout, MAX_ACQUISITION_SECONDS)}
         self.enabled = value.get("enabled", False)
         self.routes = value.get("routes", {})
         self.locations = value.get("locations")
@@ -33,12 +41,12 @@ class NetworkPolicy:
             from .models import VPNPolicy
             value = VPNPolicy.model_validate(value).model_dump()
             self.locations = value["locations"]
-        self.timeout = value.get("acquisition_timeout", 600)
+        self.timeout = value["acquisition_timeout"]
         self.maximum = value.get("max_transitions", 2)
         self.ttl = value.get("access_ttl", 300)
         if type(self.enabled) is not bool or not isinstance(self.routes, dict):
             raise ValueError("Invalid network policy enabled/routes")
-        for number, low, high in ((self.timeout, 120, 1800), (self.maximum, 1, 4), (self.ttl, 60, 3600)):
+        for number, low, high in ((self.timeout, 120, MAX_ACQUISITION_SECONDS), (self.maximum, 1, 4), (self.ttl, 60, 3600)):
             if type(number) is not int or not low <= number <= high:
                 raise ValueError("Invalid network policy bounds")
         for route, rule in self.routes.items():

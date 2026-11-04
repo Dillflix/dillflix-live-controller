@@ -168,6 +168,23 @@ async def test_fragmented_packet_retains_timestamp_flags_and_payload():
     assert await task == expected
 
 
+@pytest.mark.parametrize("max_size", [640, 1280, 1920])
+def test_capture_leaves_h264_profile_to_encoder_and_preserves_view_only_limits(max_size):
+    capture = AdbCapture(Settings(
+        screen_max_size=max_size, screen_max_fps=10, screen_bit_rate=1_000_000,
+    ))
+    options = dict(option.split("=", 1) for option in capture.server_options() if "=" in option)
+    codec_options = dict(option.split("=", 1) for option in options["video_codec_options"].split(","))
+    assert not any(key.split(":", 1)[0] == "profile" for key in codec_options)
+    assert codec_options["i-frame-interval"] == "1"
+    assert options["video_codec"] == "h264"
+    for name in ("audio", "control", "power_on"):
+        assert options[name] == "false"
+    assert options["max_size"] == str(max_size)
+    assert options["max_fps"] == "10"
+    assert options["video_bit_rate"] == "1000000"
+
+
 async def test_adb_capture_launch_transport_and_owned_cleanup(fake_adb, monkeypatch):
     monkeypatch.setattr("controller.screen_capture.verified", lambda _: True)
     async with AdbCapture(fake_adb) as capture:

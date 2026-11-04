@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .leagues import DEFAULT_LEAGUES
+from .acquisition import MAX_ACQUISITION_SECONDS
 
 
 class StrictModel(BaseModel):
@@ -80,7 +81,7 @@ class VPNLocationPolicy(StrictModel):
 class VPNPolicy(StrictModel):
     enabled: bool = False
     locations: list[VPNLocationPolicy] = Field(default_factory=list, max_length=4)
-    acquisition_timeout: int = Field(default=1800, ge=120, le=1800)
+    acquisition_timeout: int = Field(default=MAX_ACQUISITION_SECONDS, ge=120, le=MAX_ACQUISITION_SECONDS)
     max_transitions: int = Field(default=4, ge=1, le=4)
     access_ttl: int = Field(default=300, ge=60, le=3600)
 

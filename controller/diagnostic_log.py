@@ -150,6 +150,9 @@ class Recorder:
         }
         wire = json.dumps(record, default=str, ensure_ascii=True)
         if len(wire) > RECORD_BYTES:
+            original = record["data"]
+            request = original.get("request")
+            method = request.get("method") if isinstance(request, dict) else original.get("method")
             record["data"] = {
                 **{
                     k: v
@@ -157,6 +160,9 @@ class Recorder:
                     if k
                     in {
                         "call_id",
+                        "device_id",
+                        "catalogue_probe_id",
+                        "content_id",
                         "token",
                         "request_id",
                         "session_id",
@@ -171,6 +177,11 @@ class Recorder:
                 "original_bytes": len(wire),
                 "prefix": wire[: RECORD_BYTES // 4],
             }
+            if isinstance(method, str):
+                record["data"]["method"] = method[:128]
+            error = original.get("error")
+            if isinstance(error, dict):
+                record["data"]["error"] = {k: str(error[k])[:1000] for k in ("type", "message") if k in error}
             wire = json.dumps(record, ensure_ascii=True)
         try:
             self.queue.put_nowait((source, wire + "\n"))

@@ -71,6 +71,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             ).fetchall():
                 report = json.loads(row["report"])
                 workflow = report.get("prime_player") or {}
+                if report["operation"]["state"] in {"accepted", "navigating"}:
+                    report["operation"]["deadline_at"] = self.store.navigation_deadline(row).isoformat()
                 if report["observation"]:
                     report["observation"]["verified"] = False
                 report["observation_status"]["state"] = "unavailable"
@@ -246,7 +248,11 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
     async def navigate(self, row):
         token, request = row["token"], json.loads(row["request"])
         try:
-            budget = (parse_time(request["deadline_at"]) - datetime.now(UTC)).total_seconds()
+            # Keep the submitted request/hash immutable for idempotent replay.
+            # Persisted acceptance time also fences jobs accepted before upgrade.
+            deadline = self.store.navigation_deadline(row)
+            request = {**request, "deadline_at": deadline.isoformat()}
+            budget = (deadline - datetime.now(UTC)).total_seconds()
             if budget <= 0:
                 raise ExecutorError("navigation_expired", "Playback workflow deadline passed")
             async with asyncio.timeout(budget):
