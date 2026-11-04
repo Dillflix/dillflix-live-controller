@@ -66,6 +66,12 @@ Real playback is opt-in: `PLAYBACK_ADAPTER=prime-player`, Prime Player API 11 / 
   that event's count on the selected stream. Verified playback also clears it.
   Counts survive restarts, network changes, schedule refreshes and plan reordering.
   Increasing the limit permits additional cycles; lowering it applies immediately.
+- Prime acquisition has a **five-minute maximum shared deadline** for catalogue
+  search, network fallback, app startup and playback verification. A retry,
+  controller restart or location change does not renew that request's budget.
+  Existing longer saved policies and pending requests are tightened on upgrade;
+  shorter configured deadlines remain in effect. Timeout requests cancellation
+  and retains cleanup obligations until the player acknowledges them.
 - Separate desired and observed playback, pause/resume, decision history, and side-effect-free selection/conflict previews.
 - Versioned SQLite migrations, optimistic concurrency, command idempotency, a durable request queue, and a coordinator lease.
 - A separate persistent playback simulator with idempotent delivery, restart reconciliation, cancellation retries, and navigation deadlines. Acknowledgement alone does not verify playback.

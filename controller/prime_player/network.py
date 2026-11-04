@@ -4,6 +4,7 @@ import sqlite3
 import time
 from uuid import uuid4
 
+from ..acquisition import MAX_ACQUISITION_SECONDS
 from ..executor.models import ExecutorError
 from ..model_diagnostics import capture_model_calls_async
 from ..network_policy import NetworkPolicy
@@ -37,7 +38,8 @@ class NetworkAcquisition:
         return NetworkPolicy(value if value is not None else self.config.prime_network_policy)
 
     def navigation_budget(self, options, default, snapshot=None):
-        return max(default, self.network_policy.timeout) if self.network_policy.rule(options, snapshot) else default
+        policy = self.network_policy
+        return policy.timeout if policy.rule(options, snapshot) else min(default, MAX_ACQUISITION_SECONDS)
 
     def _network_allowed(self, token, acquisition):
         with self.db.snapshot() as db:

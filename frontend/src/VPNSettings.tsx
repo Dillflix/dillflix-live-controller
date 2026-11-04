@@ -12,7 +12,7 @@ type Location = {
 const defaults: VPNPolicy = {
   enabled: false,
   locations: [],
-  acquisition_timeout: 1800,
+  acquisition_timeout: 300,
   max_transitions: 4,
   access_ttl: 300,
 };

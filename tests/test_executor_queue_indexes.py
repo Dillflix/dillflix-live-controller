@@ -80,7 +80,7 @@ def test_schema_20_upgrade_only_adds_indexes(tmp_path):
         before = db.execute("SELECT * FROM executor_jobs ORDER BY token").fetchall()
     upgraded = Database(controller.db.path)
     with upgraded.snapshot() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 21
+        assert db.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
         assert [tuple(row) for row in db.execute("SELECT * FROM executor_jobs ORDER BY token")] == before
         assert db.execute("SELECT token FROM executor_jobs WHERE token=?", (token,)).fetchone()
         names = {row[1] for row in db.execute("PRAGMA index_list(executor_jobs)")}

@@ -48,7 +48,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 21
+    SCHEMA_VERSION = 22
 
     def __init__(self, path):
         self.path = path
@@ -305,6 +305,9 @@ class Database:
                            "(device_id,intent,next_check,token) WHERE cancel_requested=1")
                 db.execute("CREATE INDEX IF NOT EXISTS executor_claims ON executor_jobs "
                            "(device_id,touched_device,retired_at,content_id)")
+            if version < 22:
+                from .acquisition import migrate_acquisition_timeout
+                migrate_acquisition_timeout(db)
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
