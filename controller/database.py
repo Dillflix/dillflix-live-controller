@@ -48,7 +48,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 22
+    SCHEMA_VERSION = 23
 
     def __init__(self, path):
         self.path = path
@@ -308,6 +308,15 @@ class Database:
             if version < 22:
                 from .acquisition import migrate_acquisition_timeout
                 migrate_acquisition_timeout(db)
+            if version < 23:
+                db.execute("CREATE TABLE IF NOT EXISTS planning_versions (name TEXT PRIMARY KEY, revision INTEGER NOT NULL)")
+                for table in ("contents", "content_status", "event_entitlements"):
+                    db.execute("INSERT OR IGNORE INTO planning_versions VALUES (?,0)", (table,))
+                    for event in ("INSERT", "UPDATE", "DELETE"):
+                        db.execute(f"""CREATE TRIGGER IF NOT EXISTS planning_{table}_{event.lower()}
+                            AFTER {event} ON {table} BEGIN
+                            UPDATE planning_versions SET revision=revision+1 WHERE name='{table}';
+                            END""")
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
@@ -317,9 +326,9 @@ class Database:
             db.close()
 
     @contextmanager
-    def transaction(self, *, prepare=None):
+    def transaction(self, *, prepare=None, version=None):
         with database_guard(self.path):
-            with self.connection_transaction(prepare=prepare) as db:
+            with self.connection_transaction(prepare=prepare, version=version) as db:
                 yield db
 
     @contextmanager
@@ -336,7 +345,7 @@ class Database:
                 db.close()
 
     @contextmanager
-    def connection_transaction(self, *, prepare=None):
+    def connection_transaction(self, *, prepare=None, version=None):
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None, factory=TransactionConnection)
         writer = None
         try:
@@ -344,20 +353,22 @@ class Database:
             db.execute("PRAGMA busy_timeout=10000")
             if prepare is not None:
                 # Catalogue construction belongs to a WAL read snapshot, not
-                # the single writer slot. Use the SAME connection's version to
-                # fence any commit between that snapshot and the write claim.
+                # the single writer slot. Fence relevant commits between that
+                # snapshot and the write claim. By default use the SAME
+                # connection's data_version to fence every external commit.
                 # Nothing in the transaction body (including callbacks) runs
                 # until preparation is current. Never replay a mutation body.
                 deadline = time.monotonic() + 10
+                read_version = version or (lambda connection: connection.execute("PRAGMA data_version").fetchone()[0])
                 while True:
                     db.execute("PRAGMA query_only=ON")
                     db.execute("BEGIN")
-                    version = db.execute("PRAGMA data_version").fetchone()[0]
+                    prepared_version = read_version(db)
                     prepared = prepare(db)
                     db.rollback()
                     db.execute("PRAGMA query_only=OFF")
                     db.execute("BEGIN IMMEDIATE")
-                    if db.execute("PRAGMA data_version").fetchone()[0] == version:
+                    if read_version(db) == prepared_version:
                         db.prepared = prepared
                         break
                     db.rollback()

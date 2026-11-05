@@ -48,6 +48,30 @@ def test_preparation_failure_never_runs_write_hooks(tmp_path):
         pass  # No lingering lock after failed preparation.
 
 
+@pytest.mark.parametrize("relevant", [False, True])
+def test_planning_fence_ignores_heartbeats_but_rejects_catalogue_change(rig, relevant):
+    _, controller, _ = rig
+    calls = []
+    def prepare(snapshot):
+        result = controller.prepare_planning(snapshot)
+        calls.append(result)
+        if len(calls) == 1:
+            with controller.db.transaction() as writer:
+                if relevant:
+                    writer.execute("UPDATE contents SET active=0")
+                else:
+                    controller.db.set_meta(writer, "worker_heartbeat", 123)
+                    device = controller.db.device(writer)
+                    device["reason"] = "new worker status"
+                    controller.db.save_device(writer, device)
+        return result
+    with controller.db.transaction(prepare=prepare, version=controller.planning_version) as writer:
+        items = controller.items(writer)
+        if relevant:
+            assert not any(item["active"] for item in items)
+    assert len(calls) == (2 if relevant else 1)
+
+
 def test_coordinator_catalogue_is_constructed_before_writer_claim(rig, monkeypatch):
     _, controller, _ = rig
     original = controller._items

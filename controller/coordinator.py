@@ -41,7 +41,7 @@ class PlaybackCoordinator(PlaybackRecovery):
 
     def stage_playback(self):
         real = datetime.now(UTC)
-        with self.db.transaction(prepare=self.prepare_planning) as db:
+        with self.db.transaction(prepare=self.prepare_planning, version=self.planning_version) as db:
             if not self.db.lease(db, "device:" + self.device_id, self.owner, time.time()):
                 return False
             d = self.db.device(db, self.device_id)
@@ -323,7 +323,7 @@ class PlaybackCoordinator(PlaybackRecovery):
 
     def receive_playback_report(self, request_id, report):
         """One guarded path for inspection responses and future callbacks."""
-        with self.db.transaction(prepare=self.prepare_planning) as db:
+        with self.db.transaction(prepare=self.prepare_planning, version=self.planning_version) as db:
             job = db.execute("SELECT * FROM jobs WHERE id=?", (request_id,)).fetchone()
             if not job or job["state"] != "pending" or not self.owns_device(db, job["device_id"]):
                 return False

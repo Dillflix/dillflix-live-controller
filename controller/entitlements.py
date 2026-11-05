@@ -369,7 +369,7 @@ class EntitlementChecks:
         if not self.executor:
             return
         now = time.time()
-        with self.db.transaction(prepare=self.prepare_planning) as db:
+        with self.db.transaction(prepare=self.prepare_planning, version=self.planning_version) as db:
             device = self.db.device(db, self.device_id)
             scope = account_id(db, self.root.device_id)
             if not self.db.lease(db, "entitlements:account", self.root.owner, now, CHECK_SECONDS + 60):

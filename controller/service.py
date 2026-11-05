@@ -314,6 +314,17 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             },
         )
 
+    def planning_version(self, db):
+        # Heartbeats, logs and executor polling must not repeatedly invalidate
+        # catalogue preparation. These are exactly the inputs to _items().
+        devices = []
+        for device_id in sorted(self.root.runtimes):
+            device = self.db.device(db, device_id)
+            devices.append((device_id, sorted(self.pinned_content_ids(db, device_id=device_id)),
+                            device["manual_completions"], device["preferences"]["discovery_leagues"]))
+        return ([tuple(row) for row in db.execute("SELECT name,revision FROM planning_versions ORDER BY name")],
+                devices, self.db.meta(db, "demo_now"), self.db.meta(db, "entitlement_account"))
+
     def prepare_planning(self, db):
         """Build each stream's catalogue before acquiring SQLite's write lock."""
         prepared = {}
@@ -456,9 +467,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 },
             }
 
-    def mutate(self, device_id, command_id, revision, payload, apply, *, history=None):
+    def mutate(self, device_id, command_id, revision, payload, apply, *, history=None, prepare=None):
         digest = hashlib.sha256(encode(payload).encode()).hexdigest()
-        with self.db.transaction() as db:
+        with self.db.transaction(prepare=prepare, version=self.planning_version if prepare else None) as db:
             prior = db.execute(
                 "SELECT * FROM commands WHERE device_id=? AND id=?", (device_id, command_id)
             ).fetchone()
@@ -706,6 +717,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             payload,
             lambda db, d: self.apply_plan(db, d, payload["action"], actor=actor),
             history=(("plan",), description),
+            prepare=self.prepare_planning,
         )
 
     def public_access_command(self, device_id, command):

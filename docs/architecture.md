@@ -17,9 +17,11 @@ Prime completion is written atomically to the executor report and durable conten
 ## Responsibilities
 
 Catalogue planning is prepared in a read-only WAL snapshot before requesting
-the writer slot. The same connection's SQLite `data_version` fences the handoff:
-if any other connection committed meanwhile, preparation is discarded and
-rebuilt before the mutation body runs. Preparation retries are bounded; mutation
+the writer slot. Schema 23 tracks catalogue, content-status and entitlement
+generations with SQLite triggers; the handoff checks these plus the device fields
+used by catalogue projection. Relevant changes discard preparation and rebuild
+it before the mutation body runs. Unrelated heartbeats, logs and executor polling
+do not invalidate preparation. Preparation retries are bounded; mutation
 bodies and post-commit effects are never replayed. Allocation and intent checks
 still run atomically under the writer lock. Plan cleanup and crossed lifecycle
 time boundaries refresh only affected entries. Single-event entitlement results
