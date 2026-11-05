@@ -126,25 +126,15 @@ def synchronize_plan(service, db):
     service.db.set_meta(db, "fleet_plan", fields)
 
 
-def select_for_stream(service, db, device, items, now, real, *, reserve=True):
-    """Reserve each event before catalogue work so simultaneous ticks cannot duplicate it.
+def available_stream(service, key, value):
+    return (value["automation"] == "active" and not value.get("manual_control")
+            and not value.get("input_handoff") and not value.get("player_recovery")
+            and value.get("executor_health", {}).get("state") != "offline"
+            and not getattr(getattr(service.root.runtimes[key], "executor", None), "stopping", False))
 
-    Claims include pending launches and retained playback. Loss of monitoring
-    alone cannot safely transfer a physical stream: the former owner must retire
-    its attempt first. A paused stream keeps its current playback claim.
-    """
-    from .planner import priority, team_priority
 
+def allocation_inputs(service, db, device):
     runtimes = service.root.runtimes
-    if len(runtimes) < 2:
-        return choose(device, items, now, real)
-
-    def available_stream(key, value):
-        return (value["automation"] == "active" and not value.get("manual_control")
-                and not value.get("input_handoff") and not value.get("player_recovery")
-                and value.get("executor_health", {}).get("state") != "offline"
-                and not getattr(getattr(runtimes[key], "executor", None), "stopping", False))
-
     devices, claims = {}, {}
     for device_id in runtimes:
         other = devices[device_id] = device if device_id == device["id"] else service.db.device(db, device_id)
@@ -163,11 +153,36 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
         reserved.update(row[0] for row in pending)
         assignment = other.get("stream_assignment") or {}
         if (assignment.get("content_id") and assignment.get("revision") == other["revision"]
-                and available_stream(device_id, other)):
+                and available_stream(service, device_id, other)):
             reserved.add(assignment["content_id"])
+    return devices, claims
+
+
+def planning_devices(service, db, device):
+    """Only idle peers participate in a new fleet allocation."""
+    devices, claims = allocation_inputs(service, db, device)
+    idle = {key for key, value in devices.items()
+            if not claims[key] and available_stream(service, key, value)}
+    return sorted(idle | {device["id"]}) if device["id"] in idle else [device["id"]]
+
+
+def select_for_stream(service, db, device, items, now, real, *, reserve=True):
+    """Reserve each event before catalogue work so simultaneous ticks cannot duplicate it.
+
+    Claims include pending launches and retained playback. Loss of monitoring
+    alone cannot safely transfer a physical stream: the former owner must retire
+    its attempt first. A paused stream keeps its current playback claim.
+    """
+    from .planner import priority, team_priority
+
+    runtimes = service.root.runtimes
+    if len(runtimes) < 2:
+        return choose(device, items, now, real)
+
+    devices, claims = allocation_inputs(service, db, device)
     reserved = set().union(*(value for key, value in claims.items() if key != device["id"]))
     available = [item for item in items if item["content_id"] not in reserved]
-    idle = {key: value for key, value in devices.items() if not claims[key] and available_stream(key, value)}
+    idle = {key: value for key, value in devices.items() if not claims[key] and available_stream(service, key, value)}
     assignments = {}
     held = catalogue_reservation(device, items, real)
     if held and held not in reserved:

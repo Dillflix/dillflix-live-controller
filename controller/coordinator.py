@@ -39,9 +39,20 @@ class PlaybackCoordinator(PlaybackRecovery):
         ).fetchone()
         return row is not None and row["owner"] == self.owner and row["expires"] > time.time()
 
+    def prepare_playback(self, db, request_id=None):
+        from .fleet import available_stream, planning_devices
+        device = self.db.device(db, self.device_id)
+        if request_id is not None:
+            job = db.execute("SELECT state,device_id FROM jobs WHERE id=?", (request_id,)).fetchone()
+            if not job or job["state"] != "pending" or not self.owns_device(db, job["device_id"]):
+                return {}
+        elif not available_stream(self, device["id"], device):
+            return {}
+        return self.prepare_planning(db, device_ids=planning_devices(self, db, device))
+
     def stage_playback(self):
         real = datetime.now(UTC)
-        with self.db.transaction(prepare=self.prepare_planning, version=self.planning_version) as db:
+        with self.db.transaction(prepare=self.prepare_playback, version=self.planning_version) as db:
             if not self.db.lease(db, "device:" + self.device_id, self.owner, time.time()):
                 return False
             d = self.db.device(db, self.device_id)
@@ -61,6 +72,12 @@ class PlaybackCoordinator(PlaybackRecovery):
             if self.executor and hasattr(self.executor, "player_recovery_ready"):
                 if not self.executor.player_recovery_ready(db, d):
                     return True
+            from .fleet import planning_devices
+            if not set(planning_devices(self, db, d)).issubset(db.prepared):
+                # Eligibility changed during the read/write handoff. The next
+                # tick also handles allocation changed by completion cleanup;
+                # never rebuild a full catalogue under the writer.
+                return True
             items = self.items(db, d["id"])
             indexed = {i["content_id"]: i for i in items}
             now = self.now(db)
@@ -323,11 +340,14 @@ class PlaybackCoordinator(PlaybackRecovery):
 
     def receive_playback_report(self, request_id, report):
         """One guarded path for inspection responses and future callbacks."""
-        with self.db.transaction(prepare=self.prepare_planning, version=self.planning_version) as db:
+        with self.db.transaction(prepare=lambda db: self.prepare_playback(db, request_id),
+                                 version=self.planning_version) as db:
             job = db.execute("SELECT * FROM jobs WHERE id=?", (request_id,)).fetchone()
             if not job or job["state"] != "pending" or not self.owns_device(db, job["device_id"]):
                 return False
             d = self.db.device(db, job["device_id"])
+            if d["id"] not in db.prepared:
+                return False
             items = self.items(db, d["id"])
             from .fleet import select_for_stream
             decision = select_for_stream(self, db, d, items, self.now(db), datetime.now(UTC), reserve=False)

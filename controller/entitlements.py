@@ -365,11 +365,25 @@ class EntitlementChecks:
                 if service or dispatch > now else None,
                 "rows": rows, "history_rows": history_rows}
 
+    def prepare_entitlement_planning(self, db):
+        scope = account_id(db, self.root.device_id)
+        if db.execute("SELECT 1 FROM event_entitlements WHERE device_id=? AND state='checking' "
+                      "AND (started_at IS NULL OR started_at>=?) LIMIT 1",
+                      (scope, time.time() - CHECK_SECONDS - 30)).fetchone():
+            return self.prepare_planning(db, device_ids=(self.device_id,), content_ids=set())
+        # Cleanup still covers every queued/retry event, including completion
+        # before its retry deadline. Settled positives/history need no projection.
+        ids = {row[0] for row in db.execute(
+            "SELECT content_id FROM event_entitlements WHERE device_id=? AND "
+            "(state IN ('queued','retry','checking') OR "
+            "(state='complete' AND status='unentitled' AND manual=0))", (scope,))}
+        return self.prepare_planning(db, device_ids=(self.device_id,), content_ids=ids)
+
     def prepare_entitlement_check(self):
         if not self.executor:
             return
         now = time.time()
-        with self.db.transaction(prepare=self.prepare_planning, version=self.planning_version) as db:
+        with self.db.transaction(prepare=self.prepare_entitlement_planning, version=self.planning_version) as db:
             device = self.db.device(db, self.device_id)
             scope = account_id(db, self.root.device_id)
             if not self.db.lease(db, "entitlements:account", self.root.owner, now, CHECK_SECONDS + 60):
