@@ -1,19 +1,16 @@
-"""Reuse committed catalogue projections without caching playback decisions."""
+"""Bounded per-event projections of committed catalogue data."""
 import json
+import logging
 import threading
+import time
 from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import datetime
 
 from .planner import parse_time
 
-
-def next_boundary(items, now):
-    # Expiry changes freshness, including the stale flag of terminal evidence.
-    # A scheduled start can enable a Prime catalogue check without a DB write.
-    return min((at for item in items
-                for value in (item["start_time"], item["lifecycle"].get("effective_valid_until"))
-                if (at := parse_time(value)) is not None and at > now), default=None)
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -23,36 +20,96 @@ class Entry:
     expires_at: datetime | None
     size: int
 
+    def valid(self, now):
+        return self.created_at <= now and (self.expires_at is None or now < self.expires_at)
+
+
+def entry_for(key, item, now):
+    boundaries = (item["start_time"], item["lifecycle"].get("effective_valid_until"))
+    expiry = min((at for value in boundaries if (at := parse_time(value)) and at > now), default=None)
+    wire = json.dumps(item, ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+    return Entry(wire, now, expiry, len(wire) + len(repr(key).encode()) + 512)
+
 
 class CatalogueCache:
-    def __init__(self, *, max_bytes=64 * 1024 * 1024, max_entries=16):
+    def __init__(self, *, max_bytes=64 * 1024 * 1024, max_entries=16384):
+        if max_bytes < 0 or max_entries < 0:
+            raise ValueError("Cache limits must be nonnegative")
         self.max_bytes, self.max_entries = max_bytes, max_entries
         self.entries = OrderedDict()
         self.bytes = 0
-        # Coalesce concurrent worker/overview/display builds. Builders only read
-        # their WAL snapshot; a writer never waits for this lock. RLock permits
-        # the enriched projection to reuse the separately cached source view.
-        self.lock = threading.RLock()
+        self.building = {}
+        self.lock = threading.Lock()
 
-    def read(self, key, clock, build):
+    def read(self, keys, clock, build, *, device_id=None):
+        """Return independent items in input order; batch only missing IDs.
+
+        keys maps content IDs to immutable snapshot/intent identities. No SQL,
+        projection, encoding, decoding or waiting happens under the cache lock.
+        A pending build coalesces only readers of those exact event identities.
+        """
+        started = time.monotonic()
+        ready, owned, waiting = {}, {}, {}
         with self.lock:
-            # Sample after waiting for another builder. A request's earlier
-            # arrival time is not a backwards system-clock movement.
             now = clock()
-            entry = self.entries.pop(key, None)
-            if entry:
-                self.bytes -= entry.size
-            if not entry or now < entry.created_at or (entry.expires_at and now >= entry.expires_at):
-                value = build(now)
-                wire = json.dumps(value, ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode("ascii")
-                entry = Entry(wire, now, next_boundary(value, now), len(wire) + len(repr(key).encode()) + 512)
-            if entry.size <= self.max_bytes and self.max_entries > 0:
-                self.entries[key] = entry
-                self.bytes += entry.size
-                while self.bytes > self.max_bytes or len(self.entries) > self.max_entries:
-                    _, expired = self.entries.popitem(last=False)
-                    self.bytes -= expired.size
-        # Immutable compact storage avoids retaining many duplicated Python
-        # object graphs. Each reader gets independent data without recomputing
-        # lifecycle, route eligibility, identities or entitlement enrichment.
-        return json.loads(entry.value)
+            for cid, key in keys.items():
+                entry = self.entries.pop(key, None)
+                if entry and entry.valid(now):
+                    self.entries[key] = ready[cid] = entry
+                    continue
+                if entry:
+                    self.bytes -= entry.size
+                future = self.building.get(key)
+                if future is None:
+                    future = owned[cid] = self.building[key] = Future()
+                else:
+                    waiting[cid] = future
+        indexed = time.monotonic()
+        hits = len(ready)
+        # Publish our own work before waiting on peers. Overlapping batches
+        # cannot form a wait cycle. Builders only read their committed snapshot.
+        if owned:
+            try:
+                values = {item["content_id"]: item for item in build(set(owned), now)}
+                built = {cid: entry_for(keys[cid], values[cid], now) for cid in owned}
+                with self.lock:
+                    for cid, entry in built.items():
+                        key = keys[cid]
+                        if entry.size <= self.max_bytes and self.max_entries > 0:
+                            self.entries[key] = entry
+                            self.bytes += entry.size
+                        self.building.pop(key)
+                    while self.bytes > self.max_bytes or len(self.entries) > self.max_entries:
+                        _, expired = self.entries.popitem(last=False)
+                        self.bytes -= expired.size
+                ready.update(built)
+                for cid, future in owned.items():
+                    future.set_result(built[cid])
+            except BaseException as error:
+                with self.lock:
+                    for cid in owned:
+                        self.building.pop(keys[cid], None)
+                for future in owned.values():
+                    future.set_exception(error)
+                raise
+        constructed = time.monotonic()
+        for cid, future in waiting.items():
+            entry = future.result()
+            # A peer started before this request. If its view had already
+            # expired when our read began, refresh only that event locally.
+            if not entry.valid(now):
+                item, = build({cid}, now)
+                entry = entry_for(keys[cid], item, now)
+            ready[cid] = entry
+        waited = time.monotonic()
+        # Share immutable event bytes across streams, but return independent
+        # caller objects without retaining entire catalogue variants.
+        result = json.loads(b"[" + b",".join(ready[cid].value for cid in keys) + b"]")
+        finished = time.monotonic()
+        if finished - started >= 1:
+            log.warning("Slow catalogue cache: device=%s seconds=%.3f hits=%d built=%d waited=%d "
+                        "retained_bytes=%d stages=%s", device_id, finished - started, hits, len(owned),
+                        len(waiting), self.bytes, {"lookup": round(indexed - started, 3),
+                        "build": round(constructed - indexed, 3), "wait": round(waited - constructed, 3),
+                        "decode": round(finished - waited, 3)})
+        return result

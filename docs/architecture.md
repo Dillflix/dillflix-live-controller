@@ -36,18 +36,27 @@ the writer. Entitlement preparation reads only unfinished work and denials due
 for rescheduling, for one stream; an in-flight check skips projection entirely.
 This prevents every worker from rebuilding both catalogues on every tick.
 
-Production catalogue projections are reused across coordinator ticks, overview
-and display reads. A shared, bounded in-memory cache keys committed WAL snapshots
-by catalogue/status/entitlement generations, pins, manual completions, discovery
-settings and account scope. Unrelated heartbeats and job polling do not rebuild
-them. Enrichment has a separate generation key, so an entitlement result reuses
-the source projection. A scheduled start, evidence expiry or backwards clock
-movement invalidates time-dependent results even without a database write.
-Concurrent readers coalesce construction, and callers receive independent
-copies from compact immutable JSON. The cache retains at most 64 MiB/16 entries;
-oversized projections are returned without retention. Only read-only snapshots can populate it, so rolled
-back writes cannot publish stale data. Demo fixture observations retain their
-existing per-read simulated timestamps and bypass this production cache.
+Production catalogue projections are reused per event across coordinator ticks,
+overview and display reads. Schema 24 records an event's revision when its source,
+status or entitlement changes. The covering contents-ID index and this compact
+revision table identify misses without reading all source snapshots. A single
+status/check update rebuilds only that event. Each key also includes that event's
+pin and manual completion, discovery settings and account scope; different stream
+pins do not duplicate the rest of the catalogue. Deletion revisions survive as
+tombstones, so reinserting an ID cannot reuse a cached identity.
+Rollback to a schema-23 image requires its pre-upgrade database backup, since
+older versions reject schema 24; preserve both during deployment.
+
+Misses are fetched and projected in a batch, outside the cache lock. Concurrent
+readers coalesce only the same event identities; unrelated cold builds cannot
+block existing cached views. Overlapping batches publish their own misses before
+waiting on peers to avoid wait cycles. A scheduled start, evidence expiry or
+backwards clock movement invalidates the affected event even without a write.
+Callers receive independent objects from compact immutable JSON. Retention is
+bounded to 64 MiB/16,384 event entries, including revisions and stream variants;
+oversized events are returned without retention. Only read-only snapshots can
+populate it, so rolled-back writes cannot publish stale data. Demo observations
+retain their per-read simulated timestamps and bypass this production cache.
 
 The one-second coordinator still checks current ownership, intent, requests,
 deadlines and allocation under its transaction; decisions and playback evidence
@@ -56,7 +65,9 @@ must validate a route or confirm completion inside a write transaction.
 
 Slow overview reads log separate catalogue, cards, activity/job, stream, team,
 entitlement and preview timings. Response logging measures JSON encoding and
-total HTTP time separately, including web-worker queueing. These diagnostics
+total HTTP time separately, including web-worker queueing. Slow cache reads also
+report hits, built/waited event counts, retained bytes and lookup/build/wait/decode
+times, distinguishing invalidation, contention and copying. These diagnostics
 contain durations and stage names, never response bodies or credentials.
 
 Teams, job history, configuration export, artwork reads and previews use
