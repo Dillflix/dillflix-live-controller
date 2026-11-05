@@ -317,9 +317,9 @@ class Database:
             db.close()
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, prepare=None):
         with database_guard(self.path):
-            with self.connection_transaction() as db:
+            with self.connection_transaction(prepare=prepare) as db:
                 yield db
 
     @contextmanager
@@ -336,13 +336,35 @@ class Database:
                 db.close()
 
     @contextmanager
-    def connection_transaction(self):
+    def connection_transaction(self, *, prepare=None):
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None, factory=TransactionConnection)
         writer = None
         try:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA busy_timeout=10000")
-            db.execute("BEGIN IMMEDIATE")
+            if prepare is not None:
+                # Catalogue construction belongs to a WAL read snapshot, not
+                # the single writer slot. Use the SAME connection's version to
+                # fence any commit between that snapshot and the write claim.
+                # Nothing in the transaction body (including callbacks) runs
+                # until preparation is current. Never replay a mutation body.
+                deadline = time.monotonic() + 10
+                while True:
+                    db.execute("PRAGMA query_only=ON")
+                    db.execute("BEGIN")
+                    version = db.execute("PRAGMA data_version").fetchone()[0]
+                    prepared = prepare(db)
+                    db.rollback()
+                    db.execute("PRAGMA query_only=OFF")
+                    db.execute("BEGIN IMMEDIATE")
+                    if db.execute("PRAGMA data_version").fetchone()[0] == version:
+                        db.prepared = prepared
+                        break
+                    db.rollback()
+                    if time.monotonic() >= deadline:
+                        raise sqlite3.OperationalError("database is locked")
+            else:
+                db.execute("BEGIN IMMEDIATE")
             writer = {"thread_id": threading.get_ident(), "started": time.monotonic(),
                       "phase": "transaction", "caller": stack_locations(sys._getframe(1))}
             with self._writer_lock:

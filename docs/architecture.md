@@ -16,6 +16,21 @@ Prime completion is written atomically to the executor report and durable conten
 
 ## Responsibilities
 
+Catalogue planning is prepared in a read-only WAL snapshot before requesting
+the writer slot. The same connection's SQLite `data_version` fences the handoff:
+if any other connection committed meanwhile, preparation is discarded and
+rebuilt before the mutation body runs. Preparation retries are bounded; mutation
+bodies and post-commit effects are never replayed. Allocation and intent checks
+still run atomically under the writer lock. Plan cleanup and crossed lifecycle
+time boundaries refresh only affected entries. Single-event entitlement results
+and pinned status checks query their own IDs instead of the full catalogue.
+
+Teams, job history, configuration export, artwork reads and previews use
+`query_only` snapshots, like the overview. They neither reserve a writer nor
+invoke commit hooks. Feed imports encode snapshots, consolidate teams and compute
+entitlement identities before the atomic publication transaction. This keeps
+catalogue construction and unrelated read traffic out of routine writer holds.
+
 For rule-based RedZone, the independent status adapter queries the original day's
 NFL results and broadcast links in one paginated Teamarr snapshot. Completion
 requires a nonempty union of saved/current linked identities, with every game

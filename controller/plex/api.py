@@ -110,7 +110,7 @@ def install_plex_api(app, service):
 
     @app.get(prefix + "/images/{which}/{slot}")
     def preview(device_id: str, which: Literal["default", "applied"], slot: Literal["poster", "background"]):
-        with service.db.transaction() as db:
+        with service.db.snapshot() as db:
             service.db.device(db, device_id)
             digest = (
                 configuration(db, device_id)["defaults"].get(slot)
