@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from .access import LEGACY_ADMIN
 from .background import BackgroundWorker
+from .catalogue_cache import CatalogueCache
 from .content_status import (
     ContentStatusAdapter,
     ContentStatusCoordinator,
@@ -56,6 +57,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         self.device_id = settings.device_id
         self.root = self
         self.runtimes = {self.device_id: self}
+        self.catalogue_cache = CatalogueCache()
         self.entitlement_lock = asyncio.Lock()
         self._database_guard = database_guard(settings.database)
         self._database_guard.__enter__()
@@ -372,7 +374,34 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
 
     def _items(self, db, device_id=None, *, content_ids=None):
         device_id = device_id or self.device_id
-        now, real = self.now(db), datetime.now(UTC)
+        if content_ids is not None and not content_ids:
+            return []
+        # Only committed read snapshots may publish reusable projections. A
+        # rolled-back writer can reuse a generation number with different data.
+        # Fixture observations intentionally acquire a new simulated timestamp
+        # on each read; production observations retain their source timestamps.
+        if self.settings.mode == "demo" or not db.execute("PRAGMA query_only").fetchone()[0]:
+            return self.entitlement_views(db, device_id, self._project_items(db, device_id, content_ids=content_ids))
+        from .entitlement_store import account_id
+        versions = dict(db.execute("SELECT name,revision FROM planning_versions"))
+        device = self.db.device(db, device_id)
+        inputs = encode([
+            sorted(self.pinned_content_ids(db, device_id=device_id)), device["manual_completions"],
+            sorted(device["preferences"]["discovery_leagues"]), self.settings.mode,
+            self.settings.status_ttl, bool(self.executor),
+            sorted(content_ids) if content_ids is not None else None,
+        ])
+        base_key = ("catalogue", versions["contents"], versions["content_status"], inputs)
+        key = ("entitlements", base_key, versions["event_entitlements"], account_id(db, self.root.device_id))
+        def base(now):
+            return self.root.catalogue_cache.read(base_key, lambda: now,
+                lambda at: self._project_items(db, device_id, content_ids=content_ids, at=at))
+        return self.root.catalogue_cache.read(key, lambda: datetime.now(UTC),
+            lambda at: self.entitlement_views(db, device_id, base(at)))
+
+    def _project_items(self, db, device_id=None, *, content_ids=None, at=None):
+        device_id = device_id or self.device_id
+        now, real = self.now(db), at or datetime.now(UTC)
         if content_ids is not None and not content_ids:
             return []
         params = tuple(sorted(content_ids)) if content_ids is not None else ()
@@ -400,7 +429,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             for r in db.execute("SELECT * FROM contents" + where + " ORDER BY id", params)
             for snapshot in [json.loads(r["snapshot"])]
         ]
-        return self.entitlement_views(db, device_id, items)
+        return items
 
     def overview(self, device_id=None):
         device_id = device_id or self.device_id

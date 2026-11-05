@@ -144,7 +144,7 @@ class PlaybackRecovery:
                 session_replaced = bool(monitoring.get("session_replaced") and
                                         monitoring.get("request_id") == existing.get("request_id"))
                 job = db.execute("SELECT * FROM jobs WHERE id=?", (existing.get("request_id"),)).fetchone()
-                item = next((i for i in self.items(db) if i["content_id"] == existing["content_id"]), None)
+                item = next(iter(self.items(db, content_ids={existing["content_id"]})), None)
                 if item and item["lifecycle"]["state"] in {"ended", "cancelled"}:
                     # Retain request identity for scoped cancellation, but never
                     # start recovery of a stream whose event has completed.

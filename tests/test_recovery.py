@@ -55,6 +55,21 @@ def start_golf(rig):
     return overview(c)["device"]
 
 
+def test_monitoring_projects_only_the_observed_event(rig, monkeypatch):
+    _, service, _ = rig
+    playing = start_golf(rig)
+    selected = playing["observed"]["content_id"]
+    original = service.items
+    calls = []
+    def scoped(db, *args, content_ids=None, **kwargs):
+        calls.append(content_ids)
+        assert content_ids == {selected}
+        return original(db, *args, content_ids=content_ids, **kwargs)
+    monkeypatch.setattr(service, "items", scoped)
+    service.refresh_playback_observation()
+    assert calls == [{selected}]
+
+
 def test_same_event_handoff_preserves_plan_timers_and_passes_all_current_options(rig):
     c, s, _ = rig
     before = start_golf(rig)

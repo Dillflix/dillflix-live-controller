@@ -36,6 +36,24 @@ the writer. Entitlement preparation reads only unfinished work and denials due
 for rescheduling, for one stream; an in-flight check skips projection entirely.
 This prevents every worker from rebuilding both catalogues on every tick.
 
+Production catalogue projections are reused across coordinator ticks, overview
+and display reads. A shared, bounded in-memory cache keys committed WAL snapshots
+by catalogue/status/entitlement generations, pins, manual completions, discovery
+settings and account scope. Unrelated heartbeats and job polling do not rebuild
+them. Enrichment has a separate generation key, so an entitlement result reuses
+the source projection. A scheduled start, evidence expiry or backwards clock
+movement invalidates time-dependent results even without a database write.
+Concurrent readers coalesce construction, and callers receive independent
+copies from compact immutable JSON. The cache retains at most 64 MiB/16 entries;
+oversized projections are returned without retention. Only read-only snapshots can populate it, so rolled
+back writes cannot publish stale data. Demo fixture observations retain their
+existing per-read simulated timestamps and bypass this production cache.
+
+The one-second coordinator still checks current ownership, intent, requests,
+deadlines and allocation under its transaction; decisions and playback evidence
+are not cached. Monitoring projects only the observed event, including when it
+must validate a route or confirm completion inside a write transaction.
+
 Slow overview reads log separate catalogue, cards, activity/job, stream, team,
 entitlement and preview timings. Response logging measures JSON encoding and
 total HTTP time separately, including web-worker queueing. These diagnostics
