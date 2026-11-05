@@ -284,7 +284,7 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/teams")
     def teams(league: str | None = None):
-        with service.db.transaction() as db:
+        with service.db.snapshot() as db:
             items = [t for t in service.db.teams(db) if league is None or t["league"] == league]
             return {
                 "items": items,
@@ -433,7 +433,7 @@ def create_app(settings=None, *, start_workers=True):
     @app.get("/api/v1/devices/{device_id}/jobs")
     def jobs(device_id: str):
         service.runtime(device_id)
-        with service.db.transaction() as db:
+        with service.db.snapshot() as db:
             service.db.device(db, device_id)
             return {
                 "items": [

@@ -430,8 +430,11 @@ class ContentStatusCoordinator:
             # Cap work per pass. Due checks sort before future checks, preventing starvation.
             rows = db.execute(
                 "SELECT c.*,s.next_check,s.observation AS status_observation FROM contents c LEFT JOIN content_status s ON s.content_id=c.id "
-                "ORDER BY COALESCE(s.next_check,0),c.id"
-            ).fetchall()
+                "WHERE c.id IN (" + ",".join("?" for _ in pins) + ") "
+                "AND (? OR COALESCE(s.next_check,0)<=?) "
+                "ORDER BY COALESCE(s.next_check,0),c.id",
+                (*sorted(pins), force, time.time()),
+            ).fetchall() if pins else []
             for row in rows:
                 observation = json.loads(row["status_observation"]) if row["status_observation"] else {}
                 # A native completion is a retained fact, not a feed cache entry.

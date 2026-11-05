@@ -73,7 +73,7 @@ class EntitlementChecks:
         # Queue/progress belong to the shared Prime account, not the viewer's TV.
         return key
 
-    def seed_entitlements(self, db):
+    def seed_entitlements(self, db, *, seeds=None):
         if not self.executor:
             return
         # Unchanged entries keep their result, including reimports. Changed
@@ -85,35 +85,48 @@ class EntitlementChecks:
             "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
             "WHERE e.device_id=?", (scope,)
         )}
-        for row in db.execute("SELECT id,snapshot FROM contents WHERE active=1 AND source='teamarr'"):
-            snapshot = json.loads(row["snapshot"])
-            if any(prime_option(o) for o in snapshot.get("viewing_options", [])):
+        if seeds is None:
+            seeds = {}
+            for row in db.execute("SELECT id,snapshot FROM contents WHERE active=1 AND source='teamarr'"):
+                snapshot = json.loads(row["snapshot"])
+                if any(prime_option(o) for o in snapshot.get("viewing_options", [])):
+                    seeds[row["id"]] = identity({"snapshot": snapshot, "viewing_options": allowed_options(snapshot)})
+        for content_id, fingerprint in seeds.items():
+            previous = records.get(content_id)
+            if previous is None:
                 db.execute(
                     "INSERT OR IGNORE INTO event_entitlements(device_id,content_id,next_check) VALUES (?,?,0)",
-                    (scope, row["id"]),
+                    (scope, content_id),
                 )
-                previous = records.get(row["id"])
-                if previous is None or previous["state"] not in {"complete", "retry"}:
-                    continue  # Preserve queued/manual, in-flight and stopped work.
-                evidence = json.loads(previous["evidence"])
-                fingerprint = identity({"snapshot": snapshot, "viewing_options": allowed_options(snapshot)})
-                if evidence.get("identity") and evidence["identity"] != fingerprint:
-                    # Keep the old evidence for audit; entitlement_views already
-                    # exposes it as unknown. Never carry an old no-listing delay
-                    # or a completed job's NULL deadline into the new check.
-                    db.execute(
-                        "UPDATE event_entitlements SET state='queued',next_check=0,check_id=NULL "
-                        "WHERE device_id=? AND content_id=?",
-                        (scope, row["id"]),
-                    )
+            if previous is None or previous["state"] not in {"complete", "retry"}:
+                continue  # Preserve queued/manual, in-flight and stopped work.
+            evidence = json.loads(previous["evidence"])
+            if evidence.get("identity") and evidence["identity"] != fingerprint:
+                # Keep the old evidence for audit; entitlement_views already
+                # exposes it as unknown. Never carry an old no-listing delay
+                # or a completed job's NULL deadline into the new check.
+                db.execute(
+                    "UPDATE event_entitlements SET state='queued',next_check=0,check_id=NULL "
+                    "WHERE device_id=? AND content_id=?",
+                    (scope, content_id),
+                )
 
     def entitlement_views(self, db, device_id, items):
+        if not self.executor:
+            for item in items:
+                item["entitlement"] = None
+            return items
         device_id = account_id(db, self.root.device_id)
+        ids = tuple(i["content_id"] for i in items)
+        if not ids:
+            return items
+        scope = "(" + ",".join("?" for _ in ids) + ")" if len(ids) <= 64 else "(SELECT id FROM contents)"
+        params = (device_id, *ids) if len(ids) <= 64 else (device_id,)
         records = {r["content_id"]: r for r in db.execute(
-            """SELECT e.content_id,e.status,e.state,e.checked_at,e.next_check,v.evidence AS view_evidence
+            f"""SELECT e.content_id,e.status,e.state,e.checked_at,e.next_check,v.evidence AS view_evidence
                 FROM event_entitlements e JOIN entitlement_read_models v
                 ON v.device_id=e.device_id AND v.content_id=e.content_id
-                WHERE e.device_id=? AND e.content_id IN (SELECT id FROM contents)""", (device_id,)
+                WHERE e.device_id=? AND e.content_id IN {scope}""", params
         )}
         for item in items:
             row = records.get(item["content_id"])
@@ -147,7 +160,7 @@ class EntitlementChecks:
             scope = account_id(db, self.root.device_id)
             if not self.executor:
                 raise HTTPException(409, "Entitlement checks require Prime Player")
-            item = next((i for i in self.items(db, device_id) if i["content_id"] == command.content_id), None)
+            item = next(iter(self.items(db, device_id, content_ids={command.content_id})), None)
             if not item:
                 raise HTTPException(404, "Content is not in the catalogue")
             if not item.get("entitlement") or not item["entitlement"]["can_check"]:
@@ -356,7 +369,7 @@ class EntitlementChecks:
         if not self.executor:
             return
         now = time.time()
-        with self.db.transaction() as db:
+        with self.db.transaction(prepare=self.prepare_planning, version=self.planning_version) as db:
             device = self.db.device(db, self.device_id)
             scope = account_id(db, self.root.device_id)
             if not self.db.lease(db, "entitlements:account", self.root.owner, now, CHECK_SECONDS + 60):
@@ -411,8 +424,10 @@ class EntitlementChecks:
                            (no_listing_retry(checked.timestamp(), start.timestamp() if start else None)
                             if checked else 0, scope, old["content_id"]))
             # Completion cleanup is independent of retry deadlines and playback priority.
+            stoppable = {r[0] for r in db.execute(
+                "SELECT content_id FROM event_entitlements WHERE device_id=? AND state IN ('queued','retry')", (scope,))}
             for item in items.values():
-                if item["lifecycle"]["state"] in {"ended", "cancelled"}:
+                if item["content_id"] in stoppable and item["lifecycle"]["state"] in {"ended", "cancelled"}:
                     db.execute("UPDATE event_entitlements SET state='stopped',next_check=NULL,manual=0 "
                                "WHERE device_id=? AND content_id=? AND state IN ('queued','retry')",
                                (scope, item["content_id"]))
@@ -637,7 +652,7 @@ class EntitlementChecks:
         finally:
             def persist(status):
                 with self.db.transaction() as db:
-                    current_item = next((i for i in self.items(db, device["id"]) if i["content_id"] == item["content_id"]), None)
+                    current_item = next(iter(self.items(db, device["id"], content_ids={item["content_id"]})), None)
                     if current_item and identity(current_item) != evidence["identity"]:
                         status = "unknown"
                         evidence["reason"] = "Event details changed during the check"

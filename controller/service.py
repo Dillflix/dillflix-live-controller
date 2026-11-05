@@ -268,17 +268,40 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             "actor": actor or LEGACY_ADMIN.copy(),
         }
 
-    def replace_catalog(self, db, entries, source):
-        fetched = datetime.now(UTC).isoformat()
-        db.execute("UPDATE contents SET active=0 WHERE source=?", (source,))
+    def prepare_catalog(self, entries):
+        from .entitlement_store import identity
+        from .planner import allowed_options
+        from .prime_player.labels import prime_option
+        teams, seeds = {}, {}
+        encoded = []
         for item in entries:
-            db.execute(
-                "INSERT INTO contents VALUES (?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET "
-                "active=1,seen_at=excluded.seen_at,snapshot=excluded.snapshot,source=excluded.source",
-                (item["id"], source, fetched, encode(item)),
-            )
-            self.remember_teams(db, item, fetched)
-        self.seed_entitlements(db)
+            encoded.append((item["id"], encode(item)))
+            event = item.get("event") or {}
+            league = event.get("league") or item.get("competition")
+            for team in (event.get("away_team_details"), event.get("home_team_details")):
+                if team and team.get("id") and team.get("provider") and league:
+                    key = team_key(team, league)
+                    # Preserve richer fields when a team occurs more than once.
+                    merged = teams.setdefault(key, {})
+                    merged.update({k: v for k, v in team.items() if v is not None or k not in merged})
+                    merged.update(key=key, league=league)
+            if self.executor and any(prime_option(o) for o in item.get("viewing_options", [])):
+                seeds[item["id"]] = identity({"snapshot": item, "viewing_options": allowed_options(item)})
+        return encoded, teams, seeds
+
+    def replace_catalog(self, db, entries, source, *, prepared=None):
+        fetched = datetime.now(UTC).isoformat()
+        encoded, teams, seeds = prepared if prepared is not None else self.prepare_catalog(entries)
+        db.execute("UPDATE contents SET active=0 WHERE source=?", (source,))
+        db.executemany(
+            "INSERT INTO contents VALUES (?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "active=1,seen_at=excluded.seen_at,snapshot=excluded.snapshot,source=excluded.source",
+            ((content_id, source, fetched, snapshot) for content_id, snapshot in encoded),
+        )
+        for team in teams.values():
+            self.db.upsert_team(db, team, fetched)
+        if source == "teamarr":
+            self.seed_entitlements(db, seeds=seeds)
         self.db.set_meta(
             db,
             "feed_health",
@@ -291,10 +314,65 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             },
         )
 
-    def items(self, db, device_id=None):
+    def planning_version(self, db):
+        # Heartbeats, logs and executor polling must not repeatedly invalidate
+        # catalogue preparation. These are exactly the inputs to _items().
+        devices = []
+        for device_id in sorted(self.root.runtimes):
+            device = self.db.device(db, device_id)
+            devices.append((device_id, sorted(self.pinned_content_ids(db, device_id=device_id)),
+                            device["manual_completions"], device["preferences"]["discovery_leagues"]))
+        return ([tuple(row) for row in db.execute("SELECT name,revision FROM planning_versions ORDER BY name")],
+                devices, self.db.meta(db, "demo_now"), self.db.meta(db, "entitlement_account"))
+
+    def prepare_planning(self, db):
+        """Build each stream's catalogue before acquiring SQLite's write lock."""
+        prepared = {}
+        for device_id, runtime in self.root.runtimes.items():
+            at = datetime.now(UTC)
+            prepared[device_id] = {
+                "items": runtime._items(db, device_id),
+                "pins": self.pinned_content_ids(db, device_id=device_id),
+                "device": self.db.device(db, device_id), "at": at,
+            }
+        return prepared
+
+    def items(self, db, device_id=None, *, content_ids=None):
+        device_id = device_id or self.device_id
+        prepared = getattr(db, "prepared", {}).get(device_id)
+        if not prepared:
+            return self._items(db, device_id, content_ids=content_ids)
+        device = self.db.device(db, device_id)
+        pins = self.pinned_content_ids(db, device_id=device_id)
+        changed = pins ^ prepared["pins"]
+        previous = prepared["device"]
+        changed.update(key for key in device["manual_completions"].keys() | previous["manual_completions"].keys()
+                       if device["manual_completions"].get(key) != previous["manual_completions"].get(key))
+        if device["preferences"]["discovery_leagues"] != previous["preferences"]["discovery_leagues"]:
+            raise RuntimeError("Planning preferences changed inside a prepared transaction")
+        selected = [dict(item) for item in prepared["items"]
+                    if content_ids is None or item["content_id"] in content_ids]
+        now = datetime.now(UTC)
+        for item in selected:
+            # Re-evaluate time boundaries crossed while acquiring the writer.
+            until = parse_time(item["lifecycle"].get("effective_valid_until"))
+            start = parse_time(item["start_time"])
+            if (until and prepared["at"] < until <= now) or (start and prepared["at"] < start <= now):
+                changed.add(item["content_id"])
+        if changed:
+            replacements = {i["content_id"]: i for i in self._items(db, device_id, content_ids=changed)}
+            selected = [replacements.get(i["content_id"], i) for i in selected]
+        return selected
+
+    def _items(self, db, device_id=None, *, content_ids=None):
         device_id = device_id or self.device_id
         now, real = self.now(db), datetime.now(UTC)
-        checks = {row["content_id"]: row for row in db.execute("SELECT * FROM content_status")}
+        if content_ids is not None and not content_ids:
+            return []
+        params = tuple(sorted(content_ids)) if content_ids is not None else ()
+        where = " WHERE id IN (" + ",".join("?" for _ in params) + ")" if params else ""
+        check_where = where.replace("id IN", "content_id IN")
+        checks = {row["content_id"]: row for row in db.execute("SELECT * FROM content_status" + check_where, params)}
         pins = self.pinned_content_ids(db, device_id=device_id)
         completions = self.db.device(db, device_id)["manual_completions"]
         leagues = set(self.db.device(db, device_id)["preferences"]["discovery_leagues"])
@@ -313,7 +391,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 ),
                 prime_search_at=real if self.executor else None,
             )
-            for r in db.execute("SELECT * FROM contents ORDER BY id")
+            for r in db.execute("SELECT * FROM contents" + where + " ORDER BY id", params)
             for snapshot in [json.loads(r["snapshot"])]
         ]
         return self.entitlement_views(db, device_id, items)
@@ -389,9 +467,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 },
             }
 
-    def mutate(self, device_id, command_id, revision, payload, apply, *, history=None):
+    def mutate(self, device_id, command_id, revision, payload, apply, *, history=None, prepare=None):
         digest = hashlib.sha256(encode(payload).encode()).hexdigest()
-        with self.db.transaction() as db:
+        with self.db.transaction(prepare=prepare, version=self.planning_version if prepare else None) as db:
             prior = db.execute(
                 "SELECT * FROM commands WHERE device_id=? AND id=?", (device_id, command_id)
             ).fetchone()
@@ -462,7 +540,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         )
 
     def export_configuration(self, device_id):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             d = self.db.device(db, device_id)
             return {
                 "format": "dillflix-controller-config",
@@ -473,7 +551,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             }
 
     def import_preview(self, device_id, request):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             d = self.db.device(db, device_id)
             if d["revision"] != request.expected_revision:
                 raise HTTPException(409, "Configuration changed. Refresh the import preview.")
@@ -639,6 +717,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             payload,
             lambda db, d: self.apply_plan(db, d, payload["action"], actor=actor),
             history=(("plan",), description),
+            prepare=self.prepare_planning,
         )
 
     def public_access_command(self, device_id, command):
@@ -663,7 +742,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         )
 
     def preview(self, device_id, command):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             device = self.db.device(db, device_id)
             if command.expected_revision != device["revision"]:
                 raise HTTPException(409, "The watch plan changed. Refresh the preview.")
@@ -883,8 +962,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             leagues.update(self.db.device(db, row["id"])["preferences"]["discovery_leagues"])
         # A discovery setting must not orphan saved commitments or current playback.
         pins = self.pinned_content_ids(db, for_lookup=True)
-        for row in db.execute("SELECT id,snapshot FROM contents"):
-            if row["id"] in pins:
+        for content_id in pins:
+            row = db.execute("SELECT snapshot FROM contents WHERE id=?", (content_id,)).fetchone()
+            if row:
                 snapshot = json.loads(row["snapshot"])
                 if snapshot.get("source") == "games":
                     leagues.add(snapshot["competition"])
@@ -906,10 +986,12 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 page, schema = await self.client.fetch_snapshot(leagues=group)
                 entries.update((item["id"], item) for item in page)
             def publish_catalog():
+                imported = list(entries.values())
+                prepared = self.prepare_catalog(imported)
                 with self.db.transaction() as db:
                     if leagues != self.requested_leagues(db):
                         return  # Settings changed in flight; wait for a fresh snapshot.
-                    self.replace_catalog(db, list(entries.values()), "teamarr")
+                    self.replace_catalog(db, imported, "teamarr", prepared=prepared)
                     self.db.set_meta(db, "feed_schema_version", schema)
             await self.playback_work(publish_catalog)
         except Exception as exc:
