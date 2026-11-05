@@ -39,6 +39,7 @@ from .planner import (
 )
 from .playback import PlaybackAdapter, SimulatedPlaybackAdapter
 from .storage_lock import database_guard
+from .read_timing import read_timing
 from .teamarr import TeamarrClient
 
 log = logging.getLogger(__name__)
@@ -316,22 +317,27 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
 
     def planning_version(self, db):
         # Heartbeats, logs and executor polling must not repeatedly invalidate
-        # catalogue preparation. These are exactly the inputs to _items().
+        # catalogue preparation. Fence projection inputs and the set of streams
+        # that need preparation, rather than every device/job status update.
+        from .fleet import available_stream, planning_devices
         devices = []
         for device_id in sorted(self.root.runtimes):
             device = self.db.device(db, device_id)
             devices.append((device_id, sorted(self.pinned_content_ids(db, device_id=device_id)),
-                            device["manual_completions"], device["preferences"]["discovery_leagues"]))
+                            device["manual_completions"], device["preferences"]["discovery_leagues"],
+                            available_stream(self, device_id, device),
+                            planning_devices(self, db, device)))
         return ([tuple(row) for row in db.execute("SELECT name,revision FROM planning_versions ORDER BY name")],
                 devices, self.db.meta(db, "demo_now"), self.db.meta(db, "entitlement_account"))
 
-    def prepare_planning(self, db):
-        """Build each stream's catalogue before acquiring SQLite's write lock."""
+    def prepare_planning(self, db, *, device_ids=None, content_ids=None):
+        """Build only the catalogues needed by this operation, outside the writer."""
         prepared = {}
-        for device_id, runtime in self.root.runtimes.items():
+        for device_id in self.root.runtimes if device_ids is None else device_ids:
+            runtime = self.root.runtimes[device_id]
             at = datetime.now(UTC)
             prepared[device_id] = {
-                "items": runtime._items(db, device_id),
+                "items": runtime._items(db, device_id, content_ids=content_ids),
                 "pins": self.pinned_content_ids(db, device_id=device_id),
                 "device": self.db.device(db, device_id), "at": at,
             }
@@ -400,9 +406,11 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         device_id = device_id or self.device_id
         if device_id != self.device_id:
             return self.runtime(device_id).overview()
-        with self.db.snapshot() as db:
+        with read_timing("overview", device_id) as mark, self.db.snapshot() as db:
+            mark("open_snapshot")
             device = self.db.device(db, device_id)
             items = self.planning_items(db, device_id)
+            mark("catalogue")
             plan_ids = {p["content_id"] for p in device["plan"]}
             retained = {device.get("desired"), (device.get("observed") or {}).get("content_id")}
             cards = []
@@ -418,6 +426,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 card["playback_retry"] = attempt_status(device, item["content_id"])
                 cards.append(card)
             cards.sort(key=lambda c: (c["start_time"], c["content_id"]))
+            mark("cards")
             activity = [
                 dict(r)
                 for r in db.execute(
@@ -435,13 +444,22 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     executor_job = db.execute("SELECT report FROM executor_jobs WHERE request_id=?", (latest_job["id"],)).fetchone()
                     if executor_job:
                         latest_job["launch_progress"] = launch_progress(json.loads(executor_job[0]), device.get("prime_network"))
-            return {
+            mark("activity_and_job")
+            streams = self.stream_summaries(db)
+            mark("streams")
+            teams = self.db.teams(db)
+            mark("teams")
+            queue = self.entitlement_queue(db, device, items)
+            mark("entitlements")
+            preview = self.planning_preview(db, device, items)
+            mark("preview")
+            result = {
                 "shared_plan": len(self.root.runtimes) > 1,
-                "streams": self.stream_summaries(db),
+                "streams": streams,
                 "device": device,
                 "playback_job": latest_job,
                 "status_health": self.status_health(db, items, device_id),
-                "teams": self.db.teams(db),
+                "teams": teams,
                 "team_directory_health": self.db.meta(
                     db,
                     "team_directory_health",
@@ -449,8 +467,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 ),
                 "undo": self.undo_summary(db, device),
                 "events": cards,
-                "entitlement_queue": self.entitlement_queue(db, device, items),
-                "plan_preview": self.planning_preview(db, device, items),
+                "entitlement_queue": queue,
+                "plan_preview": preview,
                 "activity": activity,
                 "health": self.feed_health(db),
                 "meta": {
@@ -466,6 +484,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                     "schema_version": 1,
                 },
             }
+            mark("metadata")
+            return result
 
     def mutate(self, device_id, command_id, revision, payload, apply, *, history=None, prepare=None):
         digest = hashlib.sha256(encode(payload).encode()).hexdigest()

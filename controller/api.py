@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +41,7 @@ from .plex.api import install_plex_api
 from .public import public_overview
 from .screen import ScreenStream, serve_screen
 from .service import Controller
+from .read_timing import read_timing
 
 
 def create_app(settings=None, *, start_workers=True):
@@ -121,11 +123,21 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.middleware("http")
     async def record_unhandled_failure(request, call_next):
+        started = time.monotonic()
         try:
             return await call_next(request)
         except Exception:
             logging.getLogger("controller.api").exception("Unhandled HTTP request failure")
             raise
+        finally:
+            elapsed = time.monotonic() - started
+            if elapsed >= 2:
+                # Include time waiting for the web worker pool, not just SQL or
+                # projection time. Never log query strings, bodies or headers.
+                route = request.scope.get("route")
+                logging.getLogger("controller.api").warning(
+                    "Slow HTTP response: method=%s route=%s seconds=%.3f",
+                    request.method, getattr(route, "path", "unmatched"), elapsed)
 
     @app.post("/api/v1/devices/{device_id}/control")
     async def manual_control(device_id: str, command: ManualControlCommand, request: Request):
@@ -196,7 +208,13 @@ def create_app(settings=None, *, start_workers=True):
     def overview(device_id: str | None = None):
         # This synchronous endpoint runs in FastAPI's thread pool. Render here
         # too, rather than returning a large object for event-loop serialization.
-        return JSONResponse(service.runtime(device_id).overview())
+        runtime = service.runtime(device_id)
+        with read_timing("overview_response", runtime.device_id) as mark:
+            result = runtime.overview()
+            mark("projection")
+            response = JSONResponse(result)
+            mark("json")
+            return response
 
     @app.get("/api/v1/devices")
     def devices():

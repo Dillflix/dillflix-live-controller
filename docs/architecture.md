@@ -27,6 +27,20 @@ still run atomically under the writer lock. Plan cleanup and crossed lifecycle
 time boundaries refresh only affected entries. Single-event entitlement results
 and pinned status checks query their own IDs instead of the full catalogue.
 
+Preparation is scoped to the operation. A blocked playback tick does no catalogue
+projection; an active stream includes peer catalogues only for an idle fleet
+allocation. The read/write fence includes availability and allocation inputs so
+concurrent resume/claim changes rebuild preparation. Completion cleanup that
+opens a new allocation defers it to the next tick instead of projecting under
+the writer. Entitlement preparation reads only unfinished work and denials due
+for rescheduling, for one stream; an in-flight check skips projection entirely.
+This prevents every worker from rebuilding both catalogues on every tick.
+
+Slow overview reads log separate catalogue, cards, activity/job, stream, team,
+entitlement and preview timings. Response logging measures JSON encoding and
+total HTTP time separately, including web-worker queueing. These diagnostics
+contain durations and stage names, never response bodies or credentials.
+
 Teams, job history, configuration export, artwork reads and previews use
 `query_only` snapshots, like the overview. They neither reserve a writer nor
 invoke commit hooks. Feed imports encode snapshots, consolidate teams and compute
