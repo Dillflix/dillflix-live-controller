@@ -383,21 +383,20 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         if self.settings.mode == "demo" or not db.execute("PRAGMA query_only").fetchone()[0]:
             return self.entitlement_views(db, device_id, self._project_items(db, device_id, content_ids=content_ids))
         from .entitlement_store import account_id
-        versions = dict(db.execute("SELECT name,revision FROM planning_versions"))
         device = self.db.device(db, device_id)
-        inputs = encode([
-            sorted(self.pinned_content_ids(db, device_id=device_id)), device["manual_completions"],
-            sorted(device["preferences"]["discovery_leagues"]), self.settings.mode,
-            self.settings.status_ttl, bool(self.executor),
-            sorted(content_ids) if content_ids is not None else None,
-        ])
-        base_key = ("catalogue", versions["contents"], versions["content_status"], inputs)
-        key = ("entitlements", base_key, versions["event_entitlements"], account_id(db, self.root.device_id))
-        def base(now):
-            return self.root.catalogue_cache.read(base_key, lambda: now,
-                lambda at: self._project_items(db, device_id, content_ids=content_ids, at=at))
-        return self.root.catalogue_cache.read(key, lambda: datetime.now(UTC),
-            lambda at: self.entitlement_views(db, device_id, base(at)))
+        pins = self.pinned_content_ids(db, device_id=device_id)
+        scope = (tuple(sorted(device["preferences"]["discovery_leagues"])), self.settings.mode,
+                 self.settings.status_ttl, bool(self.executor), account_id(db, self.root.device_id))
+        params = tuple(sorted(content_ids)) if content_ids is not None else ()
+        where = " WHERE c.id IN (" + ",".join("?" for _ in params) + ")" if params else ""
+        keys = {cid: (cid, revision, scope, cid in pins, device["manual_completions"].get(cid))
+                for cid, revision in db.execute(
+                    "SELECT c.id,v.revision FROM contents c JOIN planning_item_versions v ON v.content_id=c.id"
+                    + where + " ORDER BY c.id", params)}
+        def build(ids, at):
+            return self.entitlement_views(db, device_id,
+                self._project_items(db, device_id, content_ids=ids, at=at))
+        return self.root.catalogue_cache.read(keys, lambda: datetime.now(UTC), build, device_id=device_id)
 
     def _project_items(self, db, device_id=None, *, content_ids=None, at=None):
         device_id = device_id or self.device_id

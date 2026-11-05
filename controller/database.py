@@ -48,7 +48,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 23
+    SCHEMA_VERSION = 24
 
     def __init__(self, path):
         self.path = path
@@ -317,6 +317,23 @@ class Database:
                             AFTER {event} ON {table} BEGIN
                             UPDATE planning_versions SET revision=revision+1 WHERE name='{table}';
                             END""")
+            if version < 24:
+                db.execute("CREATE TABLE IF NOT EXISTS planning_item_versions "
+                           "(content_id TEXT PRIMARY KEY, revision INTEGER NOT NULL)")
+                db.execute("INSERT OR IGNORE INTO planning_item_versions SELECT id,0 FROM contents")
+                for table, column in (("contents", "id"), ("content_status", "content_id"),
+                                      ("event_entitlements", "content_id")):
+                    for event in ("INSERT", "UPDATE", "DELETE"):
+                        aliases = ("NEW",) if event == "INSERT" else ("OLD",) if event == "DELETE" else ("OLD", "NEW")
+                        changes = "\n".join(
+                            "INSERT INTO planning_item_versions(content_id,revision) "
+                            f"SELECT {alias}.{column},1 WHERE "
+                            + (f"OLD.{column}!=NEW.{column}" if event == "UPDATE" and alias == "OLD" else "1")
+                            + " ON CONFLICT(content_id) DO UPDATE SET revision=revision+1;" for alias in aliases)
+                        db.execute(f"""CREATE TRIGGER IF NOT EXISTS planning_item_{table}_{event.lower()}
+                            AFTER {event} ON {table} BEGIN {changes} END""")
+                # Retain tombstones: deleting/reinserting an ID must never reuse
+                # a revision while an older WAL reader still holds its entry.
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
