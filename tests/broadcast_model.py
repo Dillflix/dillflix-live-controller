@@ -41,3 +41,26 @@ class FixtureBroadcastModel:
 
     async def close(self):
         pass
+
+
+class FixtureMatchedEventModel(FixtureBroadcastModel):
+    """Explicit positive identity answer for constrained workflow fixtures."""
+
+    def __init__(self, title, channel=None):
+        self.title, self.channel = title, channel
+
+    async def completion(self, model, messages, schema, **kwargs):
+        if kwargs.get("name") == "broadcast_selection":
+            return await super().completion(model, messages, schema, **kwargs)
+        context = json.loads(messages[1]["content"])
+        assert context["target"]["title"] == self.title
+        item = next(i for i in context["candidates"] if i["title"] == self.title)
+        option = context["allowed_viewing_options"][0]
+        if self.channel:
+            assert option["channel"] == self.channel
+            assert self.channel in json.dumps(item["entitlement_messaging"])
+        return json.dumps(dict(
+            match_status="matched", event_relation="exact_event", content_id=item["content_id"],
+            viewing_option_id=option["id"], reason="Scripted exact event and explicit constraint match",
+            evidence=[{"field": "title", "quote": item["title"]}],
+        ))

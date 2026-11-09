@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from broadcast_model import FixtureMatchedEventModel
 from playback_fixtures import confirm_catalogue_entitlement, payload
 from test_prime_catalogue import saved
 from test_prime_matching import results, tile
@@ -55,6 +56,7 @@ def redzone(now):
 )
 async def test_redzone_uses_catalogue_before_switching(tmp_path, selection, prime_changes, expected):
     controller, workflow = rig(tmp_path)
+    workflow.matcher.model = FixtureMatchedEventModel("NFL RedZone")
     now = datetime.now(UTC)
     broadcast = redzone(now)
     game = payload()["content_snapshot"]
@@ -140,6 +142,7 @@ async def test_redzone_uses_catalogue_before_switching(tmp_path, selection, prim
 @pytest.mark.parametrize("change", ["stale", "withdrawn", "completed"])
 async def test_ready_catalogue_cannot_launch_a_now_ineligible_broadcast(tmp_path, change):
     controller, workflow = rig(tmp_path)
+    workflow.matcher.model = FixtureMatchedEventModel("NFL RedZone")
     broadcast = redzone(datetime.now(UTC))
     original = workflow.player.search
 

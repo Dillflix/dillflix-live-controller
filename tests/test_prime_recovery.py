@@ -340,6 +340,9 @@ async def test_stale_check_cannot_authorize_recovery_after_restart(live_prime):
 
 
 async def test_route_change_bypasses_pause_recheck(live_prime):
+    from broadcast_model import FixtureMatchedEventModel
+    from test_prime_matching import results, tile
+
     controller, workflow, token, before = live_prime
     workflow.player.state = "paused"
     await workflow.monitor(row(workflow, token))
@@ -348,9 +351,16 @@ async def test_route_change_bypasses_pause_recheck(live_prime):
         snapshot = json.loads(
             db.execute("SELECT snapshot FROM contents WHERE id=?", (before["desired"],)).fetchone()[0]
         )
-        snapshot["viewing_options"][0]["channel"] = "New live locator"
+        snapshot["viewing_options"][0]["channel"] = "TSN"
         controller.replace_catalog(db, [snapshot], "teamarr")
         confirm_catalogue_entitlement(db)
+    original = workflow.player.search
+
+    async def search(*args):
+        return {**await original(*args), **results(tile(entitlement_messaging={"message": "Included with TSN"}))}
+
+    workflow.player.search = search
+    workflow.matcher.model = FixtureMatchedEventModel("Jets vs. Lions", channel="TSN")
     controller.stage_playback()
     await finish_check(controller)
     with controller.db.transaction() as db:
