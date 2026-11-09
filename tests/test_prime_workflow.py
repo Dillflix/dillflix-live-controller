@@ -221,6 +221,38 @@ async def test_search_match_play_verify_and_read_only_monitor(tmp_path, lost):
         await cleanup(controller)
 
 
+@pytest.mark.parametrize("wrong_event", [False, True])
+async def test_upgrade_rechecks_retained_identity_before_accepting_matching_native_id(tmp_path, wrong_event):
+    from controller.prime_player.match_context import IDENTITY_CONTRACT
+    from test_prime_matching import Model
+
+    controller, workflow = rig(tmp_path)
+    try:
+        token = await launch(workflow)
+        prime = workflow.store.report(token)["prime_player"]
+        selected = {k: v for k, v in prime["selected"].items() if k != "identity_contract"}
+        catalogue = results(tile("RedZone - Week 9" if wrong_event else "Jets vs. Lions"))
+        workflow.save_workflow(token, selected=selected, catalogue=catalogue)
+        workflow.matcher.model = Model({"match_status": "no_match", "event_relation": "includes_event",
+                                        "content_id": None, "viewing_option_id": None,
+                                        "reason": "Aggregate coverage is not this game", "evidence": []})
+        calls = len(workflow.player.calls)
+        await workflow.monitor(row(workflow, token))
+        report = workflow.store.report(token)
+        assert report["observation"]["verified"] is (not wrong_event)
+        assert report["content_status"].get("effective_state") != "ended"
+        if wrong_event:
+            assert report["observation_status"]["error"]["code"] == "prime_event_identity_unproven"
+            assert workflow.player.calls[calls:] == []  # No device status can validate a wrong mapping.
+        else:
+            assert report["prime_player"]["selected"]["identity_contract"] == IDENTITY_CONTRACT
+            assert [c[0] for c in workflow.player.calls[calls:]] == ["status"]
+            await workflow.monitor(row(workflow, token))
+            assert workflow.matcher.model.calls == []  # Exact labels; no inference or repeated rematch needed.
+    finally:
+        await cleanup(controller)
+
+
 async def test_resolver_refusal_reason_reaches_controller_failure_and_export(tmp_path):
     from controller.executor.integration import IntegratedPlaybackAdapter
     from controller.prime_player.diagnostics import collect

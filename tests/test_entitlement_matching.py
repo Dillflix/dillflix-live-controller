@@ -31,6 +31,7 @@ class IdentityModel:
         uncertain = any(i["content_id"] in self.uncertain for i in context["candidates"])
         return json.dumps({
             "match_status": "matched" if match else "uncertain" if uncertain else "no_match",
+            "event_relation": "exact_event" if match else "uncertain" if uncertain else "different_event",
             "content_id": match["content_id"] if match else None,
             "viewing_option_id": context["allowed_viewing_options"][0]["id"] if match else None,
             "reason": "Scripted event identity decision",

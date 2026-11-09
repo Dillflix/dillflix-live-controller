@@ -44,7 +44,8 @@ async def install_transport(workflow, *, invalid_task=None, entered=None, releas
             "evidence": [{"field": "title", "quote": candidate["title"]}],
         }
         if task == "event_match":
-            choice["viewing_option_id"] = "prime-option"
+            choice["viewing_option_id"] = json.loads(body["messages"][1]["content"])["allowed_viewing_options"][0]["id"]
+            choice["event_relation"] = "exact_event"
         else:
             assert task == "broadcast_selection"
             choice["language"] = "unlabeled"

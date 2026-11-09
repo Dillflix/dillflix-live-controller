@@ -17,6 +17,7 @@ from .client import (
     recovery_message,
     rpc_context,
 )
+from .match_context import IDENTITY_CONTRACT
 from .matching import selection_state
 from .search import choose_search
 
@@ -44,6 +45,7 @@ def signature(device, item):
     return hashlib.sha256(
         json.dumps(
             [
+                IDENTITY_CONTRACT,
                 device["revision"],
                 device["intent_version"],
                 item["content_id"],
@@ -448,6 +450,7 @@ class CatalogueChecks:
             probe = self.db.meta(db, key(request["device_id"]), {})
         if (
             probe.get("state") == "ready"
+            and (probe.get("selected") or {}).get("identity_contract") == IDENTITY_CONTRACT
             and probe.get("launch_intent") == request["intent_version"]
             and probe.get("content_id") == request["content_id"]
             and probe.get("session_id") == session

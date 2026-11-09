@@ -250,6 +250,8 @@ async def test_first_import_checks_once_and_persists_across_restart(tmp_path):
 
 @pytest.mark.parametrize("previous_state", ["complete", "retry"])
 async def test_tennis_end_time_update_requeues_stale_evidence_and_restores_entitlement(tmp_path, previous_state):
+    from broadcast_model import FixtureMatchedEventModel
+
     controller, workflow = rig(tmp_path)
     start = datetime.now(UTC)
     snapshot = {
@@ -262,11 +264,13 @@ async def test_tennis_end_time_update_requeues_stale_evidence_and_restores_entit
             "expected_end_time": None, "decision": "review", "reasons": ["end_time_unknown"],
         }],
     }
+    workflow.matcher.model = FixtureMatchedEventModel(snapshot["title"], channel="DAZN")
     original = workflow.player.search
 
     async def tennis(*args):
         response = await original(*args)
-        return {**response, **results(tile(snapshot["title"], starts_at=start.isoformat()))}
+        return {**response, **results(tile(snapshot["title"], starts_at=start.isoformat(),
+                                         entitlement_messaging={"message": "Included with DAZN"}))}
 
     workflow.player.search = tennis
     try:

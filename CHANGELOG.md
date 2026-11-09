@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased - event matcher context and identity
+
+- Keep executor app routes and scheduling metadata out of both model matching stages.
+  Use opaque viewing-option handles and retain only explicit viewing constraints.
+- Require exact event equivalence; broader aggregate coverage cannot substitute for
+  an individual game merely because it includes that game.
+- Recheck pre-upgrade playback mappings from retained evidence before refreshing
+  verification, and invalidate old prepared catalogue decisions.
+- No database migration or Prime Player update.
+
+
 ## Unreleased - RedZone completion and idle recovery
 
 - Complete rule-based NFL RedZone from explicit final/cancelled results for all

@@ -19,13 +19,15 @@ class MatchingModel(FixtureBroadcastModel):
     async def completion(self, model, messages, schema, **kwargs):
         if kwargs.get("name") == "broadcast_selection":
             return await super().completion(model, messages, schema, **kwargs)
-        candidates = json.loads(messages[1]["content"])["candidates"]
+        context = json.loads(messages[1]["content"])
+        candidates = context["candidates"]
         candidate = next((c for c in candidates if c["title"] == "Jets vs. Lions"), None)
         return json.dumps(
             {
                 "match_status": "matched" if candidate else "no_match",
                 "content_id": candidate["content_id"] if candidate else None,
-                "viewing_option_id": "prime-option" if candidate else None,
+                "viewing_option_id": context["allowed_viewing_options"][0]["id"] if candidate else None,
+                "event_relation": "exact_event" if candidate else "different_event",
                 "reason": "Match the fixture opponents; leave unrelated events alone",
                 "evidence": [{"field": "title", "quote": candidate["title"]}] if candidate else [],
             }
