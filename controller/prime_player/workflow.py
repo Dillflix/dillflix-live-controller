@@ -22,6 +22,7 @@ from ..planner import parse_time
 from .catalogue import SELECTION_HANDOFF_SECONDS, CatalogueChecks
 from .client import PrimePlayerClient, correlated
 from .matching import EventMatcher, selection_state, unavailable_live_trial
+from .match_context import IDENTITY_CONTRACT
 from .network import NetworkAcquisition
 from .search import choose_search
 
@@ -368,6 +369,9 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         if not selected:
             await self.database_call(self.complete_search, token, selection_state(selected, audit), error=audit.get("error"))
             return False
+        if selected.get("identity_contract") != IDENTITY_CONTRACT:
+            # Prepared pre-upgrade decisions must be reacquired under the new contract.
+            raise ExecutorError("prime_event_identity_unproven", "Catalogue identity requires revalidation")
         if selected["readiness"] != "ready":
             await self.database_call(self.complete_search, token, selected["readiness"], selected)
             return False
@@ -442,9 +446,10 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         while True:
             def check_navigation():
                 with self.db.snapshot() as db:
-                    self.store.allowed(db, token, navigation=True)
-            await self.database_call(check_navigation)
+                    return json.loads(self.store.allowed(db, token, navigation=True)["request"])
+            request = await self.database_call(check_navigation)
             workflow = (await self.database_call(self.store.report, token))["prime_player"]
+            await self.revalidate_identity(token, request, workflow)
             try:
                 if workflow.get("network_context_id"):
                     current = await self.check_session(workflow["session_id"], capabilities=("playback_status",))
@@ -801,11 +806,39 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             row["device_id"],
         )
 
+    async def revalidate_identity(self, token, request, workflow):
+        """Recheck old mappings once, using retained evidence without device commands."""
+        selected = workflow.get("selected") or {}
+        if selected.get("identity_contract") == IDENTITY_CONTRACT:
+            return
+        parent_id = selected.get("parent_content_id") or selected.get("content_id")
+        catalogue = workflow.get("catalogue") or {}
+        items = [i for c in catalogue.get("containers", []) for i in c.get("items", [])
+                 if i.get("content_id") == parent_id]
+        def timezone():
+            with self.db.snapshot() as db:
+                self.store.allowed(db, token)
+                return self.db.device(db, request["device_id"])["preferences"]["timezone"]
+        zone = await self.database_call(timezone)
+        async with capture_model_calls_async(
+            lambda evidence: self.save_model_call(token, evidence), recorder=self.model_captures.record,
+            context={"source": "identity_revalidation", "device_id": request["device_id"], "token": token},
+        ):
+            choice, audit = await self.matcher.choose(request, {**catalogue, "containers": [{"items": items}]}, zone)
+        await self.database_call(self.save_workflow, token, identity_revalidation=audit)
+        if not choice or choice["content_id"] != parent_id or choice["viewing_option_id"] != selected.get("viewing_option_id"):
+            raise ExecutorError("prime_event_identity_unproven", "Retained feed does not establish the requested event")
+        selected = {**selected, "identity_contract": IDENTITY_CONTRACT}
+        # save_workflow checks the current token; a delayed result cannot adopt a newer intent.
+        await self.database_call(self.save_workflow, token, selected=selected)
+        workflow["selected"] = selected
+
     @correlated
     async def monitor(self, row):
         token = row["token"]
         try:
             workflow = await self.database_call(lambda: self.store.report(token)["prime_player"])
+            await self.revalidate_identity(token, json.loads(row["request"]), workflow)
             await self.check_session(workflow["session_id"], capabilities=("playback_status",))
             async with self.input_lock:
                 status = await self.player.status(workflow["attempt_id"], self.config.prime_status_timeout)

@@ -423,7 +423,7 @@ async def test_entitlement_filter_precedes_model_and_locked_exact_title_cannot_h
     assert len(model.calls) == 1
     assert [c["content_id"] for c in model.calls[0]["candidates"]] == [entitled_id]
     assert all(
-        c["entitlement_status"] == "ENTITLED" and c["event_state"] == "LIVE"
+        "entitlement_status" not in c and "event_state" not in c
         for c in model.calls[0]["candidates"]
     )
 
@@ -447,7 +447,7 @@ async def test_model_cannot_select_unentitled_id_outside_launch_candidate_pool()
             results(tile(entitlement_status="UNENTITLED"), tile("NYJ @ DET", cid=GTI + "-entitled")),
             "America/Vancouver",
         )
-    assert all(c["entitlement_status"] == "ENTITLED" for c in model.calls[0]["candidates"])
+    assert all("entitlement_status" not in c for c in model.calls[0]["candidates"])
 
 
 async def test_ruled_out_entitled_results_allow_identifying_unentitled_target():
@@ -469,7 +469,7 @@ async def test_ruled_out_entitled_results_allow_identifying_unentitled_target():
     )
     assert selected["readiness"] == "feeds_locked"
     assert len(model.calls) == 1
-    assert all(c["entitlement_status"] == "ENTITLED" for c in model.calls[0]["candidates"])
+    assert all("entitlement_status" not in c for c in model.calls[0]["candidates"])
 
 
 def test_resolution_refusal_reason_reaches_monitoring_without_upcoming_claim(rig):

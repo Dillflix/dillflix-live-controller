@@ -89,6 +89,30 @@ between positively identified equivalent feeds; uncertain identities still absta
 A general catalogue-association API that needs all matching variants would require
 a multi-match output, rather than reusing this single-feed selection contract.
 
+### Matcher context boundary
+
+The model receives a projection of event identity and candidate labels. App names,
+route IDs, route eligibility/reasons, source-provider metadata and scheduling state
+remain in controller code. Permitted options use opaque per-call handles that are
+validated and mapped back to the original route IDs. Explicit channel, language,
+coverage and presentation constraints remain visible; an app route is never a
+subscription-provider constraint. Event matching includes subscription text only
+when a real viewing constraint requires it. Broadcast selection retains textual
+language/provider labels but does not receive readiness/entitlement flags.
+
+A matched decision must declare `event_relation=exact_event`. Coverage that merely
+includes a game (`includes_event`) cannot authorize that game's selection. This
+preserves semantic team aliases and tournament/session matching; it does not use a
+team-name substring blacklist. Classification still depends on the model's
+interpretation of supplied evidence, not on native playback proving event identity.
+
+Selections carry an identity-contract version. Upgrades invalidate old prepared
+catalogue decisions. Existing playback mappings are rechecked once against their
+retained catalogue labels before renewal of playback verification; this is model
+work outside database transactions and sends no device command. A correct retained
+mapping continues monitoring without relaunch. An unproven mapping loses verification
+and enters normal request-scoped recovery; it does not mark the event completed.
+
 ## Persistence and monitoring
 
 The Activity panel shows the latest playback evidence timestamp separately from

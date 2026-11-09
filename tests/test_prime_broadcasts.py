@@ -78,7 +78,7 @@ async def test_captured_nhl_variants_are_sent_to_model_and_english_id_selected()
     assert audit["method"] == "llm"
     assert [i["title"] for i in model.calls[0]["candidates"]] == ["English Broadcast", "French Broadcast"]
     assert all(i["synopsis"] for i in model.calls[0]["candidates"])
-    assert model.calls[0]["permitted_viewing_option"] == {"id": "prime"}
+    assert model.calls[0]["permitted_viewing_option"] == {}
     assert model.calls[0]["parent"]["content_id"] == PARENT
     assert "BEARD_SUPPORTED_CAROUSEL" not in json.dumps(model.calls)
 
@@ -205,13 +205,19 @@ async def test_provider_language_constraints_are_supplied_to_model():
     model = Model(answer(status="uncertain"))
     option = {
         "id": "prime",
+        "app": "prime_video",
+        "basis": "configured_route",
         "channel": "Sportsnet",
         "language": "English",
         "stream_title": "National coverage",
     }
     selected, audit = await choose(response(1), option=option, model=model)
     assert selected is None and audit["match_status"] == "uncertain"
-    assert model.calls[0]["permitted_viewing_option"] == option
+    assert model.calls[0]["permitted_viewing_option"] == {
+        "channel": "Sportsnet", "language": "English", "stream_title": "National coverage",
+    }
+    assert "prime_video" not in json.dumps(model.calls[0])
+    assert "configured_route" not in json.dumps(model.calls[0])
 
 
 @pytest.mark.parametrize(
@@ -347,8 +353,8 @@ async def test_unavailable_child_does_not_hide_available_alternative():
     selected, _ = await choose(value, model=model)
     assert selected["content_id"] == ENGLISH and selected["readiness"] == "ready"
     blocked = model.calls[0]["candidates"][0]
-    assert blocked["entitlement_status"] == "ENTITLED" and blocked["event_state"] == "LIVE"
-    assert blocked["availability_status"] == "UNAVAILABLE"
+    assert not {"entitlement_status", "event_state", "availability_status", "readiness"} & blocked.keys()
+    assert blocked["entitlement_messaging"]["TITLE_METADATA_BADGE_SLOT"]["message"] == "UNAVAILABLE"
     assert model.calls[0]["selectable_content_ids"] == [ENGLISH]
     with pytest.raises(ExecutorError, match="selected_id_not_in_readiness_group"):
         await choose(value, model=Model(answer(parse(value)[0][0], "en")))

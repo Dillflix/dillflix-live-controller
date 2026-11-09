@@ -45,9 +45,11 @@ class Model:
 
     async def completion(self, model, messages, schema, **kwargs):
         self.calls.append(json.loads(messages[1]["content"]))
-        return json.dumps(
-            {"match_status": "matched" if self.value.get("content_id") else "uncertain", **self.value}
-        )
+        value = {"match_status": "matched" if self.value.get("content_id") else "uncertain",
+                 "event_relation": "exact_event" if self.value.get("content_id") else "uncertain", **self.value}
+        if value.get("viewing_option_id") == "prime-option":
+            value["viewing_option_id"] = self.calls[-1]["allowed_viewing_options"][0]["id"]
+        return json.dumps(value)
 
     async def close(self):
         pass
@@ -187,7 +189,8 @@ async def test_rich_catalogue_fields_and_field_attributed_synopsis_evidence():
     candidate = model.calls[0]["candidates"][0]
     assert candidate["synopsis"] == description
     assert candidate["titles"] == ["Sunday football"]
-    assert candidate["entitlement_messaging"]["message"].endswith("DAZN subscription")
+    assert "entitlement_messaging" not in candidate
+    assert audit["candidates"][0]["entitlement_messaging"]["message"].endswith("DAZN subscription")
     assert "labels" not in candidate and "handle" not in candidate and "action" not in candidate
     assert audit["evidence"] == [{"field": "synopsis", "quote": description}]
 

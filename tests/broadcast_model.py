@@ -21,6 +21,7 @@ class FixtureBroadcastModel:
             return json.dumps(
                 dict(
                     match_status="uncertain",
+                    event_relation="uncertain",
                     content_id=None,
                     viewing_option_id=None,
                     reason="Unscripted event",
