@@ -80,6 +80,10 @@ availability, source evidence and actual receipt-based observations still
 invalidate their entries. No-op updates do not advance planning generations.
 
 The cache retains only the newest revision of each event/scope/pin variant.
+Source snapshots are stored separately from presentation fields within each
+entry. Admin/public overviews decode only the presentation fields instead of
+decoding and immediately discarding every complete source record. Execution,
+matching and planning still receive the complete unmodified snapshots.
 Concurrent older WAL readers can still compute and return their snapshot's
 correct value without replacing the newer cached revision. Memory remains
 bounded. Exhausted optimistic preparation raises `PreparationChanged`, not a

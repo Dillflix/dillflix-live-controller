@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class Entry:
     value: bytes
+    snapshot: bytes | None
     created_at: datetime
     expires_at: datetime | None
     size: int
@@ -27,8 +28,11 @@ class Entry:
 def entry_for(key, item, now):
     boundaries = (item["start_time"], item["lifecycle"].get("effective_valid_until"))
     expiry = min((at for value in boundaries if (at := parse_time(value)) and at > now), default=None)
-    wire = json.dumps(item, ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode("ascii")
-    return Entry(wire, now, expiry, len(wire) + len(repr(key).encode()) + 512)
+    wire = json.dumps({k: v for k, v in item.items() if k != "snapshot"},
+                      ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+    snapshot = json.dumps(item["snapshot"], ensure_ascii=True, separators=(",", ":"),
+                          allow_nan=False).encode("ascii") if "snapshot" in item else None
+    return Entry(wire, snapshot, now, expiry, len(wire) + len(snapshot or b"") + len(repr(key).encode()) + 512)
 
 
 class CatalogueCache:
@@ -51,7 +55,7 @@ class CatalogueCache:
         if family is not None and self.families.get(family, (None, None))[1] == key:
             self.families.pop(family)
 
-    def read(self, keys, clock, build, *, device_id=None, families=None):
+    def read(self, keys, clock, build, *, device_id=None, families=None, include_snapshot=True):
         """Return independent items in input order; batch only missing IDs.
 
         keys maps content IDs to immutable snapshot/intent identities. No SQL,
@@ -122,7 +126,11 @@ class CatalogueCache:
         waited = time.monotonic()
         # Share immutable event bytes across streams, but return independent
         # caller objects without retaining entire catalogue variants.
-        result = json.loads(b"[" + b",".join(ready[cid].value for cid in keys) + b"]")
+        def wire(entry):
+            if include_snapshot and entry.snapshot is not None:
+                return entry.value[:-1] + b',"snapshot":' + entry.snapshot + b"}"
+            return entry.value
+        result = json.loads(b"[" + b",".join(wire(ready[cid]) for cid in keys) + b"]")
         finished = time.monotonic()
         if finished - started >= 1:
             log.warning("Slow catalogue cache: device=%s seconds=%.3f hits=%d built=%d waited=%d "

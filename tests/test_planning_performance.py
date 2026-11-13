@@ -110,6 +110,26 @@ def test_new_revision_does_not_retain_all_obsolete_catalogues(catalogue):
     assert len(service.catalogue_cache.families) == len(current)
 
 
+def test_overview_does_not_decode_full_sources_but_execution_keeps_them(catalogue, monkeypatch):
+    service, client, _ = catalogue
+    entries = snapshots(service)
+    for entry in entries:
+        entry["retained_source_only"] = {"payload": "source-sentinel-" * 10000}
+    publish(service, entries)
+    complete = read(service)
+    original = json.loads
+    def compact(value, *args, **kwargs):
+        assert "source-sentinel-" not in (value.decode() if isinstance(value, bytes) else value)
+        return original(value, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(json, "loads", compact)
+        with service.db.snapshot() as db:
+            assert service.presentation_items(db) == [
+                {k: v for k, v in item.items() if k != "snapshot"} for item in complete]
+        assert client.get("/api/v1/overview").status_code == 200
+    assert read(service) == complete
+
+
 def test_repeated_real_input_changes_abort_without_claiming_sqlite_lock_failure(tmp_path, monkeypatch, caplog):
     db = Database(str(tmp_path / "preparation.sqlite"))
     notifications = Mock()
