@@ -177,7 +177,7 @@ export function RemoteControls({
       }
       setSending(false);
       setConnection("disconnected");
-      void onChangeRef.current();
+      void onChangeRef.current().catch(error => setError((error as Error).message));
     };
     return () => {
       disposed = true;
@@ -241,9 +241,13 @@ export function RemoteControls({
     const ws = socket.current;
     if (!ready || !ws || ws.readyState !== WebSocket.OPEN)
       return;
-    if (pending.current || queueTimer.current) {
-      if ("key" in value && queued.current.length < 8) queued.current.push({ key: value.key, at: performance.now() });
-      else setConnectionDetail("Remote is busy; wait for the current input before trying again.");
+    const delay = 125 - (performance.now() - lastSent.current);
+    if (pending.current || queueTimer.current || delay > 0) {
+      if ("key" in value && queued.current.length < 8) {
+        queued.current.push({ key: value.key, at: performance.now() });
+        if (!pending.current && !queueTimer.current)
+          queueTimer.current = setTimeout(() => flushQueue.current(), Math.max(1, delay));
+      } else setConnectionDetail("Remote is busy; wait for the current input before trying again.");
       return;
     }
     const id = ++seq.current;
