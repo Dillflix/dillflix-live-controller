@@ -447,6 +447,9 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
           events: current.events.map(event => ({ ...event, watch_entry_id: entries.get(event.content_id) || null })),
           meta: { ...current.meta, server_time: next.server_time } };
       });
+    } catch (error) {
+      if (mounted.current && serial === fetchVersion.current)
+        setError(previous => previous || (error as Error).message);
     } finally {
       if (serial === fetchVersion.current) {
         interactionPending.current = false;
