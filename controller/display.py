@@ -149,13 +149,16 @@ def display_view(service, device_id):
     with service.db.snapshot() as db:
         now = datetime.now(UTC)
         device = service.db.device(db, device_id)
-        items = service.items(db, device_id)
+        items = service.presentation_items(db, device_id)
         planned = {entry["content_id"]: i for i, entry in enumerate(ordered_plan(device))}
         indexed = {item["content_id"]: item for item in items}
 
+        cards = {}
         def card(content_id):
             item = indexed.get(content_id)
-            return display_event(item, device, planned) if item else None
+            if item and content_id not in cards:
+                cards[content_id] = display_event(service.with_source(db, item), device, planned)
+            return cards.get(content_id)
 
         clock = service.now(db)
         eligible = [item for item in items if (
@@ -205,7 +208,7 @@ def display_view(service, device_id):
             generated_at=now.isoformat(),
             timezone=device["preferences"]["timezone"],
             playback=next(stream.playback for stream in streams if stream.device_id == device_id),
-            events=[display_event(item, device, planned) for item in eligible],
+            events=[card(item["content_id"]) for item in eligible],
             schedule=DisplaySchedule(
                 state=schedule_state,
                 observed_at=observed.isoformat() if observed else None,

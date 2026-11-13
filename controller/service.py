@@ -175,7 +175,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
 
     def planning_items(self, db, device_id=None):
         """All streams read the account's shared subscription catalogue."""
-        return self.items(db, device_id or self.device_id)
+        return self.items(db, device_id or self.device_id, include_snapshot=False)
 
     def presentation_items(self, db, device_id=None):
         """Cards/queue/previews do not consume the complete playback source."""
@@ -340,24 +340,34 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         return ([tuple(row) for row in db.execute("SELECT name,revision FROM planning_versions ORDER BY name")],
                 devices, self.db.meta(db, "demo_now"), self.db.meta(db, "entitlement_account"))
 
-    def prepare_planning(self, db, *, device_ids=None, content_ids=None):
+    def prepare_planning(self, db, *, device_ids=None, content_ids=None, include_snapshot=True):
         """Build only the catalogues needed by this operation, outside the writer."""
         prepared = {}
         for device_id in self.root.runtimes if device_ids is None else device_ids:
             runtime = self.root.runtimes[device_id]
             at = datetime.now(UTC)
             prepared[device_id] = {
-                "items": runtime._items(db, device_id, content_ids=content_ids),
+                "items": runtime._items(db, device_id, content_ids=content_ids, include_snapshot=include_snapshot),
                 "pins": self.pinned_content_ids(db, device_id=device_id),
                 "device": self.db.device(db, device_id), "at": at,
             }
         return prepared
 
-    def items(self, db, device_id=None, *, content_ids=None):
+    @staticmethod
+    def with_source(db, item):
+        """Hydrate one chosen event from the same fenced transaction/snapshot."""
+        if "snapshot" in item:
+            return item
+        row = db.execute("SELECT snapshot FROM contents WHERE id=?", (item["content_id"],)).fetchone()
+        if row is None:
+            raise RuntimeError("Selected catalogue event disappeared inside its snapshot")
+        return {**item, "snapshot": json.loads(row[0])}
+
+    def items(self, db, device_id=None, *, content_ids=None, include_snapshot=True):
         device_id = device_id or self.device_id
         prepared = getattr(db, "prepared", {}).get(device_id)
         if not prepared:
-            return self._items(db, device_id, content_ids=content_ids)
+            return self._items(db, device_id, content_ids=content_ids, include_snapshot=include_snapshot)
         device = self.db.device(db, device_id)
         pins = self.pinned_content_ids(db, device_id=device_id)
         changed = pins ^ prepared["pins"]
@@ -376,9 +386,12 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             if (until and prepared["at"] < until <= now) or (start and prepared["at"] < start <= now):
                 changed.add(item["content_id"])
         if changed:
-            replacements = {i["content_id"]: i for i in self._items(db, device_id, content_ids=changed)}
+            replacements = {i["content_id"]: i for i in self._items(
+                db, device_id, content_ids=changed, include_snapshot=include_snapshot)}
             selected = [replacements.get(i["content_id"], i) for i in selected]
-        return selected
+        if include_snapshot:
+            return [self.with_source(db, item) for item in selected]
+        return [{k: v for k, v in item.items() if k != "snapshot"} for item in selected]
 
     def _items(self, db, device_id=None, *, content_ids=None, include_snapshot=True):
         device_id = device_id or self.device_id

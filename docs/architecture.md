@@ -92,6 +92,16 @@ queue state; HTTP commands return a retryable 503 before any mutation executes.
 Actual SQLite lock errors retain their holder diagnostics. Rollback from schema
 25 to an older image requires the pre-upgrade database backup.
 
+Playback and entitlement preparation now retain compact planning projections as
+well. Ranking, allocation and report validation do not decode every provider
+snapshot on each tick. After selection, the complete source is loaded for only
+that event from the same fenced write transaction. Catalogue/route preparation
+and the durable playback request still receive the original, unmodified source.
+Explicit full-item callers retain their previous contract. The display endpoint
+also ranks compact projections and hydrates only its bounded visible cards;
+away/home detail and score positions are preserved. All reads still apply current
+intent, ownership and lifecycle boundaries; this is not a timed response cache.
+
 Teams, job history, configuration export, artwork reads and previews use
 `query_only` snapshots, like the overview. They neither reserve a writer nor
 invoke commit hooks. Feed imports encode snapshots, consolidate teams and compute

@@ -196,7 +196,7 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
         # N choices per stream suffice: at most N-1 other idle streams can
         # occupy earlier choices. Keep choose's local access/retry/policy rules.
         for key, other in idle.items():
-            local = items if key == device["id"] else runtimes[key].items(db, key)
+            local = items if key == device["id"] else runtimes[key].planning_items(db, key)
             remaining = [item for item in local if item["content_id"] not in occupied]
             options = candidates[key] = {}
             for _ in range(len(idle)):
