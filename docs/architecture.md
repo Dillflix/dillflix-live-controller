@@ -677,3 +677,34 @@ The original signature and network scope are retained for diagnostics. A context
 read invalidates the result, as do existing intent/revision/route/snapshot fences.
 
 Executor operations retain `phase_started_at` across repeated updates of the same phase. Overview projects stored phases and player startup progress without device RPCs. The playback banner distinguishes search, feed selection, broadcast lookup, network switching, Prime initialization and live verification, with elapsed time for the current phase. Activity records phase changes instead of describing every navigating phase as verification.
+
+
+### Interactive latency
+
+Watch-plan Add prepares the selected event's compact projection on the selected
+runtime. Remove/reorder do not prepare a catalogue; Play now retains the compact
+candidate set needed for selection. Preview loads the plan plus the proposed
+entry once. Source snapshots remain complete when actual playback is staged.
+
+State, rules, activity, watch-plan and event reads avoid unrelated overview work.
+After an edit, the admin UI reads a focused interaction state (device, undo and
+plan preview), then refreshes the broad overview in the background. Public edits
+use a separate allowlisted state response. Pre-edit overview reads are invalidated
+and older revisions cannot overwrite acknowledged edits. Device/player progress
+is still obtained through normal retained-state refreshes.
+
+Manual ownership checks use query-only snapshots, including the check immediately
+before input dispatch after acquiring the executor's input lock. Takeover,
+expiry, cancellation acknowledgement and sequence fencing remain required.
+A ready remote reconnect reuses its existing player receipt; the initial wake is
+validated by the player and invalidates that receipt on failure. User inputs have
+a ten-second RPC budget and twelve-second browser acknowledgement deadline. The
+player's existing ADB input subprocess retains its eight-second bound. Brief key
+bursts are queued locally (at most eight, one-second lifetime, 125ms drain spacing),
+never replayed after uncertain delivery or reconnection. Expired queued keys are
+discarded with visible feedback.
+
+Slow transactions report preparation, writer wait, body, commit-hook and commit
+times separately. Slow input delivery is logged without key/text or credentials.
+These separate application overhead from physical device/network latency; passing
+unit/browser checks does not establish latency on production Fire TV hardware.

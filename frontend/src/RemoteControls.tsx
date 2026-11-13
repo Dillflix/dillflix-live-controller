@@ -77,6 +77,9 @@ export function RemoteControls({
   } | null>(null);
   const seq = useRef(0),
     lastSent = useRef(0);
+  const queued = useRef<{ key: string; at: number }[]>([]);
+  const queueTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushQueue = useRef<() => void>(() => {});
   const remote = useRef<HTMLDivElement>(null);
   const session = device.manual_control;
   const offset = useMemo(
@@ -147,6 +150,7 @@ export function RemoteControls({
         if (pending.current.text) setText("");
         pending.current = null;
         setSending(false);
+        if (queued.current.length) queueTimer.current = setTimeout(() => flushQueue.current(), 125);
       } else if (message.type === "error") {
         setConnectionDetail(message.message);
         ws.close();
@@ -154,6 +158,9 @@ export function RemoteControls({
     };
     ws.onclose = () => {
       clearTimeout(timer);
+      queued.current = [];
+      if (queueTimer.current) clearTimeout(queueTimer.current);
+      queueTimer.current = null;
       if (disposed) return;
       if (pending.current) {
         clearTimeout(pending.current.timeout);
@@ -170,12 +177,15 @@ export function RemoteControls({
       }
       setSending(false);
       setConnection("disconnected");
-      void onChangeRef.current();
+      void onChangeRef.current().catch(error => setError((error as Error).message));
     };
     return () => {
       disposed = true;
       clearTimeout(timer);
       if (pending.current) clearTimeout(pending.current.timeout);
+      queued.current = [];
+      if (queueTimer.current) clearTimeout(queueTimer.current);
+      queueTimer.current = null;
       pending.current = null;
       setSending(false);
       socket.current = null;
@@ -195,8 +205,9 @@ export function RemoteControls({
       setError((e as Error).message);
       if (!(e instanceof ApiError)) setRetry(change);
     } finally {
-      await onChange();
-      setBusy(false);
+      try { await onChange(); }
+      catch (error) { setError((error as Error).message); }
+      finally { setBusy(false); }
     }
   }
   function change(
@@ -228,8 +239,17 @@ export function RemoteControls({
   }
   function send(value: { key: string } | { text: string }) {
     const ws = socket.current;
-    if (!ready || !ws || ws.readyState !== WebSocket.OPEN || pending.current)
+    if (!ready || !ws || ws.readyState !== WebSocket.OPEN)
       return;
+    const delay = 125 - (performance.now() - lastSent.current);
+    if (pending.current || queueTimer.current || ("key" in value && delay > 0)) {
+      if ("key" in value && queued.current.length < 8) {
+        queued.current.push({ key: value.key, at: performance.now() });
+        if (!pending.current && !queueTimer.current)
+          queueTimer.current = setTimeout(() => flushQueue.current(), Math.max(1, delay));
+      } else setConnectionDetail("Remote is busy; wait for the current input before trying again.");
+      return;
+    }
     const id = ++seq.current;
     lastSent.current = performance.now();
     setSending(true);
@@ -242,10 +262,19 @@ export function RemoteControls({
         );
         setConnection("disconnected");
         ws.close();
-      }, 3000),
+      }, 12000),
     };
     ws.send(JSON.stringify({ seq: id, ...value }));
   }
+  flushQueue.current = () => {
+    queueTimer.current = null;
+    let next = queued.current.shift();
+    while (next && performance.now() - next.at > 1000) {
+      setConnectionDetail("Remote was slow; old queued presses were discarded.");
+      next = queued.current.shift();
+    }
+    if (next) send({ key: next.key });
+  };
   function keyButton(
     key: string,
     label: string,

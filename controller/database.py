@@ -400,6 +400,9 @@ class Database:
 
     @contextmanager
     def connection_transaction(self, *, prepare=None, version=None):
+        started = time.monotonic()
+        preparation_seconds = writer_wait_seconds = 0.0
+        preparation_attempts = 0
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None, factory=TransactionConnection)
         writer = None
         try:
@@ -415,13 +418,18 @@ class Database:
                 deadline = time.monotonic() + 10
                 read_version = version or (lambda connection: connection.execute("PRAGMA data_version").fetchone()[0])
                 while True:
+                    preparing = time.monotonic()
                     db.execute("PRAGMA query_only=ON")
                     db.execute("BEGIN")
                     prepared_version = read_version(db)
                     prepared = prepare(db)
                     db.rollback()
                     db.execute("PRAGMA query_only=OFF")
+                    preparation_seconds += time.monotonic() - preparing
+                    preparation_attempts += 1
+                    waiting = time.monotonic()
                     db.execute("BEGIN IMMEDIATE")
+                    writer_wait_seconds += time.monotonic() - waiting
                     if read_version(db) == prepared_version:
                         db.prepared = prepared
                         break
@@ -429,16 +437,29 @@ class Database:
                     if time.monotonic() >= deadline:
                         raise PreparationChanged("Planning inputs changed throughout the preparation budget")
             else:
+                waiting = time.monotonic()
                 db.execute("BEGIN IMMEDIATE")
+                writer_wait_seconds += time.monotonic() - waiting
             writer = {"thread_id": threading.get_ident(), "started": time.monotonic(),
                       "phase": "transaction", "caller": stack_locations(sys._getframe(1))}
             with self._writer_lock:
                 self._writer = writer
             yield db
+            body_done = time.monotonic()
             writer["phase"] = "before_commit"
             notify = bool(self.before_commit(db)) if db.total_changes and self.before_commit else False
+            hooks_done = time.monotonic()
             writer["phase"] = "commit"
             db.commit()
+            committed = time.monotonic()
+            if committed - started >= 0.25:
+                log.warning("Transaction timings: %s", encode({
+                    "caller": writer["caller"], "preparation_seconds": round(preparation_seconds, 3),
+                    "preparation_attempts": preparation_attempts, "writer_wait_seconds": round(writer_wait_seconds, 3),
+                    "body_seconds": round(body_done - writer["started"], 3),
+                    "hooks_seconds": round(hooks_done - body_done, 3),
+                    "commit_seconds": round(committed - hooks_done, 3),
+                }))
             self._finish_writer(writer)
             writer = None
             for callback in getattr(db, "commit_callbacks", ()):
