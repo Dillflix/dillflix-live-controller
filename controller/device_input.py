@@ -303,15 +303,25 @@ class DeviceInput:
 
     async def send_locked(self, source, packet, device_id, attach):
         """Caller holds the manual gate, including for the initial wake command."""
+        started = time.monotonic()
+        async def deliver():
+            acquired = time.monotonic()
+            await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
+            authorized = time.monotonic()
+            try:
+                await source.send(packet)
+            finally:
+                finished = time.monotonic()
+                if finished - started >= 0.25:
+                    log.warning("Manual input stages: device=%s lock_seconds=%.3f authorization_seconds=%.3f transport_seconds=%.3f",
+                                device_id, acquired - started, authorized - acquired, finished - authorized)
         if not self.connection or self.connection[0] is not asyncio.current_task():
             raise HTTPException(409, "Input ownership changed.")
         if self.service.executor:
             async with self.service.executor.input_lock:
-                await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
-                await source.send(packet)
+                await deliver()
         else:
-            await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
-            await source.send(packet)
+            await deliver()
 
     async def run(self, websocket, device_id, attach):
         source = (

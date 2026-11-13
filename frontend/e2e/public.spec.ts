@@ -66,6 +66,7 @@ function fixture() {
     ],
   };
   return {
+    device_id: "living-room",
     revision: 5,
     viewer: { name: "sportsfan", guest: false },
     timezone: "America/Vancouver",
@@ -92,6 +93,28 @@ function fixture() {
     ],
   };
 }
+
+test("adding an event updates the plan without waiting for a full overview", async ({ page }) => {
+  const data = fixture();
+  await page.route("**/api/public/v1/overview", route => route.fulfill({ json: data }));
+  await page.route("**/api/public/v1/interaction-state", route => route.fulfill({ json: {
+    device_id: data.device_id, revision: data.revision,
+    planned: data.events.filter(event => event.planned).map(event => event.content_id),
+    permissions: data.permissions,
+  } }));
+  await page.route("**/api/public/v1/watch-plan", route => {
+    data.revision++;
+    data.events[0].planned = true;
+    return route.fulfill({ json: { accepted: true, revision: data.revision } });
+  });
+  await page.goto("/public/");
+  const card = page.getByTestId("event-public:live");
+  await expect(card).toBeVisible();
+  await page.route("**/api/public/v1/overview", route => route.abort());
+  await card.getByRole("button", { name: "Add to plan" }).click();
+  await expect(card).toContainText("In watch plan", { timeout: 2000 });
+  await expect(card.getByRole("button", { name: "Play now" })).toBeEnabled();
+});
 
 test("a slow overview survives polling without overlapping requests", async ({ page }) => {
   await page.clock.install();

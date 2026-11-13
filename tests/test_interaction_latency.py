@@ -87,3 +87,28 @@ def test_events_read_skips_teams_and_queue(rig, monkeypatch):
     monkeypatch.setattr(service, "entitlement_queue", forbidden)
     actual = client.get("/api/v1/events").json()
     assert actual["items"] == expected["items"]
+
+
+def test_add_work_does_not_scale_with_three_thousand_source_snapshots(rig, monkeypatch):
+    import json
+    client, service, _ = rig
+    with service.db.snapshot() as db:
+        entries = [json.loads(row[0]) for row in db.execute("SELECT snapshot FROM contents")]
+    template = entries[0]
+    entries.extend({**template, "id": f"bulk-{i}", "opaque_source": "provider-record-" * 1000}
+                   for i in range(3000 - len(entries)))
+    prepared = service.prepare_catalog(entries)
+    with service.db.transaction() as db:
+        service.replace_catalog(db, entries, "teamarr", prepared=prepared)
+    seen = []
+    original = service._project_items
+    def project(*args, **kwargs):
+        seen.append(kwargs.get("content_ids"))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(service, "_project_items", project)
+    revision = client.get("/api/v1/devices/living-room/state").json()["revision"]
+    response = client.post("/api/v1/devices/living-room/watch-plan", json={
+        "command_id": str(uuid4()), "expected_revision": revision,
+        "action": {"type": "add", "content_id": "demo:jays"}})
+    assert response.status_code == 200, response.text
+    assert seen and all(ids == {"demo:jays"} for ids in seen)

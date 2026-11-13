@@ -437,7 +437,8 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
     reader.abort();
     try {
       const next = await api<Pick<Overview, "device" | "undo" | "plan_preview"> & { server_time: string }>(
-        `/devices/${encodeURIComponent(loadedDeviceId.current)}/interaction-state`);
+        `/devices/${encodeURIComponent(loadedDeviceId.current)}/interaction-state`,
+        undefined, undefined, AbortSignal.timeout(5000));
       if (!mounted.current || serial !== fetchVersion.current) return;
       setData(current => {
         if (!current || current.device.id !== next.device.id || current.device.revision > next.device.revision) return current;

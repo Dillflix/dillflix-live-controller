@@ -32,6 +32,9 @@ function manualFixture() {
     set acknowledge(value: boolean) {
       acknowledge = value;
     },
+    acknowledgeLatest() {
+      latest?.send(JSON.stringify({ type: "sent", seq: inputs.at(-1)?.seq }));
+    },
     async install(page: Page) {
       await screenFixture(page);
       await page.route("**/api/v1/overview", async (route) => {
@@ -211,6 +214,7 @@ test("disconnect never replays input; background tab releases remote but retains
   ).toBeVisible();
   fixture.acknowledge = false;
   await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(
     page.getByText(
       "Input delivery is uncertain. Check the TV before sending it again.",
@@ -305,4 +309,20 @@ test("take control becomes ready without waiting for the overview refresh", asyn
   await expect(page.getByText("Remote connected", { exact: true })).toBeVisible({ timeout: 2000 });
   await page.getByRole("button", { name: "Home", exact: true }).click();
   await expect.poll(() => fixture.inputs.length).toBe(1);
+});
+
+
+test("rapid presses remain ordered until acknowledged", async ({ page }) => {
+  const fixture = manualFixture();
+  await fixture.install(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Take control", exact: true }).click();
+  await expect(page.getByText("Remote connected", { exact: true })).toBeVisible();
+  fixture.acknowledge = false;
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  expect(fixture.inputs.map(input => input.key)).toEqual(["home"]);
+  fixture.acknowledge = true;
+  fixture.acknowledgeLatest();
+  await expect.poll(() => fixture.inputs.map(input => input.key)).toEqual(["home", "back"]);
 });
