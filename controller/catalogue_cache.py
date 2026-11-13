@@ -124,6 +124,7 @@ class CatalogueCache:
                 entry = entry_for(keys[cid], item, now)
             ready[cid] = entry
         waited = time.monotonic()
+        decode_cpu = time.thread_time()
         # Share immutable event bytes across streams, but return independent
         # caller objects without retaining entire catalogue variants.
         def wire(entry):
@@ -134,8 +135,9 @@ class CatalogueCache:
         finished = time.monotonic()
         if finished - started >= 1:
             log.warning("Slow catalogue cache: device=%s seconds=%.3f hits=%d built=%d waited=%d "
-                        "retained_bytes=%d stages=%s", device_id, finished - started, hits, len(owned),
+                        "retained_bytes=%d stages=%s projection=%s decode_cpu=%.3f", device_id, finished - started, hits, len(owned),
                         len(waiting), self.bytes, {"lookup": round(indexed - started, 3),
                         "build": round(constructed - indexed, 3), "wait": round(waited - constructed, 3),
-                        "decode": round(finished - waited, 3)})
+                        "decode": round(finished - waited, 3)},
+                        "full" if include_snapshot else "compact", time.thread_time() - decode_cpu)
         return result

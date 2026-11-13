@@ -370,14 +370,14 @@ class EntitlementChecks:
         if db.execute("SELECT 1 FROM event_entitlements WHERE device_id=? AND state='checking' "
                       "AND (started_at IS NULL OR started_at>=?) LIMIT 1",
                       (scope, time.time() - CHECK_SECONDS - 30)).fetchone():
-            return self.prepare_planning(db, device_ids=(self.device_id,), content_ids=set())
+            return self.prepare_planning(db, device_ids=(self.device_id,), content_ids=set(), include_snapshot=False)
         # Cleanup still covers every queued/retry event, including completion
         # before its retry deadline. Settled positives/history need no projection.
         ids = {row[0] for row in db.execute(
             "SELECT content_id FROM event_entitlements WHERE device_id=? AND "
             "(state IN ('queued','retry','checking') OR "
             "(state='complete' AND status='unentitled' AND manual=0))", (scope,))}
-        return self.prepare_planning(db, device_ids=(self.device_id,), content_ids=ids)
+        return self.prepare_planning(db, device_ids=(self.device_id,), content_ids=ids, include_snapshot=False)
 
     def prepare_entitlement_check(self):
         if not self.executor:
@@ -421,7 +421,7 @@ class EntitlementChecks:
             if db.execute("SELECT 1 FROM event_entitlements WHERE device_id=? AND state='checking' LIMIT 1",
                           (scope,)).fetchone():
                 return
-            items = {i["content_id"]: i for i in self.items(db, device["id"])}
+            items = {i["content_id"]: i for i in self.planning_items(db, device["id"])}
             # Completed denials from older releases must also discover listings
             # added later. Base the deadline on the original check, not restart
             # time; repeated imports must never push it into the future.
@@ -471,7 +471,7 @@ class EntitlementChecks:
                 return
             if not row["manual"] and now < self.db.meta(db, self.entitlement_key("entitlement_dispatch_after"), 0):
                 return
-            item = items[row["content_id"]]
+            item = self.with_source(db, items[row["content_id"]])
         return row, item, device
 
     def entitlement_players(self, db):

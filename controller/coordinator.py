@@ -48,7 +48,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 return {}
         elif not available_stream(self, device["id"], device):
             return {}
-        return self.prepare_planning(db, device_ids=planning_devices(self, db, device))
+        return self.prepare_planning(db, device_ids=planning_devices(self, db, device), include_snapshot=False)
 
     def stage_playback(self):
         real = datetime.now(UTC)
@@ -78,7 +78,7 @@ class PlaybackCoordinator(PlaybackRecovery):
                 # tick also handles allocation changed by completion cleanup;
                 # never rebuild a full catalogue under the writer.
                 return True
-            items = self.items(db, d["id"])
+            items = self.planning_items(db, d["id"])
             indexed = {i["content_id"]: i for i in items}
             now = self.now(db)
             from .fleet import select_for_stream
@@ -168,6 +168,10 @@ class PlaybackCoordinator(PlaybackRecovery):
             # Retaining unknown current playback is not permission to reopen it.
             if target and not indexed[target]["playable"]:
                 needs_request = False
+            if needs_request and target:
+                # Ranking thousands of events needs no source bodies. Only the
+                # chosen request/route needs the complete, unchanged snapshot.
+                indexed[target] = self.with_source(db, indexed[target])
             if needs_request and target and self.executor:
                 preparation = self.executor.prepare_selection(db, d, indexed[target])
                 if preparation["state"] not in {"ready", "network_acquisition_required"}:
@@ -348,7 +352,7 @@ class PlaybackCoordinator(PlaybackRecovery):
             d = self.db.device(db, job["device_id"])
             if d["id"] not in db.prepared:
                 return False
-            items = self.items(db, d["id"])
+            items = self.planning_items(db, d["id"])
             from .fleet import select_for_stream
             decision = select_for_stream(self, db, d, items, self.now(db), datetime.now(UTC), reserve=False)
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)
