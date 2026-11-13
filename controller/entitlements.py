@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .database import encode
+from .database import PreparationChanged, encode
 from .entitlement_store import account_id, identity
 from .executor.models import ExecutorError
 from .model_diagnostics import capture_model_calls_async
@@ -81,7 +81,7 @@ class EntitlementChecks:
         # Deduplication lasts for the catalogue retention window, not forever.
         scope = account_id(db, self.root.device_id)
         records = {r["content_id"]: r for r in db.execute(
-            "SELECT e.content_id,e.state,v.evidence FROM event_entitlements e "
+            "SELECT e.content_id,e.state,v.evidence FROM event_entitlements e INDEXED BY entitlement_summary "
             "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
             "WHERE e.device_id=?", (scope,)
         )}
@@ -124,7 +124,7 @@ class EntitlementChecks:
         params = (device_id, *ids) if len(ids) <= 64 else (device_id,)
         records = {r["content_id"]: r for r in db.execute(
             f"""SELECT e.content_id,e.status,e.state,e.checked_at,e.next_check,v.evidence AS view_evidence
-                FROM event_entitlements e JOIN entitlement_read_models v
+                FROM event_entitlements e INDEXED BY entitlement_summary JOIN entitlement_read_models v
                 ON v.device_id=e.device_id AND v.content_id=e.content_id
                 WHERE e.device_id=? AND e.content_id IN {scope}""", params
         )}
@@ -298,7 +298,7 @@ class EntitlementChecks:
         failures = 0
         for r in db.execute("SELECT e.content_id,e.state,e.failures,e.started_at,e.next_check,e.manual,"
                             "v.evidence AS view_evidence "
-                            "FROM event_entitlements e JOIN contents c ON c.id=e.content_id "
+                            "FROM event_entitlements e INDEXED BY entitlement_summary JOIN contents c ON c.id=e.content_id "
                             "JOIN entitlement_read_models v ON v.device_id=e.device_id AND v.content_id=e.content_id "
                             "WHERE e.device_id=? ORDER BY "
                             "CASE e.state WHEN 'checking' THEN 0 WHEN 'retry' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,"
@@ -709,6 +709,8 @@ class EntitlementChecks:
         while True:
             try:
                 await self.check_entitlement_once()
+            except PreparationChanged:
+                pass  # Keep queue state intact and prepare again on the next pass.
             except Exception as exc:
                 log.exception("Schedule entitlement worker failed")
                 reason = f"Entitlement worker failed: {type(exc).__name__}"

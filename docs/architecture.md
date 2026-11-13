@@ -70,6 +70,24 @@ report hits, built/waited event counts, retained bytes and lookup/build/wait/dec
 times, distinguishing invalidation, contention and copying. These diagnostics
 contain durations and stage names, never response bodies or credentials.
 
+Schema 25 adds a covering entitlement index for routine card, queue and seed
+reads, keeping those scans out of the table containing large retained audit
+bodies. Feed replacement deactivates only missing active rows. Import receipts
+still advance, but unchanged upstream observation timestamps do not invalidate
+event projections or planning preparation: lifecycle freshness continues to use
+the earlier of the receipt and upstream observation. Changed snapshots,
+availability, source evidence and actual receipt-based observations still
+invalidate their entries. No-op updates do not advance planning generations.
+
+The cache retains only the newest revision of each event/scope/pin variant.
+Concurrent older WAL readers can still compute and return their snapshot's
+correct value without replacing the newer cached revision. Memory remains
+bounded. Exhausted optimistic preparation raises `PreparationChanged`, not a
+fabricated SQLite lock error. Workers defer to their next pass without changing
+queue state; HTTP commands return a retryable 503 before any mutation executes.
+Actual SQLite lock errors retain their holder diagnostics. Rollback from schema
+25 to an older image requires the pre-upgrade database backup.
+
 Teams, job history, configuration export, artwork reads and previews use
 `query_only` snapshots, like the overview. They neither reserve a writer nor
 invoke commit hooks. Feed imports encode snapshots, consolidate teams and compute

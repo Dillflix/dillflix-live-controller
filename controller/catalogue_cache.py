@@ -37,11 +37,21 @@ class CatalogueCache:
             raise ValueError("Cache limits must be nonnegative")
         self.max_bytes, self.max_entries = max_bytes, max_entries
         self.entries = OrderedDict()
+        self.families = {}
+        self.entry_families = {}
         self.bytes = 0
         self.building = {}
         self.lock = threading.Lock()
 
-    def read(self, keys, clock, build, *, device_id=None):
+    def discard(self, key):
+        entry = self.entries.pop(key, None)
+        if entry:
+            self.bytes -= entry.size
+        family = self.entry_families.pop(key, None)
+        if family is not None and self.families.get(family, (None, None))[1] == key:
+            self.families.pop(family)
+
+    def read(self, keys, clock, build, *, device_id=None, families=None):
         """Return independent items in input order; batch only missing IDs.
 
         keys maps content IDs to immutable snapshot/intent identities. No SQL,
@@ -53,12 +63,13 @@ class CatalogueCache:
         with self.lock:
             now = clock()
             for cid, key in keys.items():
-                entry = self.entries.pop(key, None)
+                entry = self.entries.get(key)
                 if entry and entry.valid(now):
-                    self.entries[key] = ready[cid] = entry
+                    self.entries.move_to_end(key)
+                    ready[cid] = entry
                     continue
                 if entry:
-                    self.bytes -= entry.size
+                    self.discard(key)
                 future = self.building.get(key)
                 if future is None:
                     future = owned[cid] = self.building[key] = Future()
@@ -75,13 +86,20 @@ class CatalogueCache:
                 with self.lock:
                     for cid, entry in built.items():
                         key = keys[cid]
-                        if entry.size <= self.max_bytes and self.max_entries > 0:
+                        family, revision = families[cid] if families else (None, None)
+                        previous = self.families.get(family)
+                        retain = previous is None or previous[0] <= revision
+                        if retain and previous and previous[1] != key:
+                            self.discard(previous[1])
+                        if retain and entry.size <= self.max_bytes and self.max_entries > 0:
                             self.entries[key] = entry
                             self.bytes += entry.size
+                            if family is not None:
+                                self.families[family] = (revision, key)
+                                self.entry_families[key] = family
                         self.building.pop(key)
                     while self.bytes > self.max_bytes or len(self.entries) > self.max_entries:
-                        _, expired = self.entries.popitem(last=False)
-                        self.bytes -= expired.size
+                        self.discard(next(iter(self.entries)))
                 ready.update(built)
                 for cid, future in owned.items():
                     future.set_result(built[cid])

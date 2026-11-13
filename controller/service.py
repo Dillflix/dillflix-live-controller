@@ -20,7 +20,7 @@ from .content_status import (
     TeamarrContentStatusAdapter,
 )
 from .coordinator import PlaybackCoordinator
-from .database import Database, encode
+from .database import Database, PreparationChanged, encode
 from .entitlements import EntitlementChecks
 from .event_attempts import attempt_status, DEFAULT_ATTEMPT_LIMIT
 from .fixtures import default_device, fixtures, make_team
@@ -295,7 +295,11 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
     def replace_catalog(self, db, entries, source, *, prepared=None):
         fetched = datetime.now(UTC).isoformat()
         encoded, teams, seeds = prepared if prepared is not None else self.prepare_catalog(entries)
-        db.execute("UPDATE contents SET active=0 WHERE source=?", (source,))
+        # A feed refresh is an atomic replacement, not a deactivate/reactivate
+        # cycle for every row. Only missing active entries lose availability.
+        db.execute("UPDATE contents SET active=0 WHERE source=? AND active!=0 "
+                   "AND id NOT IN (SELECT value FROM json_each(?))",
+                   (source, encode([content_id for content_id, _ in encoded])))
         db.executemany(
             "INSERT INTO contents VALUES (?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET "
             "active=1,seen_at=excluded.seen_at,snapshot=excluded.snapshot,source=excluded.source",
@@ -396,7 +400,12 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         def build(ids, at):
             return self.entitlement_views(db, device_id,
                 self._project_items(db, device_id, content_ids=ids, at=at))
-        return self.root.catalogue_cache.read(keys, lambda: datetime.now(UTC), build, device_id=device_id)
+        # Keep the newest committed revision of each stream-independent event
+        # variant. Older WAL readers still get their own correct result, but
+        # must not evict the current working set with obsolete generations.
+        families = {cid: ((cid, *key[2:]), key[1]) for cid, key in keys.items()}
+        return self.root.catalogue_cache.read(keys, lambda: datetime.now(UTC), build,
+                                             device_id=device_id, families=families)
 
     def _project_items(self, db, device_id=None, *, content_ids=None, at=None):
         device_id = device_id or self.device_id
@@ -1111,6 +1120,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         while True:
             try:
                 await self.playback_work(self.tick)
+            except PreparationChanged:
+                pass  # The next tick prepares current inputs; no mutation ran.
             except Exception:
                 log.exception("Controller tick failed; will retry")
             await asyncio.sleep(self.settings.worker_interval)
