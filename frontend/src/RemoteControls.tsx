@@ -242,7 +242,7 @@ export function RemoteControls({
     if (!ready || !ws || ws.readyState !== WebSocket.OPEN)
       return;
     const delay = 125 - (performance.now() - lastSent.current);
-    if (pending.current || queueTimer.current || delay > 0) {
+    if (pending.current || queueTimer.current || ("key" in value && delay > 0)) {
       if ("key" in value && queued.current.length < 8) {
         queued.current.push({ key: value.key, at: performance.now() });
         if (!pending.current && !queueTimer.current)
