@@ -110,7 +110,8 @@ test("adding an event updates the plan without waiting for a full overview", asy
   await page.goto("/public/");
   const card = page.getByTestId("event-public:live");
   await expect(card).toBeVisible();
-  await page.route("**/api/public/v1/overview", route => route.abort());
+  // Keep the refresh pending; an actual connection failure intentionally disables public actions.
+  await page.route("**/api/public/v1/overview", () => {});
   await card.getByRole("button", { name: "Add to plan" }).click();
   await expect(card).toContainText("In watch plan", { timeout: 2000 });
   await expect(card.getByRole("button", { name: "Play now" })).toBeEnabled();
