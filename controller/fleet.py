@@ -11,7 +11,7 @@ from .entitlement_store import identity
 SHARED_FIELDS = ("plan", "rules", "team_ranks", "manual_completions", "public_access")
 
 
-def catalogue_reservation(device, items, real):
+def catalogue_reservation(device, items, real, *, load_source=None):
     """Keep an issued, bounded read assigned while temporary status ages out.
 
     This reserves selection work only. The coordinator still requires current
@@ -30,7 +30,7 @@ def catalogue_reservation(device, items, real):
         and (item["active"] or item["content_id"] in {p["content_id"] for p in device["plan"]})
         and (item["playable"] or item["lifecycle"]["state"] == "unknown")
         and entitlement_eligible(item)
-        and pending.get("identity") == identity(item)
+        and pending.get("identity") == identity(load_source(item) if load_source else item)
     ):
         return item["content_id"]
     return None
@@ -184,7 +184,8 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
     available = [item for item in items if item["content_id"] not in reserved]
     idle = {key: value for key, value in devices.items() if not claims[key] and available_stream(service, key, value)}
     assignments = {}
-    held = catalogue_reservation(device, items, real)
+    held = catalogue_reservation(device, items, real,
+        load_source=lambda item: item if "snapshot" in item else service.with_source(db, item))
     if held and held not in reserved:
         # Do not let one scheduler tick replace a still-running catalogue read
         # with the previously playing event when feed status briefly expires.

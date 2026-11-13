@@ -46,12 +46,12 @@ def test_display_projects_fleet_with_one_catalog_read(fleet, monkeypatch):
     client, service, _ = fleet
     tick_all(service)
     runtime = service.runtime("second-tv")
-    original = runtime.items
+    original = runtime.presentation_items
     calls = []
     def items(db, device_id):
         calls.append(device_id)
         return original(db, device_id)
-    monkeypatch.setattr(runtime, "items", items)
+    monkeypatch.setattr(runtime, "presentation_items", items)
     data = client.get("/api/v1/devices/second-tv/display").json()
     assert calls == ["second-tv"]
     assert data["device_name"] == "Dillflix 2"
@@ -137,9 +137,9 @@ def test_shared_catalogue_does_not_rebuild_other_streams(fleet, monkeypatch, dev
     calls = []
     for key, runtime in service.runtimes.items():
         original = runtime.items
-        def counted(db, selected=None, *, key=key, original=original):
+        def counted(db, selected=None, *, key=key, original=original, **kwargs):
             calls.append(selected or key)
-            return original(db, selected)
+            return original(db, selected, **kwargs)
         monkeypatch.setattr(runtime, "items", counted)
     with service.db.snapshot() as db:
         assert service.runtime(device_id).planning_items(db)
