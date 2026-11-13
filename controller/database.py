@@ -347,6 +347,8 @@ class Database:
                 # seen_at remains the actual import receipt. When the upstream
                 # observation timestamp is unchanged and already precedes both
                 # receipts, it cannot renew lifecycle evidence or its projection.
+                # Conservatively invalidate within one second: SQLite's date
+                # arithmetic is less precise than Python's microsecond clock.
                 changed = {
                     "contents": """OLD.id IS NOT NEW.id OR OLD.source IS NOT NEW.source
                         OR OLD.active IS NOT NEW.active OR OLD.snapshot IS NOT NEW.snapshot
@@ -354,8 +356,8 @@ class Database:
                             (json_extract(NEW.snapshot,'$.status_received_at') IS NULL
                              OR julianday(json_extract(NEW.snapshot,'$.status_received_at')) IS NULL
                              OR julianday(OLD.seen_at) IS NULL OR julianday(NEW.seen_at) IS NULL
-                             OR julianday(OLD.seen_at)<julianday(json_extract(NEW.snapshot,'$.status_received_at'))
-                             OR julianday(NEW.seen_at)<julianday(json_extract(NEW.snapshot,'$.status_received_at'))))""",
+                             OR julianday(OLD.seen_at)<=julianday(json_extract(NEW.snapshot,'$.status_received_at'))+1.0/86400
+                             OR julianday(NEW.seen_at)<=julianday(json_extract(NEW.snapshot,'$.status_received_at'))+1.0/86400))""",
                     "content_status": " OR ".join(f"OLD.{key} IS NOT NEW.{key}" for key in
                         ("content_id", "observation", "error", "last_attempt", "last_success", "next_check")),
                     "event_entitlements": " OR ".join(f"OLD.{key} IS NOT NEW.{key}" for key in

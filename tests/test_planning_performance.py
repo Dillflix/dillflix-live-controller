@@ -29,7 +29,7 @@ def test_reimport_same_upstream_observation_keeps_cache_and_preparation(catalogu
     service, _, clock = catalogue
     entries = snapshots(service)
     for entry in entries:
-        entry["status_received_at"] = NOW.isoformat()
+        entry["status_received_at"] = (NOW - timedelta(seconds=2)).isoformat()
     publish(service, entries)
     original = read(service)
     calls = []
@@ -59,7 +59,7 @@ def test_feed_changes_refresh_only_affected_events(catalogue, monkeypatch, chang
     service, _, clock = catalogue
     entries = snapshots(service)
     for entry in entries:
-        entry["status_received_at"] = NOW.isoformat()
+        entry["status_received_at"] = (NOW - timedelta(seconds=2)).isoformat()
     if change == "receipt_only":
         entries[0].pop("status_received_at")
     publish(service, entries)
