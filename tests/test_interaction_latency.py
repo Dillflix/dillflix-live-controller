@@ -79,7 +79,15 @@ def test_small_reads_skip_overview_and_reference_data(rig, monkeypatch):
 
 
 def test_events_read_skips_teams_and_queue(rig, monkeypatch):
+    from datetime import UTC, datetime
     client, service, _ = rig
+    # Demo observations are intentionally timestamped on every projection.
+    # Hold their clock steady when comparing the two complete responses.
+    observed_at = datetime.now(UTC)
+    project = service._project_items
+    def fixed_projection(*args, **kwargs):
+        return project(*args, **{**kwargs, "at": observed_at})
+    monkeypatch.setattr(service, "_project_items", fixed_projection)
     expected = client.get("/api/v1/events").json()
     def forbidden(*args, **kwargs):
         raise AssertionError("Events read unrelated reference data")
