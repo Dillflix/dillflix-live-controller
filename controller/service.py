@@ -20,7 +20,7 @@ from .content_status import (
     TeamarrContentStatusAdapter,
 )
 from .coordinator import PlaybackCoordinator
-from .database import Database, encode
+from .database import Database, PreparationChanged, encode
 from .entitlements import EntitlementChecks
 from .event_attempts import attempt_status, DEFAULT_ATTEMPT_LIMIT
 from .fixtures import default_device, fixtures, make_team
@@ -177,6 +177,10 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         """All streams read the account's shared subscription catalogue."""
         return self.items(db, device_id or self.device_id)
 
+    def presentation_items(self, db, device_id=None):
+        """Cards/queue/previews do not consume the complete playback source."""
+        return self._items(db, device_id or self.device_id, include_snapshot=False)
+
     def planning_preview(self, db, device, items):
         from .fleet import planning_preview
         return planning_preview(self, db, device, items, self.now(db))
@@ -295,7 +299,11 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
     def replace_catalog(self, db, entries, source, *, prepared=None):
         fetched = datetime.now(UTC).isoformat()
         encoded, teams, seeds = prepared if prepared is not None else self.prepare_catalog(entries)
-        db.execute("UPDATE contents SET active=0 WHERE source=?", (source,))
+        # A feed refresh is an atomic replacement, not a deactivate/reactivate
+        # cycle for every row. Only missing active entries lose availability.
+        db.execute("UPDATE contents SET active=0 WHERE source=? AND active!=0 "
+                   "AND id NOT IN (SELECT value FROM json_each(?))",
+                   (source, encode([content_id for content_id, _ in encoded])))
         db.executemany(
             "INSERT INTO contents VALUES (?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET "
             "active=1,seen_at=excluded.seen_at,snapshot=excluded.snapshot,source=excluded.source",
@@ -372,7 +380,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             selected = [replacements.get(i["content_id"], i) for i in selected]
         return selected
 
-    def _items(self, db, device_id=None, *, content_ids=None):
+    def _items(self, db, device_id=None, *, content_ids=None, include_snapshot=True):
         device_id = device_id or self.device_id
         if content_ids is not None and not content_ids:
             return []
@@ -381,7 +389,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         # Fixture observations intentionally acquire a new simulated timestamp
         # on each read; production observations retain their source timestamps.
         if self.settings.mode == "demo" or not db.execute("PRAGMA query_only").fetchone()[0]:
-            return self.entitlement_views(db, device_id, self._project_items(db, device_id, content_ids=content_ids))
+            items = self.entitlement_views(db, device_id, self._project_items(db, device_id, content_ids=content_ids))
+            return items if include_snapshot else [{k: v for k, v in item.items() if k != "snapshot"} for item in items]
         from .entitlement_store import account_id
         device = self.db.device(db, device_id)
         pins = self.pinned_content_ids(db, device_id=device_id)
@@ -396,7 +405,12 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         def build(ids, at):
             return self.entitlement_views(db, device_id,
                 self._project_items(db, device_id, content_ids=ids, at=at))
-        return self.root.catalogue_cache.read(keys, lambda: datetime.now(UTC), build, device_id=device_id)
+        # Keep the newest committed revision of each stream-independent event
+        # variant. Older WAL readers still get their own correct result, but
+        # must not evict the current working set with obsolete generations.
+        families = {cid: ((cid, *key[2:]), key[1]) for cid, key in keys.items()}
+        return self.root.catalogue_cache.read(keys, lambda: datetime.now(UTC), build,
+                                             device_id=device_id, families=families, include_snapshot=include_snapshot)
 
     def _project_items(self, db, device_id=None, *, content_ids=None, at=None):
         device_id = device_id or self.device_id
@@ -437,7 +451,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         with read_timing("overview", device_id) as mark, self.db.snapshot() as db:
             mark("open_snapshot")
             device = self.db.device(db, device_id)
-            items = self.planning_items(db, device_id)
+            items = self.presentation_items(db, device_id)
             mark("catalogue")
             plan_ids = {p["content_id"] for p in device["plan"]}
             retained = {device.get("desired"), (device.get("observed") or {}).get("content_id")}
@@ -1111,6 +1125,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         while True:
             try:
                 await self.playback_work(self.tick)
+            except PreparationChanged:
+                pass  # The next tick prepares current inputs; no mutation ran.
             except Exception:
                 log.exception("Controller tick failed; will retry")
             await asyncio.sleep(self.settings.worker_interval)

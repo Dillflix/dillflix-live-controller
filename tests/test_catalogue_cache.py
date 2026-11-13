@@ -371,7 +371,7 @@ def test_item_versions_upgrade_and_deletion_never_reuse_revision(catalogue):
         db.execute("PRAGMA user_version=23")
     service.db.initialize(service.db.path)
     with service.db.transaction() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 24
+        assert db.execute("PRAGMA user_version").fetchone()[0] == service.db.SCHEMA_VERSION
         def revision():
             return db.execute("SELECT revision FROM planning_item_versions WHERE content_id=?", (cid,)).fetchone()[0]
         assert revision() == 0

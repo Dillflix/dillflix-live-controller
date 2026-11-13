@@ -17,6 +17,7 @@ from .broadcast_overlay import BroadcastOverlay, broadcast_overlay
 from .config import Settings
 from .current_playback import NowPlaying, current_playback
 from .device_input import DeviceInput, same_origin
+from .database import PreparationChanged
 from .diagnostic_log import LogHandler, Recorder, read_logs
 from .display import DisplayView, display_view
 from .executor.api import install_executor_api
@@ -169,6 +170,11 @@ def create_app(settings=None, *, start_workers=True):
     @app.exception_handler(KeyError)
     async def missing(_request, _error):
         return JSONResponse(status_code=404, content={"detail": "Device or content not found"})
+
+    @app.exception_handler(PreparationChanged)
+    async def planning_changed(_request, _error):
+        return JSONResponse(status_code=503, headers={"Retry-After": "1"},
+                            content={"detail": "Schedule changed while preparing this request; please retry."})
 
     @app.get("/api/health")
     def health():

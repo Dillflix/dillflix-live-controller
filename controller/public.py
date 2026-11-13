@@ -6,7 +6,7 @@ def public_overview(service, actor, device_id=None):
     device_id = service.device_id
     with service.db.snapshot() as db:
         device = service.db.device(db, device_id)
-        items = service.planning_items(db)
+        items = service.presentation_items(db)
         planned = {p["content_id"] for p in device["plan"]}
         observed = device.get("observed") or {}
         current_id = observed.get("content_id")

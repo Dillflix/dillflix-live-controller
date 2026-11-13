@@ -37,6 +37,10 @@ def is_database_busy(error):
     return str(error) in {"database is locked", "database table is locked", "database schema is locked"}
 
 
+class PreparationChanged(RuntimeError):
+    """Planning inputs kept changing; no mutation body has been executed."""
+
+
 class TransactionConnection(sqlite3.Connection):
     """Allow domain code to mark a post-commit wake-up without an early signal."""
 
@@ -48,7 +52,7 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 24
+    SCHEMA_VERSION = 25
 
     def __init__(self, path):
         self.path = path
@@ -334,6 +338,39 @@ class Database:
                             AFTER {event} ON {table} BEGIN {changes} END""")
                 # Retain tombstones: deleting/reinserting an ID must never reuse
                 # a revision while an older WAL reader still holds its entry.
+            if version < 25:
+                # Keep routine queue/card reads on a small covering index. The
+                # table also holds large audit blobs and must not be walked by
+                # every overview or planner just to read scheduling columns.
+                db.execute("CREATE INDEX IF NOT EXISTS entitlement_summary ON event_entitlements "
+                           "(device_id,content_id,state,status,checked_at,next_check,failures,started_at,manual,check_id)")
+                # seen_at remains the actual import receipt. When the upstream
+                # observation timestamp is unchanged and already precedes both
+                # receipts, it cannot renew lifecycle evidence or its projection.
+                # Conservatively invalidate within one second: SQLite's date
+                # arithmetic is less precise than Python's microsecond clock.
+                changed = {
+                    "contents": """OLD.id IS NOT NEW.id OR OLD.source IS NOT NEW.source
+                        OR OLD.active IS NOT NEW.active OR OLD.snapshot IS NOT NEW.snapshot
+                        OR (OLD.seen_at IS NOT NEW.seen_at AND
+                            (json_extract(NEW.snapshot,'$.status_received_at') IS NULL
+                             OR julianday(json_extract(NEW.snapshot,'$.status_received_at')) IS NULL
+                             OR julianday(OLD.seen_at) IS NULL OR julianday(NEW.seen_at) IS NULL
+                             OR julianday(OLD.seen_at)<=julianday(json_extract(NEW.snapshot,'$.status_received_at'))+1.0/86400
+                             OR julianday(NEW.seen_at)<=julianday(json_extract(NEW.snapshot,'$.status_received_at'))+1.0/86400))""",
+                    "content_status": " OR ".join(f"OLD.{key} IS NOT NEW.{key}" for key in
+                        ("content_id", "observation", "error", "last_attempt", "last_success", "next_check")),
+                    "event_entitlements": " OR ".join(f"OLD.{key} IS NOT NEW.{key}" for key in
+                        ("device_id", "content_id", "state", "status", "checked_at", "next_check", "failures",
+                         "started_at", "manual", "check_id", "evidence")),
+                }
+                for table, condition in changed.items():
+                    for name in (f"planning_{table}_update", f"planning_item_{table}_update"):
+                        sql = db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+                                         (name,)).fetchone()[0]
+                        db.execute('DROP TRIGGER "' + name + '"')
+                        prefix, body = sql.split(" BEGIN", 1)
+                        db.execute(prefix.split(" WHEN ", 1)[0] + f" WHEN {condition} BEGIN" + body)
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             db.commit()
         except BaseException:
@@ -390,7 +427,7 @@ class Database:
                         break
                     db.rollback()
                     if time.monotonic() >= deadline:
-                        raise sqlite3.OperationalError("database is locked")
+                        raise PreparationChanged("Planning inputs changed throughout the preparation budget")
             else:
                 db.execute("BEGIN IMMEDIATE")
             writer = {"thread_id": threading.get_ident(), "started": time.monotonic(),
@@ -409,6 +446,8 @@ class Database:
             if notify and self.after_commit:
                 self.after_commit()
         except BaseException as exc:
+            if isinstance(exc, PreparationChanged):
+                log.warning("Planning preparation deferred after concurrent input changes; no mutation executed")
             if is_database_busy(exc):
                 # The blocked caller's traceback alone never identifies the
                 # holder. Capture its current stack while it is still blocked.
