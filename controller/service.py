@@ -457,10 +457,24 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         ]
         return items
 
-    def overview(self, device_id=None):
+    def overview_metadata(self, db):
+        return {
+            "public_auth_mode": self.settings.public_auth_mode,
+            "league_choices": LEAGUE_NAMES,
+            "mode": self.settings.mode,
+            "playback_adapter": self.settings.executor.mode,
+            "playback_monitor_interval_seconds": self.settings.executor.monitor_interval if self.executor else None,
+            "status_simulated": self.executor is None,
+            "now": self.now(db).isoformat(),
+            "server_time": datetime.now(UTC).isoformat(),
+            "scenario": self.db.meta(db, "scenario"),
+            "schema_version": 1,
+        }
+
+    def overview(self, device_id=None, *, events_only=False):
         device_id = device_id or self.device_id
         if device_id != self.device_id:
-            return self.runtime(device_id).overview()
+            return self.runtime(device_id).overview(events_only=events_only)
         with read_timing("overview", device_id) as mark, self.db.snapshot() as db:
             mark("open_snapshot")
             device = self.db.device(db, device_id)
@@ -482,6 +496,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 cards.append(card)
             cards.sort(key=lambda c: (c["start_time"], c["content_id"]))
             mark("cards")
+            if events_only:
+                return {"events": cards, "meta": self.overview_metadata(db),
+                        "health": self.feed_health(db), "status_health": self.status_health(db, items, device_id)}
             activity = [
                 dict(r)
                 for r in db.execute(
@@ -526,18 +543,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 "plan_preview": preview,
                 "activity": activity,
                 "health": self.feed_health(db),
-                "meta": {
-                    "public_auth_mode": self.settings.public_auth_mode,
-                    "league_choices": LEAGUE_NAMES,
-                    "mode": self.settings.mode,
-                    "playback_adapter": self.settings.executor.mode,
-                    "playback_monitor_interval_seconds": self.settings.executor.monitor_interval if self.executor else None,
-                    "status_simulated": self.executor is None,
-                    "now": self.now(db).isoformat(),
-                    "server_time": datetime.now(UTC).isoformat(),
-                    "scenario": self.db.meta(db, "scenario"),
-                    "schema_version": 1,
-                },
+                "meta": self.overview_metadata(db),
             }
             mark("metadata")
             return result
@@ -683,12 +689,15 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             history=(self.CONFIG_FIELDS, "Import configuration"),
         )
 
-    def apply_plan(self, db, device, action, *, preview=False, actor=None):
+    def apply_plan(self, db, device, action, *, preview=False, actor=None, items=None):
         actor = actor or LEGACY_ADMIN.copy()
         public = actor["type"] == "user"
-        items = {i["content_id"]: i for i in self.planning_items(db, device["id"])}
         op = action["type"]
         content_id = action.get("content_id")
+        if op in {"add", "play_now"} and items is None:
+            items = self.items(db, device["id"], include_snapshot=False,
+                               content_ids={content_id} if op == "add" else None)
+        items = {i["content_id"]: i for i in (items or [])}
         if public:
             permission = {"add": "add_to_plan", "play_now": "play_now"}.get(op)
             if not permission or not device["public_access"][permission]:
@@ -739,12 +748,12 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             else:
                 device["plan"].append(entry)
             device["plan"] = ordered_plan(device)
-            candidate = copy.deepcopy(device)
             if op == "play_now":
+                candidate = copy.deepcopy(device)
                 candidate.get("event_attempts", {}).pop(content_id, None)
                 candidate.get("prime_access", {}).pop(content_id, None)
                 candidate["failures"].pop(content_id, None)
-            selected = choose(candidate, list(items.values()), self.now(db), datetime.now(UTC))
+                selected = choose(candidate, list(items.values()), self.now(db), datetime.now(UTC))
             if op == "play_now" and (not public or selected["content_id"] == content_id):
                 device["automation"] = "active"
                 device["failures"].pop(content_id, None)
@@ -792,7 +801,10 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             payload,
             lambda db, d: self.apply_plan(db, d, payload["action"], actor=actor),
             history=(("plan",), description),
-            prepare=self.prepare_planning,
+            prepare=(lambda db: self.prepare_planning(
+                db, device_ids=(device_id,), include_snapshot=False,
+                content_ids={payload["action"]["content_id"]} if payload["action"]["type"] == "add" else None,
+            )) if payload["action"]["type"] in {"add", "play_now"} else None,
         )
 
     def public_access_command(self, device_id, command):
@@ -821,12 +833,25 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             device = self.db.device(db, device_id)
             if command.expected_revision != device["revision"]:
                 raise HTTPException(409, "The watch plan changed. Refresh the preview.")
-            self.apply_plan(db, device, command.action.model_dump(), preview=True)
+            ids = {p["content_id"] for p in device["plan"]} | {command.action.content_id}
+            items = self.items(db, device_id, include_snapshot=False,
+                               content_ids=None if command.action.type == "play_now" else ids - {None})
+            self.apply_plan(db, device, command.action.model_dump(), preview=True, items=items)
             return {
                 "revision": device["revision"],
                 "entries": device["plan"],
-                **self.planning_preview(db, device, self.planning_items(db, device_id)),
+                **self.planning_preview(db, device, items),
             }
+
+    def interaction_state(self, device_id):
+        """Fresh edit/ownership state without the schedule, teams or entitlement queue."""
+        with self.db.snapshot() as db:
+            device = self.db.device(db, device_id)
+            items = self.items(db, device_id, include_snapshot=False,
+                               content_ids={p["content_id"] for p in device["plan"]})
+            return {"device": device, "undo": self.undo_summary(db, device),
+                    "plan_preview": self.planning_preview(db, device, items),
+                    "server_time": datetime.now(UTC).isoformat()}
 
     def rules_command(self, device_id, update):
         # Keep the original serialized field order so version-1 command receipts

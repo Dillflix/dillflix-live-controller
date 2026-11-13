@@ -49,6 +49,14 @@ function manualFixture() {
         data.meta.server_time = new Date().toISOString();
         await route.fulfill({ json: data });
       });
+      await page.route("**/api/v1/devices/living-room/interaction-state", async route => {
+        const response = await route.fetch();
+        const data = await response.json();
+        data.device = { ...data.device, revision, automation, manual_control: session,
+          ...(session ? { observed: null, desired: null, playback_state: "waiting" } : {}) };
+        data.server_time = new Date().toISOString();
+        await route.fulfill({ json: data });
+      });
       await page.route(`**${controlPath}`, async (route) => {
         const body = route.request().postDataJSON();
         if (body.expected_revision !== revision) {
@@ -208,7 +216,7 @@ test("disconnect never replays input; background tab releases remote but retains
       "Input delivery is uncertain. Check the TV before sending it again.",
       { exact: true },
     ),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15000 });
   await expect(
     page.getByRole("button", { name: "Reconnect remote", exact: true }),
   ).toBeVisible();
@@ -283,4 +291,18 @@ test("another browser must explicitly confirm a takeover", async ({
     page.getByText("Manual control in another browser", { exact: true }),
   ).toBeVisible();
   await other.close();
+});
+
+
+test("take control becomes ready without waiting for the overview refresh", async ({ page }) => {
+  const fixture = manualFixture();
+  await fixture.install(page);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Take control", exact: true })).toBeVisible();
+  // Full overview reads after the command never finish in this test.
+  await page.route("**/api/v1/overview", route => route.abort());
+  await page.getByRole("button", { name: "Take control", exact: true }).click();
+  await expect(page.getByText("Remote connected", { exact: true })).toBeVisible({ timeout: 2000 });
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect.poll(() => fixture.inputs.length).toBe(1);
 });

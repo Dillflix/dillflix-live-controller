@@ -402,18 +402,21 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
     [busy, setBusy] = useState(false),
     [connected, setConnected] = useState(true);
   const fetchVersion = useRef(0);
+  const interactionPending = useRef(false);
+  const loadedDeviceId = useRef(deviceId);
   const loadError = useRef("");
   const mounted = useRef(true);
   const reader = useMemo(() => overviewRead((signal) => api<Overview>(
     "/overview" + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""),
     undefined, undefined, signal)), [deviceId]);
   const load = useCallback(async () => {
-    if (!mounted.current) return;
+    if (!mounted.current || interactionPending.current) return;
     const serial = ++fetchVersion.current;
     try {
       const next = await reader.read();
       if (mounted.current && serial === fetchVersion.current) {
-        setData(next);
+        loadedDeviceId.current = next.device.id;
+        setData(current => current && current.device.revision > next.device.revision ? current : next);
         setConnected(true);
         const previous = loadError.current;
         loadError.current = "";
@@ -427,6 +430,29 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
       }
     }
   }, [reader]);
+  const refreshInteraction = useCallback(async () => {
+    if (!loadedDeviceId.current) return load();
+    interactionPending.current = true;
+    const serial = ++fetchVersion.current;
+    reader.abort();
+    try {
+      const next = await api<Pick<Overview, "device" | "undo" | "plan_preview"> & { server_time: string }>(
+        `/devices/${encodeURIComponent(loadedDeviceId.current)}/interaction-state`);
+      if (!mounted.current || serial !== fetchVersion.current) return;
+      setData(current => {
+        if (!current || current.device.id !== next.device.id || current.device.revision > next.device.revision) return current;
+        const entries = new Map(next.device.plan.map(entry => [entry.content_id, entry.id]));
+        return { ...current, device: next.device, undo: next.undo, plan_preview: next.plan_preview,
+          events: current.events.map(event => ({ ...event, watch_entry_id: entries.get(event.content_id) || null })),
+          meta: { ...current.meta, server_time: next.server_time } };
+      });
+    } finally {
+      if (serial === fetchVersion.current) {
+        interactionPending.current = false;
+        void load();
+      }
+    }
+  }, [deviceId, reader, load]);
   useEffect(() => {
     mounted.current = true;
     let stopped = false;
@@ -462,11 +488,11 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
       if (!mounted.current) return;
       setNotice(message);
       if (closeAfter) setModal(null);
-      await load();
+      await refreshInteraction();
     } catch (e) {
       if (!mounted.current) return;
       setError((e as Error).message);
-      if (e instanceof ApiError && e.status === 409) await load();
+      if (e instanceof ApiError && e.status === 409) await refreshInteraction();
     } finally {
       setBusy(false);
     }
@@ -640,11 +666,11 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
         await planCommand({ type: "add", content_id: e.content_id });
         setNotice("Added to your watch plan.");
         setModal(null);
-        await load();
+        await refreshInteraction();
       }
     } catch (e) {
       setError((e as Error).message);
-      await load();
+      await refreshInteraction();
     } finally {
       setBusy(false);
     }
@@ -1021,7 +1047,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
               device={d}
               serverTime={data.meta.server_time}
               simulated={data.meta.playback_adapter === "simulator"}
-              onChange={load}
+              onChange={refreshInteraction}
             />
             {!connected && (
               <div className="df-warning" role="status">

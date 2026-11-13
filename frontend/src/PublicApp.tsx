@@ -148,12 +148,12 @@ function PublicWorkspace({ deviceId, selectDevice }: {
   const reader = useMemo(() => overviewRead((signal) =>
     publicApi<PublicOverview>("/overview" + deviceQuery, undefined, signal)), [deviceQuery]);
   const load = useCallback(async () => {
-    if (!mounted.current || generation !== selection.current.generation) return;
+    if (!mounted.current || generation !== selection.current.generation || submitting.current) return;
     const serial = ++loading.current;
     try {
       const next = await reader.read();
       if (mounted.current && generation === selection.current.generation && serial === loading.current) {
-        setData(next);
+        setData(previous => previous && (previous.device?.id || previous.device_id) === (next.device?.id || next.device_id) && previous.revision > next.revision ? previous : next);
         setConnected(true);
         const previous = loadError.current;
         loadError.current = "";
@@ -216,10 +216,24 @@ function PublicWorkspace({ deviceId, selectDevice }: {
       setError((e as Error).message);
     } finally {
       if (current()) {
-        await load();
-        if (current()) {
+        ++loading.current;
+        reader.abort();
+        try {
+          const next = await publicApi<{ device_id: string; revision: number; planned: string[]; permissions: PublicOverview["permissions"] }>(
+            "/interaction-state" + deviceQuery);
+          if (current()) setData(previous => {
+            if (!previous || (previous.device?.id || previous.device_id) !== next.device_id || previous.revision > next.revision) return previous;
+            return { ...previous, revision: next.revision, permissions: next.permissions,
+              events: previous.events.map(item => ({ ...item, planned: next.planned.includes(item.content_id) })) };
+          });
+        } catch (error) {
+          if (current()) setError((error as Error).message);
+        } finally {
+          if (current()) {
           setBusy(false);
           submitting.current = false;
+          void load();
+          }
         }
       }
     }

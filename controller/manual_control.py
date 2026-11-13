@@ -29,7 +29,7 @@ class ManualControl:
         return session
 
     def manual_authorized(self, device_id, session_id, owner_token):
-        with self.db.transaction() as db:
+        with self.db.snapshot() as db:
             device = self.db.device(db, device_id)
             session = self.check_manual_owner(db, device, session_id, owner_token)
             if device.get("input_handoff") or not session.get("input_ready", False):
@@ -43,8 +43,11 @@ class ManualControl:
 
     def prepare_manual_input(self, device_id, session_id, owner_token):
         with self.playback_lock:
-            with self.db.transaction() as db:
-                self.check_manual_owner(db, self.db.device(db, device_id), session_id, owner_token)
+            with self.db.snapshot() as db:
+                device = self.db.device(db, device_id)
+                session = self.check_manual_owner(db, device, session_id, owner_token)
+                if not device.get("input_handoff") and session.get("input_ready", False):
+                    return
             self.reconcile_input_handoff(device_id)
 
     def reconcile_input_handoff(self, device_id=None):

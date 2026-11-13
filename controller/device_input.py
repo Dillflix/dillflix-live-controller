@@ -248,7 +248,7 @@ class DeviceInput:
                     raise HTTPException(
                         409, "This remote is already connected in another tab. Close it first."
                     )
-                if self.prime:
+                if self.prime and (self.prime.session_id != attach.session_id or not self.prime.receipt):
                     await self.prime.acquire(attach.session_id)
                 task = asyncio.create_task(self.run(websocket, device_id, attach))
                 self.connection = (task, attach)
@@ -303,7 +303,6 @@ class DeviceInput:
 
     async def send_locked(self, source, packet, device_id, attach):
         """Caller holds the manual gate, including for the initial wake command."""
-        await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
         if not self.connection or self.connection[0] is not asyncio.current_task():
             raise HTTPException(409, "Input ownership changed.")
         if self.service.executor:
@@ -311,6 +310,7 @@ class DeviceInput:
                 await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
                 await source.send(packet)
         else:
+            await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
             await source.send(packet)
 
     async def run(self, websocket, device_id, attach):
@@ -336,8 +336,8 @@ class DeviceInput:
                     continue
                 message = Input.model_validate(raw)
                 packet = message.encode()
+                started = time.monotonic()
                 async with self.lock:
-                    await self.service.playback_work(self.service.manual_authorized, device_id, attach.session_id, attach.owner_token)
                     if not self.connection or self.connection[0] is not asyncio.current_task():
                         raise HTTPException(409, "Input ownership changed.")
                     if message.seq <= last_seq:
@@ -350,6 +350,9 @@ class DeviceInput:
                     tokens -= 1
                     last_seq = message.seq
                     await self.send_locked(source, packet, device_id, attach)
+                elapsed = time.monotonic() - started
+                if elapsed >= 0.25:
+                    log.warning("Slow manual input: device=%s delivery_seconds=%.3f", device_id, elapsed)
                 async with asyncio.timeout(2):
                     # This acknowledges transport delivery, not the visible effect on the TV.
                     await websocket.send_json({"type": "sent", "seq": message.seq})

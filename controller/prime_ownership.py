@@ -26,7 +26,7 @@ class PrimeOwnership:
         await self.client.close()
 
     async def rpc(self, method, **params):
-        task = asyncio.create_task(self.client.rpc(method, budget=45, **params))
+        task = asyncio.create_task(self.client.rpc(method, budget=10 if method == "manual_input" else 45, **params))
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -116,7 +116,13 @@ class PrimeOwnership:
         else:
             raise PrimeOwnershipError("unsupported input packet")
         self.seq += 1
-        result = await self.rpc("manual_input", receipt=self.receipt, seq=self.seq, **params)
+        try:
+            result = await self.rpc("manual_input", receipt=self.receipt, seq=self.seq, **params)
+        except BaseException:
+            # A failed wake/input must revalidate the player on reconnect.
+            # Never retry the uncertain physical input itself.
+            self.receipt = None
+            raise
         if (
             result.get("delivered") is not True
             or result.get("seq") != self.seq

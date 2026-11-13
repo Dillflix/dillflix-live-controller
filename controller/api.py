@@ -248,6 +248,19 @@ def create_app(settings=None, *, start_workers=True):
             actor=actor,
         )
 
+    @app.get("/api/public/v1/interaction-state")
+    def viewer_interaction_state(device_id: str | None = None):
+        runtime = service.runtime(device_id)
+        with service.db.snapshot() as db:
+            device = service.db.device(db, runtime.device_id)
+            paused = device["automation"] == "paused" or bool(device.get("manual_control") or device.get("input_handoff"))
+            return JSONResponse({
+                "device_id": device["id"], "revision": device["revision"],
+                "planned": [entry["content_id"] for entry in device["plan"]],
+                "permissions": {"add_to_plan": device["public_access"]["add_to_plan"],
+                                "play_now": device["public_access"]["play_now"] and not paused},
+            }, headers={"Cache-Control": "no-store"})
+
     @app.put("/api/v1/devices/{device_id}/public-access")
     def public_access(device_id: str, command: PublicAccessUpdate):
         return service.runtime(device_id).public_access_command(device_id, command)
@@ -298,7 +311,7 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/events")
     def events(device_id: str | None = None):
-        data = service.runtime(device_id).overview()
+        data = service.runtime(device_id).overview(events_only=True)
         return JSONResponse({
             "items": data["events"],
             "meta": data["meta"],
@@ -335,7 +348,14 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/devices/{device_id}/state")
     def state(device_id: str):
-        return service.runtime(device_id).overview()["device"]
+        service.runtime(device_id)
+        with service.db.snapshot() as db:
+            return service.db.device(db, device_id)
+
+    @app.get("/api/v1/devices/{device_id}/interaction-state")
+    def interaction_state(device_id: str):
+        return JSONResponse(service.runtime(device_id).interaction_state(device_id),
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/devices/{device_id}/now-playing", response_model=NowPlaying)
     def now_playing(device_id: str):
@@ -358,7 +378,7 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/devices/{device_id}/watch-plan")
     def plan(device_id: str):
-        data = service.runtime(device_id).overview()
+        data = service.runtime(device_id).interaction_state(device_id)
         return {
             "revision": data["device"]["revision"],
             "entries": data["device"]["plan"],
@@ -403,7 +423,7 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/devices/{device_id}/rules")
     def rules(device_id: str):
-        d = service.runtime(device_id).overview()["device"]
+        d = state(device_id)
         return {k: d[k] for k in ("rules", "team_ranks", "preferences", "revision")}
 
     @app.put("/api/v1/devices/{device_id}/rules")
@@ -452,7 +472,11 @@ def create_app(settings=None, *, start_workers=True):
 
     @app.get("/api/v1/devices/{device_id}/activity")
     def activity(device_id: str):
-        return {"items": service.runtime(device_id).overview()["activity"]}
+        service.runtime(device_id)
+        with service.db.snapshot() as db:
+            service.db.device(db, device_id)
+            return {"items": [dict(row) for row in db.execute(
+                "SELECT * FROM activity WHERE device_id=? ORDER BY sequence DESC LIMIT 100", (device_id,))]}
 
     @app.get("/api/v1/devices/{device_id}/jobs")
     def jobs(device_id: str):

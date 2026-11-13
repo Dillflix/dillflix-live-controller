@@ -269,3 +269,15 @@ def test_gateway_releases_persisted_manual_hold_while_restarted_player_recovers(
         assert bridge.state["mode"] == "blocked" and bridge.state["acknowledged"] is False
         assert bridge.state["owner_id"] is None
     assert not any(method == "manual_input" for method, _ in bridge.calls)
+
+
+async def test_failed_input_invalidates_cached_handoff_for_reconnect():
+    bridge = Bridge()
+    await bridge.acquire("session")
+    bridge.fail = True
+    with pytest.raises(PrimeOwnershipError):
+        await bridge.send("session", WAKE_PACKET)
+    assert bridge.receipt is None
+    bridge.fail = False
+    await bridge.acquire("session")
+    assert bridge.receipt is not None
