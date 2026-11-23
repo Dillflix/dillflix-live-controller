@@ -14,7 +14,8 @@ jobs:
         run: docker build --tag dillflix-controller:permissions .
   controller:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The full suite takes 8-10 minutes; allow dependency setup and cleanup too.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
