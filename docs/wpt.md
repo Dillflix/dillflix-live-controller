@@ -23,3 +23,12 @@ The new schedule and priority support is therefore not a claim that Prime can
 discover or launch every listed WPT airing. Verify an authenticated WPT search
 and actual live-TV playback before treating this integration as production-ready.
 Do not work around a missing airing by enabling replay playback.
+
+The November 23 device inspection confirmed WPT on the Sportsnet channel page
+(`RUST_COLLECTIONS`), with `standard_linear_station_card` nodes in Continue
+watching. The visible program was `S2026 E19 WPT Montreal (Pt. 4)`, marked
+ON NOW, 12:00–1:00 PM, and included with Sportsnet+. Normal Find search returned
+only unrelated movies/shows. This means station-card discovery is needed even
+on the channel page; simply adding another search query is insufficient.
+The filtered inspection contained display labels, not a verified playable
+station/program identity. Those labels must not be converted into a guessed GTI.
