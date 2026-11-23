@@ -13,6 +13,8 @@ async def choose_entitlement(matcher, request, results, timezone, *, before_matc
     items, rejected = candidates(results, request["content_snapshot"], timezone)
     options = [o for o in request["allowed_viewing_options"] if prime_option(o)]
     passes, denied, uncertain, missing_route = [], [], not options, False
+    uncertain |= any(r["reason"] in {"missing_airing_window", "invalid_airing_window"}
+                     for r in rejected)
     broadcast_checks = []
     # An entitled feed is sufficient. Every permitted route must have supported
     # negative evidence before we can deny the event, and ambiguity wins over denial.

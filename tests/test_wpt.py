@@ -5,6 +5,7 @@ import pytest
 
 from controller.prime_player.matching import EventMatcher, candidates
 from controller.prime_player.match_context import event_context
+from controller.prime_player.entitlement import choose_entitlement
 
 
 SNAPSHOT = {
@@ -46,6 +47,13 @@ async def test_missing_airing_window_is_uncertain_not_conclusive_absence():
     matcher = EventMatcher(SimpleNamespace(prime_match_model=None))
     selected, audit = await matcher.choose(
         {"content_snapshot": SNAPSHOT},
+        {"containers": [{"items": [{**ITEM, "starts_at": None}]}]}, "UTC",
+    )
+    assert selected is None and audit["match_status"] == "uncertain"
+    selected, audit = await choose_entitlement(
+        matcher,
+        {"content_snapshot": SNAPSHOT,
+         "allowed_viewing_options": [{"id": "sportsnet", "app": "prime_video"}]},
         {"containers": [{"items": [{**ITEM, "starts_at": None}]}]}, "UTC",
     )
     assert selected is None and audit["match_status"] == "uncertain"
