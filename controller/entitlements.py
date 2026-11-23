@@ -19,6 +19,7 @@ from .prime_player.entitlement import choose_entitlement
 from .prime_player.identity_cache import EventMatchCache
 from .prime_player.labels import prime_option, search_queries
 from .prime_player.search import choose_search
+from .prime_player.linear import catalogue_capability, read_catalogue
 
 log = logging.getLogger(__name__)
 SEARCH_SECONDS = 15
@@ -585,9 +586,9 @@ class EntitlementChecks:
                 health = await workflow.player.health()
                 if health.get("serial") != self.settings.screen_adb_serial:
                     raise ExecutorError("prime_device_mismatch", "Prime Player device differs")
-                workflow.player.require(health, "search")
+                workflow.player.require(health, catalogue_capability(request))
                 ownership = workflow.player.ownership(health, automatic=True)
-                result = await workflow.player.search(query, SEARCH_SECONDS, ownership)
+                result = await read_catalogue(workflow.player, request, query, SEARCH_SECONDS, ownership)
                 after = await workflow.player.health()
                 if after["session_id"] != health["session_id"] or result.get("session_id") != after["session_id"]:
                     raise ExecutorError("prime_stale_result", "Prime session changed during entitlement check")

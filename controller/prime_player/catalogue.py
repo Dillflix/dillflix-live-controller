@@ -20,6 +20,7 @@ from .client import (
 from .match_context import IDENTITY_CONTRACT
 from .matching import selection_state
 from .search import choose_search
+from .linear import catalogue_capability, read_catalogue
 
 SELECTION_HANDOFF_SECONDS = 60
 
@@ -221,15 +222,17 @@ class CatalogueChecks:
                     nonlocal session
                     async with self.input_lock:
                         await require_current("search")
-                        evidence["runtime_capability"] = "search"
-                        health = await self.check_session(session, capabilities=("search",))
+                        capability = catalogue_capability(probe["request"])
+                        evidence["runtime_capability"] = capability
+                        health = await self.check_session(session, capabilities=(capability,))
                         if health.get("api_version", 0) < 11:
                             raise ExecutorError(
                                 "prime_api_incompatible", "Prime Player API 11 or newer is required", retryable=False
                             )
                         session = health["session_id"]
                         ownership = self.player.ownership(health, automatic=True)
-                        results = await self.player.search(query, self.config.prime_search_timeout, ownership)
+                        results = await read_catalogue(self.player, probe["request"], query,
+                                                       self.config.prime_search_timeout, ownership)
                     if results.get("session_id") != session:
                         raise ExecutorError("prime_stale_result", "Catalogue result belongs to another session")
                     self.require_catalogue_generation(health, results)

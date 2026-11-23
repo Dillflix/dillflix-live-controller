@@ -5,6 +5,7 @@ from ..model_diagnostics import report_progress
 from .broadcasts import choose_broadcast
 from .labels import search_queries
 from .matching import selection_state
+from .linear import choose_airing, is_linear
 
 
 async def choose_search(request, timezone, matcher, search, fetch, progress, *, select=None,
@@ -18,6 +19,14 @@ async def choose_search(request, timezone, matcher, search, fetch, progress, *, 
     queries = search_queries(request["content_snapshot"])
     if not queries:
         raise ExecutorError("prime_invalid_search", "Event has no usable search labels")
+    if is_linear(request):
+        # TV programs are station schedule entries, not Find EVENT results.
+        results = await search(queries[0])
+        if results.get("query") != queries[0]:
+            raise ExecutorError("prime_stale_result", "Live TV catalogue query changed")
+        selected, audit = choose_airing(request, results)
+        await report_progress(progress, audit)
+        return results, selected, audit
     attempts, identity = [], None
     uncertain = False
     denied_outcome = None

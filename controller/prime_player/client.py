@@ -95,7 +95,7 @@ class PrimePlayerClient:
         await self.http.aclose()
 
     async def rpc(self, method, *, budget=60, **params):
-        if method in {"search", "broadcasts", "resolve", "play", "discover", "pages"}:
+        if method in {"search", "broadcasts", "linear_catalog", "resolve", "play", "discover", "pages"}:
             context = (params.get("ownership") or {}).get("network_context_id")
             if context:
                 params["network_context_id"] = context
@@ -208,7 +208,7 @@ class PrimePlayerClient:
         if health.get("api_version", 0) < 4:
             raise ExecutorError("prime_api_incompatible", "Prime Player API 4 or newer is required", retryable=False)
         network = health.get("network", {})
-        if network.get("enabled") and network.get("state") != "ready" and any(n in {"search", "broadcasts", "play", "resolve", "playback_status"} for n in capabilities):
+        if network.get("enabled") and network.get("state") != "ready" and any(n in {"search", "broadcasts", "linear_catalog", "play", "resolve", "playback_status"} for n in capabilities):
             raise ExecutorError("prime_network_recovering", COMPATIBILITY_MESSAGES["prime_network_recovering"])
         implemented = health.get("capabilities", [])
         compatibility = health.get("compatibility", {})
@@ -220,12 +220,15 @@ class PrimePlayerClient:
         ):
             raise ExecutorError("prime_runtime_recovering", "Prime device runtime disconnected; waiting for recovery")
         for name in capabilities:
+            if name == "linear_catalog" and (name not in implemented or available.get(name, {}).get("available") is not True):
+                # Optional guide support must not suspend unrelated event checks.
+                raise ExecutorError("prime_linear_catalog_unavailable", "Prime Live TV guide capability is unavailable")
             if name not in implemented:
                 raise ExecutorError(
                     "prime_api_incompatible", f"Prime Player service does not implement: {name}", retryable=False
                 )
             if (
-                name in {"search", "broadcasts", "play", "playback_status", "stop"}
+                name in {"search", "broadcasts", "linear_catalog", "play", "playback_status", "stop"}
                 and available.get("javascript_navigation" if name == "stop" else name, {}).get("available")
                 is not True
             ):

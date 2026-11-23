@@ -565,6 +565,15 @@ receipt age and retained terminal observations; it does not renew stale evidence
 
 ## Prime catalogue checks and launch outcomes
 
+Scheduled `linear_program` broadcasts use the optional Prime Live TV guide.
+Exact channel/title/window matching binds the Teamarr content to a station GTI
+and a separate Prime airing ID. Subscription, ownership, network and native
+live-resolution checks remain required. Program verification is bounded by
+both a 60-second guide lifetime and the airing window, with read-only guide
+refreshes during monitoring. Window expiry, missing guide entries and station
+Ended never establish program completion. See [WPT](wpt.md) for evidence and
+remaining device acceptance.
+
 Upcoming subscription observations use a separate durable queue; see
 [schedule entitlement](schedule-entitlement.md). They never advance playback intent.
 
