@@ -23,7 +23,11 @@ def event_context(snapshot):
             identity[side + "_team_details"] = {k: team[k] for k in TEAM_FIELDS if team.get(k)}
         elif team:
             identity[side + "_team"] = team
-    return {**{k: snapshot[k] for k in ("kind", "title", "competition", "sports", "start_time")
+    broadcast = snapshot.get("broadcast") or {}
+    linear = ({"coverage_type": "linear_program",
+               "expected_end_time": snapshot.get("expected_end_time")}
+              if broadcast.get("coverage_type") == "linear_program" else {})
+    return {**linear, **{k: snapshot[k] for k in ("kind", "title", "competition", "sports", "start_time")
                if snapshot.get(k) is not None}, "event": identity}
 
 

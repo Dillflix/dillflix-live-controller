@@ -329,6 +329,7 @@ function RuleForm({
           <option value="golf">Golf coverage</option>
           <option value="dazn_tennis">Tennis coverage · DAZN</option>
           <option value="dazn_sports">Squash & MMA · DAZN</option>
+          <option value="sportsnet_wpt">World Poker Tour · Sportsnet</option>
           <option value="games">Games</option>
           <option value="special_events">Special events</option>
         </select>
@@ -558,6 +559,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
       "tennis",
       "nsl",
       "beatdown",
+      "wpt",
     ]),
   ].sort();
   const observed = find(d.observed?.content_id || null),

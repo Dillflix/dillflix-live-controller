@@ -45,6 +45,10 @@ Interpret supplied timestamps in timezone. starts_at/ends_at describe the FEED W
 pregame coverage may begin before target.start_time and end later. Do not demand equal kickoff
 and feed-start times. A time window supports identity but never proves LIVE or completion.
 Missing optional synopsis/timing is not evidence against an otherwise clear event match.
+For coverage_type=linear_program, identify the specific scheduled TV airing and its
+required channel. Recorded tournament footage airing on that live channel is permitted;
+an on-demand episode, replay action, series hub or generic channel is not that airing.
+Matching the series title alone cannot distinguish consecutive episodes.
 
 ROUTE AND POLICY BOUNDARY
 Use explicit candidate text, including entitlement_messaging, to evaluate a provider/language
@@ -141,6 +145,20 @@ def candidates(results, snapshot, timezone):
         # Feed windows can begin before kickoff. Compare the explicit local date,
         # not exact start equality or a guessed live state from the clock.
         start = item.get("starts_at")
+        if not reason and (snapshot.get("broadcast") or {}).get("coverage_type") == "linear_program":
+            # Unlike a game with pregame coverage, the requested identity here is
+            # the exact TV slot. Never substitute the next same-title episode.
+            try:
+                actual_start = parse_time(start)
+                actual_end = parse_time(item.get("ends_at"))
+                expected_start = parse_time(snapshot.get("start_time"))
+                expected_end = parse_time(snapshot.get("expected_end_time"))
+                if not all((actual_start, actual_end, expected_start, expected_end)):
+                    reason = "missing_airing_window"
+                elif actual_start != expected_start or actual_end != expected_end:
+                    reason = "conflicting_airing_window"
+            except (ValueError, TypeError, AttributeError):
+                reason = "invalid_airing_window"
         if not reason and start:
             from zoneinfo import ZoneInfo
 
@@ -296,6 +314,8 @@ class EventMatcher:
             "reason": "No matching Prime event",
             "match_status": "uncertain"
             if any(a.get("match_status") == "uncertain" for a in history)
+            or any(r["reason"] in {"missing_airing_window", "invalid_airing_window"}
+                   for r in rejected)
             else "no_match",
             "coverage": results.get("coverage"),
             "complete": results.get("complete"),

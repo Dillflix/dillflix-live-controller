@@ -4,6 +4,7 @@ const labels: Record<string, string> = {
   tennis: "Tennis",
   nsl: "National Squash League",
   beatdown: "Beatdown MMA",
+  wpt: "World Poker Tour",
   "uefa.champions": "UEFA Champions League",
   "eng.2": "EFL Championship",
   "ger.1": "Bundesliga",
