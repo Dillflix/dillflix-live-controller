@@ -264,6 +264,15 @@ def test_catalogue_timeout_is_visible_without_claiming_an_empty_catalogue(worker
     assert "private" not in json.dumps(value)
 
 
+def test_idle_audit_retains_specific_chooser_validation_reason(worker):
+    error = ExecutorError('idle_sports_selection_invalid', 'Private model output must not become the audit')
+    error.validation_reason = 'invented_current_program'
+    worker.idle_failure(worker.idle_context(), error)
+    audit = worker.db.meta(worker.db.connection, 'idle_sports_audit:' + worker.device_id)
+    assert audit['error'] == {'code': 'idle_sports_selection_invalid', 'validation_reason': 'invented_current_program'}
+    assert 'Private model output' not in json.dumps(audit)
+
+
 @pytest.mark.parametrize("mutation", ["intent", "manual", "paused", "network", "schedule"])
 def test_publish_rechecks_intent_and_new_scheduled_work(worker, mutation):
     context = worker.idle_context()

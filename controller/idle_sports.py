@@ -314,9 +314,13 @@ class IdleSports:
                 "next_check_at": time.time() + min(300, REFRESH_SECONDS * 2 ** min(failures - 1, 4))}
             self.db.save_device(db, device)
             audit = self.db.meta(db, "idle_sports_audit:" + self.device_id, {})
+            error = {"code": code}
+            validation_reason = getattr(exc, "validation_reason", None)
+            if validation_reason:
+                error["validation_reason"] = validation_reason
             self.db.set_meta(db, "idle_sports_audit:" + self.device_id, {
                 **audit, "match_status": "uncertain", "reason": reason,
-                "error": {"code": code}, "checked_at": datetime.now(UTC).isoformat()})
+                "error": error, "checked_at": datetime.now(UTC).isoformat()})
 
     async def refresh_idle_sports(self):
         await self.playback_work(self.expire_idle_rows)
