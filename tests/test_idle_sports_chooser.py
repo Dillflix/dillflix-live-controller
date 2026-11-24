@@ -100,6 +100,41 @@ async def test_initial_selection_still_rejects_a_claimed_switch_from_nonexistent
     assert error.value.validation_reason == 'invented_current_program'
 
 
+@pytest.mark.parametrize('kind', ['linear_program', 'event'])
+async def test_continuing_same_sports_program_accepts_null_switch_reason(kind):
+    item = candidate(kind=kind, title='NFL Football',
+        episode_title='Jacksonville Jaguars at New York Giants',
+        synopsis='The New York Giants host the Jacksonville Jaguars in NFL regular-season play at MetLife Stadium.')
+    if kind == 'event':
+        item.update(content_type='EVENT', event_state='LIVE', content_id='amzn1.dv.gti.event-one')
+    evidence = [{'field': field, 'quote': item[field]} for field in ('title', 'episode_title', 'synopsis')]
+    model = matcher(answer(item, classification='competition', evidence=evidence,
+        current_classification='competition', current_evidence=evidence, switch_reason=None))
+    captures = []
+    with capture_model_calls(captures.append):
+        selected, audit = await choose([item], matcher=model, now=NOW, current_candidate_id=item['candidate_id'])
+    assert selected == item and audit['match_status'] == 'matched'
+    assert audit['switch_reason'] == 'keep_current'
+    assert model.model.result['switch_reason'] is None
+    assert captures[-1]['validation']['state'] == 'passed'
+
+
+@pytest.mark.parametrize('change', [
+    {'current_classification': 'non_sports'}, {'current_classification': 'uncertain'},
+    {'current_classification': None}, {'current_evidence': []}, {'current_duplicates_peer': True},
+    {'switch_reason': 'current_unsuitable'}, {'switch_reason': 'stronger_preference'},
+    {'switch_reason': 'no_eligible_current'},
+])
+async def test_same_id_does_not_bypass_current_assessment_or_accept_a_contradictory_switch(change):
+    item = candidate()
+    response = answer(item, current_classification='sports_programming',
+        current_evidence=[{'field': 'synopsis', 'quote': item['synopsis']}], switch_reason=None)
+    response.update(change)
+    with pytest.raises(ExecutorError):
+        await choose([item], matcher=matcher(response), now=NOW, current_candidate_id=item['candidate_id'],
+                     peers=[{'candidate_id': 'different', 'title': 'Another sports programme'}])
+
+
 @pytest.mark.parametrize("changes", [
     {"entitlement_status": "UNENTITLED"}, {"entitlement_status": None}, {"has_watch_action": False},
     {"station_id": "guessed-station"}, {"airing_id": None}, {"starts_at": None}, {"ends_at": None},
