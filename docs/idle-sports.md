@@ -38,8 +38,17 @@ and retry with bounded backoff. Existing manual/device ownership is preserved.
 
 ## Internal contract
 
-`linear_catalog(facet="sports", max_pages=8)` performs bounded read-only native
-catalogue traversal. The controller validates positive rows, uses a separate
+`linear_catalog(facet="sports", max_pages=3)` starts with a bounded read-only
+catalogue traversal. If a partial scan produces no selection, subsequent scans
+expand to eight pages; a selection found in that wider scan retains that depth
+for renewal. These are sequential native network requests, not model calls.
+The 45-second player deadline and 60-second RPC budget are ceilings, not expected
+response times. The player reserves delivery time, avoids another page when
+observed request latency exceeds the remaining budget, and returns validated
+pages with explicit partial coverage if a continuation stalls. A timeout before
+any usable page is reported as a catalogue timeout, not an empty selection.
+
+The controller validates positive rows, uses a separate
 `idle_sports_selection` model task, then rechecks intent, ownership, generation,
 network and peer claims before publishing a per-device nomination. Full model
 calls use the existing capture pipeline; the bounded decision audit is stored in

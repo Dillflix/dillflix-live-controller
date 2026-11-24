@@ -27,6 +27,7 @@ test("idle sports defaults off, saves on a phone, exports and undoes", async ({ 
 test("admin keeps idle playback visible without adding it to cards, calendar or manual actions", async ({ page }) => {
   let state = "ready";
   let legacy = false;
+  let errorCode: string | undefined;
   await page.route("**/api/v1/overview", async route => {
     const response = await route.fetch();
     const body = await response.json();
@@ -44,7 +45,7 @@ test("admin keeps idle playback visible without adding it to cards, calendar or 
     body.device.playback_state = "verified";
     body.device.desired = event.content_id;
     body.device.observed = { content_id: event.content_id, verified: true, simulated: true };
-    body.device.idle_sports = { state };
+    body.device.idle_sports = { state, error_code: errorCode };
     if (legacy) delete body.device.preferences.idle_sports_enabled;
     else body.device.preferences.idle_sports_enabled = true;
     body.playback_job = null;
@@ -71,6 +72,9 @@ test("admin keeps idle playback visible without adding it to cards, calendar or 
     await page.reload();
     await expect(page.getByTestId("idle-sports-status")).toHaveText(message);
   }
+  errorCode = "prime_linear_catalog_timeout";
+  await page.reload();
+  await expect(page.getByTestId("idle-sports-status")).toHaveText("Prime Video's sports catalogue timed out. Retrying automatically.");
   legacy = true;
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
