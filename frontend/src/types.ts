@@ -129,6 +129,7 @@ export interface Device {
   playback_state: string;
   idle_sports?: {
     state: string;
+    error_code?: string;
     reason?: string;
     checked_at?: string;
     content_id?: string;

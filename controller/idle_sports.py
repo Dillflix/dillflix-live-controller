@@ -279,6 +279,13 @@ class IdleSports:
                 device["idle_sports"] = {"state": "unavailable", "reason": audit.get("reason", "No confirmed sports available"),
                                         "checked_at": real.isoformat(), "expires_at": 0, "phase": "idle",
                                         "failures": 0, "next_check_at": real.timestamp() + REFRESH_SECONDS}
+            # Start with the initial page, Sports view and first continuation.
+            # If that yields no selection, widen subsequent reads. Keep the
+            # wider scan for a choice discovered there so renewal can find it.
+            device["idle_sports"]["catalogue_max_pages"] = 8 if (
+                audit.get("catalogue_max_pages") == 8 or
+                not selected and (audit.get("coverage") or {}).get("exhausted") is not True
+            ) else 3
             self.db.save_device(db, device)
             self.db.set_meta(db, "idle_sports_audit:" + self.device_id, audit)
             return True
@@ -294,11 +301,12 @@ class IdleSports:
             invalidated = code in {"prime_stale_result", "prime_device_mismatch", "prime_ownership_unavailable"}
             reason = {
                 "prime_linear_catalog_unavailable": "Prime Player needs Live TV catalogue support",
+                "prime_linear_catalog_timeout": "Prime sports catalogue timed out; retrying automatically",
                 "idle_sports_selection_unavailable": "Configure a chooser model to use idle sports",
                 "prime_ownership_unavailable": "Waiting for automatic control of Prime Video",
             }.get(code, "Prime sports selection is temporarily unavailable")
             # Failed reads do not renew prior evidence. Its original deadline holds.
-            device["idle_sports"] = {**previous, "last_error": type(exc).__name__,
+            device["idle_sports"] = {**previous, "last_error": type(exc).__name__, "error_code": code,
                 "reason": reason,
                 "state": "ready" if not invalidated and previous.get("expires_at", 0) > time.time() else "unavailable",
                 "expires_at": 0 if invalidated else previous.get("expires_at", 0),
@@ -328,8 +336,9 @@ class IdleSports:
                     raise ExecutorError("prime_device_mismatch", "Prime Player device differs")
                 workflow.player.require(health, "linear_catalog")
                 ownership = workflow.player.ownership(health, automatic=True)
+                max_pages = 8 if (context["device"].get("idle_sports") or {}).get("catalogue_max_pages") == 8 else 3
                 result = await workflow.player.rpc("linear_catalog", timeout=45, budget=60,
-                    facet="sports", max_pages=8, ownership=ownership)
+                    facet="sports", max_pages=max_pages, ownership=ownership)
                 after = await workflow.player.health()
                 if (after["session_id"] != health["session_id"] or result.get("session_id") != after["session_id"]
                         or workflow.player.ownership(after, automatic=True) != ownership):
@@ -369,7 +378,8 @@ class IdleSports:
                     selected, audit = await choose(candidates, matcher=workflow.matcher, preferences=preferences,
                         current_candidate_id=current.get("candidate_id") if current else None, peers=context["peers"],
                         allow_switch=bool(allow_switch))
-            audit = {**audit, "coverage": result.get("catalogue_coverage"), "candidate_count": len(candidates)}
+            audit = {**audit, "coverage": result.get("catalogue_coverage"), "candidate_count": len(candidates),
+                     "catalogue_max_pages": max_pages}
             # Model latency cannot reuse a replaced service/network/ownership scope.
             async with workflow.input_lock:
                 fresh = await self.playback_work(lambda: self.idle_context(read_device=False))

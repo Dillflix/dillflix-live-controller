@@ -236,7 +236,32 @@ async def test_refresh_publishes_native_identity_with_no_playback_or_feed_replac
     assert worker.db.connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
     assert [call[0] for call in worker.executor.player.calls] == ["linear_catalog"]
     assert worker.executor.player.calls[0][1]["facet"] == "sports"
+    assert worker.executor.player.calls[0][1]["max_pages"] == 3
     assert not await worker.refresh_idle_sports()  # Enforced persisted pacing.
+
+
+async def test_no_selection_widens_next_scan_and_preserves_depth_for_renewal(worker, monkeypatch):
+    original = idle.choose
+    async def no_match(*args, **kwargs):
+        return None, {"match_status": "no_match"}
+    monkeypatch.setattr(idle, "choose", no_match)
+    assert await worker.refresh_idle_sports()
+    assert state(worker)["catalogue_max_pages"] == 8
+    monkeypatch.setattr(idle, "choose", original)
+    for _ in range(2):
+        change(worker, idle_sports={**state(worker), "next_check_at": 0})
+        assert await worker.refresh_idle_sports()
+        assert state(worker)["state"] == "ready"
+    assert [params["max_pages"] for _, params in worker.executor.player.calls] == [3, 8, 8]
+
+
+def test_catalogue_timeout_is_visible_without_claiming_an_empty_catalogue(worker):
+    worker.idle_failure(worker.idle_context(), ExecutorError("prime_linear_catalog_timeout", "private raw error"))
+    value = state(worker)
+    assert value["state"] == "unavailable"
+    assert value["error_code"] == "prime_linear_catalog_timeout"
+    assert value["reason"] == "Prime sports catalogue timed out; retrying automatically"
+    assert "private" not in json.dumps(value)
 
 
 @pytest.mark.parametrize("mutation", ["intent", "manual", "paused", "network", "schedule"])

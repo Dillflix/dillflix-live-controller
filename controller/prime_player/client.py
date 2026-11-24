@@ -146,6 +146,14 @@ class PrimePlayerClient:
                             "catalogue search timed out; request may still be settling"):
                         raise ExecutorError("prime_search_timeout",
                                             "Prime catalogue search timed out; entitlement is still unknown")
+                    if (method == 'linear_catalog' and kind == 'UnavailableError' and
+                            body['error'].get('message') in {
+                                'linear catalog request timed out; request may still be settling',
+                                'linear catalog request failed: timeout',
+                                'linear catalog readiness deadline exceeded',
+                            }):
+                        raise ExecutorError('prime_linear_catalog_timeout',
+                                            'Prime sports catalogue timed out; available programming is still unknown')
                     # Server messages can contain arbitrary application content.
                     raise ExecutorError(code, f"Prime Player {method} returned {kind}")
                 if response.status_code != 200 or not isinstance(body.get("result"), dict):

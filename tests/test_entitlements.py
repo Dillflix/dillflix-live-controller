@@ -699,6 +699,27 @@ async def test_search_timeout_is_identified_without_exposing_arbitrary_server_te
         await player.close()
 
 
+@pytest.mark.parametrize("message,code", [
+    ("linear catalog request timed out; request may still be settling", "prime_linear_catalog_timeout"),
+    ("linear catalog request failed: timeout", "prime_linear_catalog_timeout"),
+    ("linear catalog readiness deadline exceeded", "prime_linear_catalog_timeout"),
+    ("Unexpected application text", "prime_operation_unknown"),
+])
+async def test_linear_timeout_is_identified_without_exposing_arbitrary_server_text(message, code):
+    import httpx
+    from controller.executor.models import ExecutorError
+    from controller.prime_player.client import PrimePlayerClient
+    player = PrimePlayerClient("unused", transport=httpx.MockTransport(lambda request:
+        httpx.Response(409, json={"error": {"type": "UnavailableError", "message": message}})))
+    try:
+        with pytest.raises(ExecutorError) as error:
+            await player.rpc("linear_catalog", timeout=45)
+        assert error.value.detail()["code"] == code
+        assert "Unexpected application text" not in str(error.value)
+    finally:
+        await player.close()
+
+
 @pytest.mark.parametrize("condition", ["manual_control", "input_handoff", "recovery", "player_recovery", "lock", "pending"])
 async def test_background_work_defers_without_consuming_attempt(tmp_path, condition):
     controller, workflow = rig(tmp_path)
