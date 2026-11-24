@@ -33,6 +33,13 @@ class DisplayLifecycle(BaseModel):
     effective_valid_until: str | None
 
 
+class DisplayProgram(BaseModel):
+    episode_title: str | None = None
+    station_name: str | None = None
+    sport: str | None = None
+    competition: str | None = None
+
+
 class DisplayEvent(BaseModel):
     content_id: str
     title: str
@@ -48,6 +55,8 @@ class DisplayEvent(BaseModel):
     planned: bool
     priority: int
     artwork: DisplayArtwork
+    source: str | None = None
+    program: DisplayProgram | None = None
 
 
 class DisplayPlayback(BaseModel):
@@ -60,6 +69,7 @@ class DisplayPlayback(BaseModel):
     event: DisplayEvent | None
     last_event: DisplayEvent | None
     target_event: DisplayEvent | None
+    idle_sports_state: Literal['off', 'waiting', 'checking', 'ready', 'unavailable'] = 'off'
 
 
 class DisplaySchedule(BaseModel):
@@ -100,12 +110,22 @@ def display_event(item, device, planned):
     ] if any(sides) else []
     lifecycle = item["lifecycle"]
     artwork = item["artwork"]
+    source = item.get('source') or item['snapshot'].get('source')
+    native = item['snapshot'].get('prime_idle') or {}
+    def text(key):
+        value = native.get(key)
+        if not isinstance(value, str):
+            return None
+        return ' '.join(value.split())[:320] or None
     return DisplayEvent(
         **{key: item[key] for key in (
             "content_id", "title", "league", "kind", "start_time", "expected_end_time",
             "end_time_estimated", "scores", "status_detail",
         )},
         teams=teams,
+        source=source,
+        program=DisplayProgram(**{key: text(key) for key in DisplayProgram.model_fields})
+        if source == 'prime_idle' else None,
         lifecycle=DisplayLifecycle(**{key: lifecycle[key] for key in (
             "state", "stale", "observed_at", "effective_valid_until",
         )}),
@@ -115,6 +135,17 @@ def display_event(item, device, planned):
             "league_logo_url", "away_team_logo_url", "home_team_logo_url",
         )}),
     )
+
+
+def idle_sports_state(device, now):
+    if not device['preferences'].get('idle_sports_enabled'):
+        return 'off'
+    nomination = device.get('idle_sports') or {}
+    state = nomination.get('state')
+    if state == 'ready':
+        expiry = nomination.get('expires_at')
+        return 'ready' if isinstance(expiry, (int, float)) and expiry > now.timestamp() else 'waiting'
+    return state if state in {'checking', 'unavailable'} else 'waiting'
 
 
 def playback_status(db, device, current):
@@ -163,6 +194,7 @@ def display_view(service, device_id):
         clock = service.now(db)
         eligible = [item for item in items if (
             item["active"]
+            and item.get('source') != 'prime_idle'
             and (item.get("entitlement") or {}).get("status") == "entitled"
             and (item["lifecycle"]["state"] in {"live", "scheduled"} or (
                 item["lifecycle"]["state"] == "unknown" and parse_time(item["start_time"]) > clock
@@ -201,6 +233,7 @@ def display_view(service, device_id):
                 last_event=card((stream_device.get("observed") or {}).get("content_id"))
                 if current.state != "playing" else None,
                 target_event=card(stream_device.get("desired")),
+                idle_sports_state=idle_sports_state(stream_device, now),
             )
             streams.append(DisplayStream(device_id=binding.id, name=stream_device["name"], playback=playback))
         return DisplayView(
