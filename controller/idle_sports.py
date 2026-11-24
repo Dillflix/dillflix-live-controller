@@ -138,6 +138,21 @@ def candidate_blocked(db, device, candidate):
 
 
 class IdleSports:
+    def idle_activity(self, db, context, stage, message, detail='', *, identity=None, repeat_after=300):
+        """Record real progress without flooding history on unchanged refreshes."""
+        key = 'idle_sports_activity:' + self.device_id
+        saved = self.db.meta(db, key, {})
+        previous = saved.get(stage) or {}
+        device = context['device']
+        signature = hashlib.sha256(encode([device['revision'], device['intent_version'], identity]).encode()).hexdigest()
+        now = datetime.now(UTC)
+        elapsed = now.timestamp() - previous.get('at', 0)
+        if previous.get('signature') == signature and (repeat_after is None or 0 <= elapsed < repeat_after):
+            return
+        self.db.log(db, now.isoformat(), message, detail, 'idle_sports', self.device_id)
+        saved[stage] = {'signature': signature, 'at': now.timestamp()}
+        self.db.set_meta(db, key, saved)
+
     def expire_idle_rows(self):
         """Withdraw expired guide availability without asserting completion."""
         now = datetime.now(UTC)
@@ -232,6 +247,13 @@ class IdleSports:
                 "state": "ready" if previous.get("expires_at", 0) > time.time() else "checking",
                 "reason": "Checking Prime sports programming"}
             self.db.save_device(db, device)
+            if device['idle_sports']['state'] == 'checking':
+                if phase == 'catalogue':
+                    self.idle_activity(db, context, phase, 'Checking Prime for idle sports',
+                                       'Reading the current Prime sports catalogue')
+                elif phase == 'choosing':
+                    self.idle_activity(db, context, phase, 'Choosing idle sports',
+                                       'Comparing current programmes with your preferences')
             return True
 
     def idle_filter_candidates(self, context, candidates):
@@ -288,6 +310,18 @@ class IdleSports:
             ) else 3
             self.db.save_device(db, device)
             self.db.set_meta(db, "idle_sports_audit:" + self.device_id, audit)
+            if selected:
+                fields = [selected.get(k) for k in ('title', 'episode_title', 'station_name')]
+                detail = ' · '.join(dict.fromkeys(' '.join(v.split())[:320] for v in fields if isinstance(v, str) and v.strip()))
+                self.idle_activity(db, context, 'result', 'Idle sports selected', detail,
+                                   identity=['selected', selected['candidate_id']], repeat_after=None)
+            else:
+                retaining = device['idle_sports']['state'] == 'ready'
+                self.idle_activity(db, context, 'result',
+                    'Idle sports selection needs another check' if retaining else 'No idle sports selection confirmed',
+                    'Existing selection remains valid until its evidence expires; checking again in 20 seconds'
+                    if retaining else 'No confirmed choice from this catalogue check; checking again in 20 seconds',
+                    identity=['unselected', retaining, audit.get('match_status')])
             return True
 
     def idle_failure(self, context, exc):
@@ -303,6 +337,7 @@ class IdleSports:
                 "prime_linear_catalog_unavailable": "Prime Player needs Live TV catalogue support",
                 "prime_linear_catalog_timeout": "Prime sports catalogue timed out; retrying automatically",
                 "idle_sports_selection_unavailable": "Configure a chooser model to use idle sports",
+                "idle_sports_selection_invalid": "Prime sports choice failed validation; retrying automatically",
                 "prime_ownership_unavailable": "Waiting for automatic control of Prime Video",
             }.get(code, "Prime sports selection is temporarily unavailable")
             # Failed reads do not renew prior evidence. Its original deadline holds.
@@ -321,6 +356,9 @@ class IdleSports:
             self.db.set_meta(db, "idle_sports_audit:" + self.device_id, {
                 **audit, "match_status": "uncertain", "reason": reason,
                 "error": error, "checked_at": datetime.now(UTC).isoformat()})
+            retry = min(300, REFRESH_SECONDS * 2 ** min(failures - 1, 4))
+            self.idle_activity(db, context, 'result', 'Idle sports check failed',
+                               f'{reason}. Next check in {retry} seconds.', identity=['failed', error])
 
     async def refresh_idle_sports(self):
         await self.playback_work(self.expire_idle_rows)
