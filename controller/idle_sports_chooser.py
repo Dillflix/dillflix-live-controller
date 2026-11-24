@@ -66,7 +66,8 @@ another program is a materially stronger match to an explicit preference.
 For such a switch use stronger_preference and quote the relevant supplied
 preference field path and exact complete text, in preference_evidence. Otherwise
 use keep_current, current_unsuitable, or no_eligible_current as applicable.
-For an initial selection with no current_candidate_id, switch_reason may be null.
+For an initial selection or keeping the same current candidate, switch_reason
+may be null; the controller derives no_eligible_current or keep_current from IDs.
 Return duplicates_peer=true only when the proposed selection duplicates a peer;
 such a selection will be rejected.
 Set current_duplicates_peer=true when the current program's explicit identity
@@ -328,8 +329,11 @@ async def choose(candidates, *, matcher, preferences=None, current_candidate_id=
             raise _error("unsupplied_language_preference")
         if current:
             if selected["candidate_id"] == current["candidate_id"]:
-                if not current_suitable or choice["switch_reason"] != "keep_current":
+                if not current_suitable or choice["switch_reason"] not in (None, "keep_current"):
                     raise _error("contradictory_current_choice")
+                # Identical candidate IDs establish continuation. An omitted
+                # switch reason cannot invalidate an otherwise supported choice.
+                choice["switch_reason"] = "keep_current"
             elif current_suitable:
                 stronger = (choice["switch_reason"] == "stronger_preference"
                             and _quotes(choice["preference_evidence"], _fields(preferences)))
