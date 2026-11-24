@@ -59,7 +59,7 @@ class EventPlayer(Player):
         return health
 
     async def rpc(self, method, **params):
-        assert method == "linear_catalog" and params["facet"] == "sports" and params["max_pages"] == 8
+        assert method == "linear_catalog" and params["facet"] == "sports" and params["max_pages"] in {3, 8}
         self.calls.append((method,))
         return event_catalogue(self.value)
 

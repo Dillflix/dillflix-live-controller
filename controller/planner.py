@@ -142,11 +142,12 @@ def is_idle(item):
     return item.get("source") == "prime_idle" or (item.get("snapshot") or {}).get("source") == "prime_idle"
 
 
-def retained_idle_identity(device, item, now):
+def retained_idle_identity(device, item, now, *, allow_refresh=False):
     """Retain issued work's identity, without granting a new launch or freshness."""
     nomination = device.get("idle_sports") or {}
     if not (is_idle(item) and device.get("preferences", {}).get("idle_sports_enabled")
-            and nomination.get("state") == "ready" and nomination.get("content_id") == item.get("content_id")
+            and (nomination.get("state") == "ready" or allow_refresh and nomination.get("state") in {'checking', 'unavailable'})
+            and nomination.get("content_id") == item.get("content_id")
             and item.get("lifecycle", {}).get("state") in {"live", "unknown"}
             and item.get("content_id") not in device.get("manual_completions", {})
             and not exhausted(device, item.get("content_id"))):
@@ -214,6 +215,18 @@ def choose(device, items, now, real_now):
         return result
     selected = next((item for item in items if idle_candidate_eligible(device, item, real_now)), None)
     if selected is None:
+        observed = device.get('observed') or {}
+        current = next((item for item in items if item['content_id'] == observed.get('content_id')), None)
+        if (current and device.get('automation') == 'active'
+                and not device.get('manual_control') and not device.get('input_handoff')
+                and observed.get('request_id') and observed.get('content_id') == device.get('desired')
+                and retained_idle_identity(device, current, real_now, allow_refresh=True)):
+            # Guide expiry withdraws verification, not the existing physical
+            # attempt. The monitor must be allowed to renew it. selection_only
+            # prevents this retained identity from authorizing another Play.
+            return {'content_id': current['content_id'], 'manual': False, 'rule_id': None,
+                    'selection_only': True, 'playback_origin': 'idle_sports',
+                    'reason': 'Rechecking the current idle sports programme'}
         return result
     # Reuse route exclusions, attempt limits and retry backoff. The only rule
     # admitted here is the fresh, device-scoped nomination; regular rules and

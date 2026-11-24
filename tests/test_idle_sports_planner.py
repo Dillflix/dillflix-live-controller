@@ -154,6 +154,37 @@ def test_unknown_verified_scheduled_playback_is_retained_without_idle_takeover()
     assert decide(device, items)["content_id"] == "event"
 
 
+@pytest.mark.parametrize('state', ['ready', 'checking', 'unavailable'])
+def test_expired_active_idle_attempt_is_retained_without_authorizing_a_launch(state):
+    device, items = setup()
+    items = idle_items(items)
+    observe(device, verified=False)
+    device['observed']['request_id'] = 'already-issued'
+    device['idle_sports'].update(state=state, expires_at=NOW.timestamp() - 1)
+    items[0].update(active=False, playable=False, lifecycle={'state': 'unknown', 'stale': True},
+                    expected_end_time=(NOW + timedelta(minutes=10)).isoformat())
+    result = decide(device, items)
+    assert result['content_id'] == 'idle-a' and result['selection_only']
+    device['observed'].pop('request_id')
+    assert decide(device, items)['content_id'] is None
+
+
+@pytest.mark.parametrize('condition', ['slot_ended', 'disabled', 'manual_finished', 'withdrawn', 'native_ended'])
+def test_expired_active_idle_hold_cannot_outlive_programme_or_explicit_withdrawal(condition):
+    device, items = setup()
+    items = idle_items(items)
+    observe(device)
+    device['observed']['request_id'] = 'already-issued'
+    device['idle_sports']['expires_at'] = NOW.timestamp() - 1
+    items[0]['expected_end_time'] = (NOW + timedelta(minutes=10)).isoformat()
+    if condition == 'slot_ended': items[0]['expected_end_time'] = NOW.isoformat()
+    if condition == 'disabled': device['preferences']['idle_sports_enabled'] = False
+    if condition == 'manual_finished': device['manual_completions'] = {'idle-a': NOW.isoformat()}
+    if condition == 'withdrawn': device['idle_sports'] = {'state': 'unavailable'}
+    if condition == 'native_ended': items[0]['lifecycle'] = {'state': 'ended'}
+    assert decide(device, items)['content_id'] is None
+
+
 def test_invalid_legacy_idle_watch_plan_entry_cannot_bypass_nomination():
     device, items = setup()
     device["plan"] = [{"content_id": "idle-b"}]
