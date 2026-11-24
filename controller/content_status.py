@@ -269,6 +269,15 @@ class ContentStatusCoordinator:
                     "error": None,
                 },
             }
+        if row and row["source"] == "prime_idle":
+            from .idle_sports import lifecycle
+            snapshot = snapshot if snapshot is not None else json.loads(row["snapshot"])
+            native = json.loads(check["observation"]) if check and check["observation"] else {}
+            if ((snapshot.get("prime_idle") or {}).get("kind") == "event"
+                    and native.get("source") == "prime_player" and native.get("state") == "ended"
+                    and (native.get("evidence") or {}).get("decision") == "confirmed"):
+                return {**lifecycle_view(native, check, real, self.settings.status_ttl), "tracked": pinned}
+            return lifecycle(snapshot, real, pinned)
         observation = json.loads(check["observation"]) if check and check["observation"] else None
         if (
             observation
@@ -436,6 +445,8 @@ class ContentStatusCoordinator:
                 (*sorted(pins), force, time.time()),
             ).fetchall() if pins else []
             for row in rows:
+                if row["source"] == "prime_idle":
+                    continue  # Prime catalogue refresh owns these rows, never Teamarr.
                 observation = json.loads(row["status_observation"]) if row["status_observation"] else {}
                 # A native completion is a retained fact, not a feed cache entry.
                 # Do not repeatedly revalidate it or revive it from Teamarr live.

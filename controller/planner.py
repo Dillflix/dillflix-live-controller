@@ -74,6 +74,7 @@ def content_view(snapshot, active, lifecycle, *, prime_search_at=None):
         "league": event.get("league") or snapshot.get("competition") or "unknown",
         "sports": snapshot.get("sports", []),
         "source": snapshot.get("source"),
+        "station_id": (snapshot.get("prime_idle") or {}).get("station_id"),
         "phase": phase_of(snapshot),
         "teams": teams,
         "artwork": snapshot.get("artwork") or {},
@@ -137,7 +138,97 @@ def entitlement_eligible(item):
     return entitlement is None or entitlement.get("status") == "entitled"
 
 
+def is_idle(item):
+    return item.get("source") == "prime_idle" or (item.get("snapshot") or {}).get("source") == "prime_idle"
+
+
+def retained_idle_identity(device, item, now):
+    """Retain issued work's identity, without granting a new launch or freshness."""
+    nomination = device.get("idle_sports") or {}
+    if not (is_idle(item) and device.get("preferences", {}).get("idle_sports_enabled")
+            and nomination.get("state") == "ready" and nomination.get("content_id") == item.get("content_id")
+            and item.get("lifecycle", {}).get("state") in {"live", "unknown"}
+            and item.get("content_id") not in device.get("manual_completions", {})
+            and not exhausted(device, item.get("content_id"))):
+        return False
+    if item.get("kind") == "broadcast":
+        end = parse_time(item.get("expected_end_time"))
+        return bool(end and now < end)
+    return item.get("kind") == "event"
+
+
+def idle_candidate_eligible(device, item, real_now):
+    """A model nomination is bounded evidence, never a wildcard priority rule."""
+    selection = device.get("idle_sports") or {}
+    expires = selection.get("expires_at")
+    return bool(
+        device.get("preferences", {}).get("idle_sports_enabled", False)
+        and device.get("automation") == "active"
+        and not device.get("manual_control") and not device.get("input_handoff")
+        and selection.get("state") == "ready"
+        and isinstance(expires, (int, float)) and real_now.timestamp() < expires
+        and selection.get("content_id") == item["content_id"]
+        and item["content_id"] not in device.get("manual_completions", {})
+        and not exhausted(device, item["content_id"])
+        and is_idle(item) and item["active"] and item["playable"]
+        and (item.get("entitlement") or {}).get("status") == "entitled"
+        and item["lifecycle"]["state"] == "live" and not item["lifecycle"].get("stale")
+    )
+
+
+def idle_blocked(decision):
+    """Only explicit automatic upcoming results may yield during their retry."""
+    return bool(decision.get("idle_blocked") or (decision.get("content_id") and (
+        decision.get("manual") or decision.get("prime_readiness") != "waiting_for_feed"
+        or not decision.get("retry_after")
+    )))
+
+
+def scheduled_choice(device, items, now, real_now):
+    """Evaluate ordinary intent without allowing an idle airing to hold it back."""
+    ordinary = [item for item in items if not is_idle(item)]
+    result = _choose(device, ordinary, now, real_now)
+    if not device.get("preferences", {}).get("idle_sports_enabled", False):
+        return result
+    deferred = result
+    remaining = ordinary
+    # A known upcoming feed is not currently available. Try the next normal
+    # event before idle TV; unknown access and manual retry remain protected.
+    while result.get("content_id") and not idle_blocked(result):
+        remaining = [item for item in remaining if item["content_id"] != result["content_id"]]
+        result = _choose(device, remaining, now, real_now)
+    if not result.get("content_id"):
+        result = deferred
+    committed = {entry["content_id"] for entry in device["plan"]}
+    if any(item["content_id"] in committed and item["lifecycle"]["state"] == "unknown"
+           and item["viewing_options"] and parse_time(item["start_time"]) <= now for item in ordinary):
+        # Unknown status must not turn a due watch-plan commitment into an
+        # idle-TV opportunity. Normal selection/recovery semantics stay intact.
+        result = {**result, "idle_blocked": True}
+    return result
+
+
 def choose(device, items, now, real_now):
+    result = scheduled_choice(device, items, now, real_now)
+    if idle_blocked(result):
+        return result
+    selected = next((item for item in items if idle_candidate_eligible(device, item, real_now)), None)
+    if selected is None:
+        return result
+    # Reuse route exclusions, attempt limits and retry backoff. The only rule
+    # admitted here is the fresh, device-scoped nomination; regular rules and
+    # accidental legacy plan entries cannot admit other Prime catalogue rows.
+    idle_device = {**device, "plan": [], "rules": [{
+        "id": "idle-sports", "name": "Idle sports", "source": "prime_idle",
+    }]}
+    fallback = _choose(idle_device, [selected], now, real_now)
+    if not fallback.get("content_id"):
+        return result
+    return {**fallback, "rule_id": None, "playback_origin": "idle_sports",
+            "reason": fallback["reason"] if fallback.get("retry_after") else "Playing sports while the watch schedule is idle"}
+
+
+def _choose(device, items, now, real_now):
     indexed = {e["content_id"]: e for e in items}
     current_id = (device.get("observed") or {}).get("content_id")
     access = {cid: a for cid, a in device.get("prime_access", {}).items()

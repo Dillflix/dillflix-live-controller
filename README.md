@@ -1,5 +1,7 @@
 # Dillflix Controller
 
+Dynamic Prime-sourced idle sports can fill otherwise idle streams; see [idle sports](docs/idle-sports.md) for requirements, priority and evidence policy.
+
 For incident exports and persistent player/controller boot services, see [diagnostics and recovery](docs/diagnostics.md).
 Chooser model calls are automatically retained for later dataset preparation; see [capture and JSONL export](docs/model-capture.md).
 

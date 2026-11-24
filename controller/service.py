@@ -22,6 +22,7 @@ from .content_status import (
 from .coordinator import PlaybackCoordinator
 from .database import Database, PreparationChanged, encode
 from .entitlements import EntitlementChecks
+from .idle_sports import IdleSports
 from .event_attempts import attempt_status, DEFAULT_ATTEMPT_LIMIT
 from .fixtures import default_device, fixtures, make_team
 from .launch_progress import launch_progress
@@ -46,7 +47,7 @@ from .teamarr import TeamarrClient
 log = logging.getLogger(__name__)
 
 
-class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
+class Controller(IdleSports, EntitlementChecks, ManualControl, PlaybackCoordinator, ContentStatusCoordinator):
     CONFIG_FIELDS = ("rules", "team_ranks", "preferences")
 
     def __init__(
@@ -335,6 +336,7 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             device = self.db.device(db, device_id)
             devices.append((device_id, sorted(self.pinned_content_ids(db, device_id=device_id)),
                             device["manual_completions"], device["preferences"]["discovery_leagues"],
+                            device.get("idle_sports"), device["preferences"].get("idle_sports_enabled", False),
                             available_stream(self, device_id, device),
                             planning_devices(self, db, device)))
         return ([tuple(row) for row in db.execute("SELECT name,revision FROM planning_versions ORDER BY name")],
@@ -484,6 +486,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
             retained = {device.get("desired"), (device.get("observed") or {}).get("content_id")}
             cards = []
             for item in items:
+                if item.get("source") == "prime_idle" and (events_only or item["content_id"] not in retained):
+                    continue
                 if not item["active"] and item["content_id"] not in plan_ids | retained:
                     continue
                 card = {k: v for k, v in item.items() if k != "snapshot"}
@@ -713,6 +717,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
         if op in {"add", "play_now"}:
             if content_id not in items:
                 raise HTTPException(404, "Content is not in the catalog")
+            if items[content_id].get("source") == "prime_idle":
+                raise HTTPException(422, "Idle sports are selected automatically while the schedule is idle")
             if items[content_id]["lifecycle"]["state"] in {"ended", "cancelled"}:
                 raise HTTPException(422, "This event has finished or was cancelled")
             if (items[content_id].get("entitlement") or {}).get("blocked"):
@@ -871,6 +877,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
 
         if "event_attempt_limit" not in update.preferences.model_fields_set:
             data["preferences"].pop("event_attempt_limit", None)
+        if "idle_sports_enabled" not in update.preferences.model_fields_set:
+            data["preferences"].pop("idle_sports_enabled", None)
 
         def apply(db, device):
             if len({r["id"] for r in data["rules"]}) != len(data["rules"]):
@@ -882,6 +890,9 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 team_ranks=data["team_ranks"],
                 preferences={
                     **data["preferences"],
+                    "idle_sports_enabled": data["preferences"].get(
+                        "idle_sports_enabled", device["preferences"].get("idle_sports_enabled", False)
+                    ),
                     "event_attempt_limit": data["preferences"].get(
                         "event_attempt_limit", device["preferences"].get("event_attempt_limit", DEFAULT_ATTEMPT_LIMIT)
                     ),
@@ -1274,6 +1285,8 @@ class Controller(EntitlementChecks, ManualControl, PlaybackCoordinator, ContentS
                 functions.update(catalog=self.run_feed, team_directory=self.run_team_directory)
         if self is self.root and self.settings.mode == "teamarr" and self.executor:
             functions["entitlements"] = self.run_entitlements
+        if self.executor:
+            functions["idle_sports"] = self.run_idle_sports
         self.workers = {name: BackgroundWorker(name, function) for name, function in functions.items()}
         self.tasks = [
             asyncio.create_task(worker.run(), name="controller:" + name)

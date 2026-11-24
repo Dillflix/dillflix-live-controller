@@ -99,6 +99,7 @@ class Preferences(StrictModel):
     minimum_viewing_seconds: int = Field(default=300, ge=0, le=3600)
     switch_cooldown_seconds: int = Field(default=30, ge=0, le=600)
     same_tier_switching: bool = False
+    idle_sports_enabled: bool = Field(default=False, strict=True)
     discovery_leagues: list[str] = Field(default_factory=lambda: list(DEFAULT_LEAGUES), max_length=100)
 
     @field_validator("discovery_leagues")

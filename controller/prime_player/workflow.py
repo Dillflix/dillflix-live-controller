@@ -19,12 +19,13 @@ from ..executor.worker import PlaybackWorker
 from ..model_capture import ModelCaptureStore
 from ..model_diagnostics import capture_model_calls_async
 from ..planner import parse_time
-from .catalogue import SELECTION_HANDOFF_SECONDS, CatalogueChecks
+from .catalogue import SELECTION_HANDOFF_SECONDS, CatalogueChecks, renew_idle_evidence
 from .client import PrimePlayerClient, correlated
 from .matching import EventMatcher, selection_state, unavailable_live_trial
 from .match_context import IDENTITY_CONTRACT
 from .network import NetworkAcquisition
 from .search import choose_search
+from .linear import airing_valid_until, catalogue_capability, choose_airing, choose_idle_event, is_idle, is_linear, read_catalogue, timestamp
 
 
 class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker):
@@ -294,7 +295,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         if acquired is False:
             return False
         health = await self.check_session(
-            capabilities=("search", "play", "playback_status", "cancel", "stop")
+            capabilities=(catalogue_capability(request), "play", "playback_status", "cancel", "stop")
         )
         if health.get("api_version", 0) < 11:
             raise ExecutorError(
@@ -321,13 +322,13 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             await self.database_call(self.save_workflow, token, catalogue_probe_id=prepared["id"], catalogue=results, query=prepared["query"])
         else:
             async def search(query):
-                current = await self.check_session(session, capabilities=("search",))
+                current = await self.check_session(session, capabilities=(catalogue_capability(request),))
                 receipt = self.player.ownership(current, automatic=True)
                 await self.database_call(self.save_workflow, token, query=query)
                 await self.database_call(self.store.phase, token, "searching")
                 results = await self.mutation(
                     token, "PRIME_SEARCH",
-                    lambda: self.player.search(query, self.config.prime_search_timeout, receipt),
+                    lambda: read_catalogue(self.player, request, query, self.config.prime_search_timeout, receipt),
                 )
                 if results.get("session_id") != session:
                     raise ExecutorError("prime_stale_result", "Search result belongs to another session")
@@ -377,15 +378,28 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             return False
         if time.monotonic() - selected_at > SELECTION_HANDOFF_SECONDS:
             raise ExecutorError("prime_stale_result", "Catalogue selection is stale; refresh before launch")
+        if is_idle(request) and (not timestamp(results.get("observed_at")) or not
+                0 <= (datetime.now(UTC) - timestamp(results["observed_at"])).total_seconds() < 60):
+            raise ExecutorError("prime_stale_result", "Idle sports catalogue evidence expired before launch")
+        if is_linear(request) and not airing_valid_until(selected, datetime.now(UTC)):
+            raise ExecutorError("prime_linear_airing_unverified", "TV airing guide evidence expired before launch")
         health = await self.check_session(session, capabilities=("play",))
         self.require_catalogue_generation(health, results)
         ownership = self.player.ownership(health, automatic=True)
+        if is_idle(request):
+            await self.database_call(self.save_catalogue_refresh, token, request, selected, results, audit)
         attempt = uuid4().hex
         await self.database_call(self.save_workflow, token, attempt_id=attempt, selected=selected, launch_outcome=None, ownership=ownership)
         await self.database_call(self.store.phase, token, "launching")
+        async def play_selected():
+            if is_idle(request) and not 0 <= (datetime.now(UTC) - timestamp(results["observed_at"])).total_seconds() < 60:
+                raise ExecutorError("prime_stale_result", "Idle sports catalogue evidence expired before Play")
+            if is_linear(request) and not airing_valid_until(selected, datetime.now(UTC)):
+                raise ExecutorError("prime_linear_airing_unverified", "TV airing evidence expired before Play")
+            return await self.player.play(selected["content_id"], attempt, ownership)
         try:
             outcome = await self.mutation(
-                token, "PRIME_PLAY", lambda: self.player.play(selected["content_id"], attempt, ownership)
+                token, "PRIME_PLAY", play_selected
             )
             self.validate_outcome(outcome, (await self.database_call(self.store.report, token))["prime_player"])
             await self.database_call(self.save_workflow, token, launch_outcome=outcome)
@@ -428,7 +442,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         if outcome.get("evidence", {}).get("launch", {}).get("disposition") == "not_invoked":
             return
         if (
-            workflow["selected"].get("parent_content_id")
+            (workflow["selected"].get("parent_content_id") or workflow["selected"].get("linear_airing"))
             and outcome.get("resolved_id")
             and outcome["resolved_id"] != workflow["selected"]["content_id"]
         ):
@@ -496,6 +510,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     raise ExecutorError(
                         "prime_non_live_resolution", "Verified launch lacks live resolution evidence"
                     )
+                await self.refresh_linear_airing(token, request, workflow)
                 await self.database_call(self.record_launch, token, outcome)
                 return
             await asyncio.sleep(2)
@@ -567,6 +582,10 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             report = json.loads(row["report"])
             workflow = report["prime_player"]
             self.validate_outcome(outcome, workflow)
+            if is_linear(json.loads(row["request"])) and not airing_valid_until(workflow["selected"], now):
+                raise ExecutorError("prime_linear_airing_unverified", "TV airing guide evidence expired during startup")
+            if is_idle(json.loads(row["request"])) and not self.idle_evidence_until(workflow, now):
+                raise ExecutorError("prime_stale_result", "Idle sports catalogue evidence expired during startup")
             if (outcome.get("state") == "playing" and
                     outcome.get("evidence", {}).get("resolution", {}).get("playbackClass") == "live_watch_now"):
                 self.record_playback_entitlement(db, row, workflow)
@@ -581,7 +600,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 "simulated": False,
                 "health": "healthy",
                 "observed_at": now.isoformat(),
-                "valid_until": (now + timedelta(seconds=self.settings.playback_evidence_ttl)).isoformat(),
+                "valid_until": min(now + timedelta(seconds=self.settings.playback_evidence_ttl),
+                                   airing_valid_until(workflow["selected"], now) or datetime.max.replace(tzinfo=UTC)).isoformat(),
                 "evidence": {
                     "method": "device_observation",
                     "evidence_id": f"prime:{workflow['session_id']}:{workflow['attempt_id']}",
@@ -653,6 +673,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             ).fetchone()
             ended = bool(
                 fresh
+                and not is_linear(json.loads(row["request"]))
                 and status.get("state") == "ended"
                 and status.get("is_playing") is False
                 and status.get("matches_attempt") is True
@@ -671,6 +692,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 return False
             verified = bool(
                 fresh
+                and (not is_linear(json.loads(row["request"])) or airing_valid_until(workflow["selected"], now))
                 and launch.get("state") == "playing"
                 and launch.get("evidence", {}).get("resolution", {}).get("playbackClass") == "live_watch_now"
                 and status.get("state") == "playing"
@@ -693,9 +715,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                     "simulated": False,
                     "health": "healthy",
                     "observed_at": observed.isoformat(),
-                    "valid_until": (
-                        observed + timedelta(seconds=self.settings.playback_evidence_ttl)
-                    ).isoformat(),
+                    "valid_until": min(observed + timedelta(seconds=self.settings.playback_evidence_ttl),
+                                       airing_valid_until(workflow["selected"], now) or datetime.max.replace(tzinfo=UTC)).isoformat(),
                     "evidence": {
                         "method": "device_observation",
                         "evidence_id": f"prime:{workflow['session_id']}:{workflow['attempt_id']}",
@@ -809,6 +830,8 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
     async def revalidate_identity(self, token, request, workflow):
         """Recheck old mappings once, using retained evidence without device commands."""
         selected = workflow.get("selected") or {}
+        if is_linear(request) and not selected.get("linear_airing"):
+            raise ExecutorError("prime_event_identity_unproven", "TV playback requires a bound station and airing")
         if selected.get("identity_contract") == IDENTITY_CONTRACT:
             return
         parent_id = selected.get("parent_content_id") or selected.get("content_id")
@@ -833,15 +856,70 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         await self.database_call(self.save_workflow, token, selected=selected)
         workflow["selected"] = selected
 
+    @staticmethod
+    def idle_evidence_until(workflow, now):
+        observed = timestamp((workflow.get("catalogue") or {}).get("observed_at"))
+        if observed and 0 <= (now - observed).total_seconds() < 60:
+            return observed + timedelta(seconds=60)
+        return None
+
+    def save_catalogue_refresh(self, token, request, selected, results, audit):
+        with self.db.transaction() as db:
+            row = self.store.allowed(db, token)
+            if row["state"] != "playing_verified":
+                self.store.allowed(db, token, navigation=True)
+            device = self.db.device(db, row["device_id"])
+            if device["intent_version"] != row["intent"]:
+                raise ExecutorError("superseded", "Idle sports intent changed")
+            if is_idle(request) and renew_idle_evidence(db, self.db, device, request, results, selected) is None:
+                raise ExecutorError("prime_stale_result", "Idle sports evidence no longer matches the nomination")
+            report = json.loads(row["report"])
+            report.setdefault("prime_player", {}).update(selected=selected, catalogue=results, selection=audit)
+            self.store.write(db, token, report)
+
+    async def refresh_linear_airing(self, token, request, workflow):
+        if not is_linear(request) and not is_idle(request):
+            return
+        selected = workflow["selected"]
+        now = datetime.now(UTC)
+        until = airing_valid_until(selected, now) if is_linear(request) else self.idle_evidence_until(workflow, now)
+        if until and (until - now).total_seconds() > self.config.monitor_interval:
+            return
+        async with self.input_lock:
+            health = await self.check_session(workflow["session_id"], capabilities=("linear_catalog",))
+            self.require_catalogue_generation(health, workflow["catalogue"])
+            ownership = self.player.ownership(health, automatic=True)
+            results = await read_catalogue(self.player, request, request["content_snapshot"]["title"],
+                                           self.config.prime_search_timeout,
+                                           ownership)
+            after = await self.check_session(workflow["session_id"], capabilities=("linear_catalog",))
+            self.require_catalogue_generation(after, results)
+            if (results.get("session_id") != workflow["session_id"]
+                    or self.player.ownership(after, automatic=True) != ownership):
+                raise ExecutorError("prime_stale_result", "Live TV guide session or ownership changed")
+        choice, audit = (choose_airing if is_linear(request) else choose_idle_event)(request, results)
+        if (not choice or choice["readiness"] != "ready" or choice["content_id"] != selected["content_id"]
+                or choice["viewing_option_id"] != selected["viewing_option_id"]
+                or (is_linear(request) and choice["linear_airing"]["airing_id"] != selected["linear_airing"]["airing_id"])):
+            raise ExecutorError("prime_linear_airing_unverified", "Current guide no longer confirms the selected TV airing")
+        await self.database_call(self.save_catalogue_refresh, token, request, choice, results, audit)
+        workflow.update(selected=choice, catalogue=results, selection=audit)
+
     @correlated
     async def monitor(self, row):
         token = row["token"]
         try:
             workflow = await self.database_call(lambda: self.store.report(token)["prime_player"])
-            await self.revalidate_identity(token, json.loads(row["request"]), workflow)
+            request = json.loads(row["request"])
+            await self.revalidate_identity(token, request, workflow)
+            idle_event = is_idle(request) and not is_linear(request)
+            if not idle_event:
+                await self.refresh_linear_airing(token, request, workflow)
             await self.check_session(workflow["session_id"], capabilities=("playback_status",))
             async with self.input_lock:
                 status = await self.player.status(workflow["attempt_id"], self.config.prime_status_timeout)
+            if idle_event and status.get("state") != "ended":
+                await self.refresh_linear_airing(token, request, workflow)
             await self.database_call(lambda: self.record_status(token, status))
         except asyncio.CancelledError:
             raise

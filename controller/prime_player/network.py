@@ -11,6 +11,7 @@ from ..network_policy import NetworkPolicy
 from ..planner import parse_time
 from .matching import selection_state
 from .search import choose_search
+from .linear import catalogue_capability, read_catalogue
 
 NETWORK_ERRORS = {
     "network_permission_required": "VPN setup requires Android and OpenVPN API consent",
@@ -195,10 +196,11 @@ class NetworkAcquisition:
                 return value
 
             async def search(query):
-                value = await current("search")
+                value = await current(catalogue_capability(request))
                 await self.database_call(self.store.phase, token, "searching")
-                results = await self.mutation(token, "PRIME_SEARCH", lambda: self.player.search(
-                    query, self.config.prime_search_timeout, self.player.ownership(value, automatic=True)))
+                results = await self.mutation(token, "PRIME_SEARCH", lambda: read_catalogue(
+                    self.player, request, query, self.config.prime_search_timeout,
+                    self.player.ownership(value, automatic=True)))
                 self.require_catalogue_generation(value, results)
                 if results.get("session_id") != session:
                     raise ExecutorError("prime_stale_result", "Search belongs to a replaced session")

@@ -12,6 +12,8 @@ def public_overview(service, actor, device_id=None):
         current_id = observed.get("content_id")
         events = []
         for item in items:
+            if item.get("source") == "prime_idle" and item["content_id"] != current_id:
+                continue
             if not item["active"] and item["content_id"] not in planned | {current_id}:
                 continue
             card = {
@@ -22,6 +24,7 @@ def public_overview(service, actor, device_id=None):
                     "league",
                     "phase",
                     "kind",
+                    "source",
                     "start_time",
                     "expected_end_time",
                     "scores",
@@ -87,5 +90,5 @@ def public_overview(service, actor, device_id=None):
                 "simulated": bool(observed.get("simulated")),
                 "switching": device["playback_state"] == "navigating",
             },
-            "events": events,
+            "events": [e for e in events if e.get("source") != "prime_idle"],
         }
