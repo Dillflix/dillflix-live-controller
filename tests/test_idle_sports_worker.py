@@ -42,6 +42,7 @@ class MemoryDatabase:
     save_device = staticmethod(Database.save_device)
     set_meta = staticmethod(Database.set_meta)
     meta = staticmethod(Database.meta)
+    log = staticmethod(Database.log)
 
     def __init__(self):
         self.connection = sqlite3.connect(":memory:")
@@ -56,6 +57,8 @@ class MemoryDatabase:
             CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT);
             CREATE TABLE content_status(content_id TEXT PRIMARY KEY,observation TEXT);
             CREATE TABLE team_directory(key TEXT PRIMARY KEY,payload TEXT);
+            CREATE TABLE activity(sequence INTEGER PRIMARY KEY AUTOINCREMENT,device_id TEXT,at TEXT,
+                kind TEXT,message TEXT,detail TEXT);
         """)
 
     @contextmanager
@@ -169,6 +172,79 @@ def change(worker, **fields):
 
 def state(worker):
     return worker.db.device(worker.db.connection, worker.device_id).get("idle_sports", {})
+
+
+def idle_activity(worker):
+    return [dict(row) for row in worker.db.connection.execute(
+        "SELECT * FROM activity WHERE kind='idle_sports' AND device_id=? ORDER BY sequence", (worker.device_id,))]
+
+
+async def test_idle_activity_shows_discovery_selection_but_does_not_claim_playback(worker):
+    assert await worker.refresh_idle_sports()
+    rows = idle_activity(worker)
+    assert [r['message'] for r in rows] == [
+        'Checking Prime for idle sports', 'Choosing idle sports', 'Idle sports selected']
+    assert candidate()['title'] in rows[-1]['detail']
+    assert candidate()['station_name'] in rows[-1]['detail']
+    assert worker.db.connection.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == 0
+    change(worker, idle_sports={**state(worker), 'next_check_at': 0})
+    assert await worker.refresh_idle_sports()
+    assert idle_activity(worker) == rows  # Routine renewal does not flood activity.
+    assert not idle_activity(worker.root.runtimes['two'])
+
+
+def test_failure_activity_is_fixed_copy_deduplicated_and_recovers(worker):
+    context = worker.idle_context()
+    error = ExecutorError('idle_sports_selection_invalid', 'private raw model response')
+    error.validation_reason = 'invented_current_program'
+    worker.idle_failure(context, error)
+    rows = idle_activity(worker)
+    assert len(rows) == 1 and rows[0]['message'] == 'Idle sports check failed'
+    assert 'failed validation' in rows[0]['detail'] and '20 seconds' in rows[0]['detail']
+    assert 'private' not in json.dumps(rows)
+    worker.idle_failure(context, error)
+    assert idle_activity(worker) == rows
+    worker.idle_failure(context, ExecutorError('prime_linear_catalog_timeout', 'private network error'))
+    assert len(idle_activity(worker)) == 2
+    assert 'timed out' in idle_activity(worker)[-1]['detail']
+    assert worker.idle_publish(context, candidate(), {}, {})
+    assert idle_activity(worker)[-1]['message'] == 'Idle sports selected'
+
+
+def test_repeated_empty_checks_are_bounded_and_new_intent_is_visible(worker):
+    context = worker.idle_context()
+    for _ in range(3):
+        worker.idle_progress(context, 'catalogue')
+        worker.idle_progress(context, 'choosing')
+        assert worker.idle_publish(context, None, {'match_status': 'uncertain', 'reason': 'private model explanation'}, {})
+    rows = idle_activity(worker)
+    assert len(rows) == 3
+    assert rows[-1]['message'] == 'No idle sports selection confirmed'
+    assert 'private' not in json.dumps(rows)
+    change(worker, intent_version=2, idle_sports={**state(worker), 'next_check_at': 0})
+    context = worker.idle_context()
+    worker.idle_progress(context, 'catalogue')
+    assert len(idle_activity(worker)) == 4
+
+
+def test_repeated_status_returns_to_activity_after_five_minutes(worker):
+    context = worker.idle_context()
+    worker.idle_progress(context, 'catalogue')
+    key = 'idle_sports_activity:' + worker.device_id
+    saved = worker.db.meta(worker.db.connection, key)
+    saved['catalogue']['at'] -= 300
+    worker.db.set_meta(worker.db.connection, key, saved)
+    worker.idle_progress(context, 'catalogue')
+    assert len(idle_activity(worker)) == 2
+
+
+def test_superseded_idle_results_never_write_activity(worker):
+    context = worker.idle_context()
+    change(worker, intent_version=2)
+    assert not worker.idle_progress(context, 'catalogue')
+    assert not worker.idle_publish(context, candidate(), {}, {})
+    worker.idle_failure(context, ExecutorError('idle_sports_selection_invalid', 'stale'))
+    assert not idle_activity(worker)
 
 
 def insert_event(worker):

@@ -36,6 +36,14 @@ not renew evidence or become subscription denials. Missing capability, invalid
 model responses and service outages leave the stream without an idle nomination
 and retry with bounded backoff. Existing manual/device ownership is preserved.
 
+The stream's activity log shows catalogue checks, chooser progress, selections,
+unconfirmed results and failures with retry delays. A selection entry is not a
+playback confirmation; the normal launch/verification entries follow separately.
+Unchanged refreshes are quiet, with repeated checking/failure notices limited to
+once per five minutes. Changed outcomes and new playback intent are logged at once.
+These entries contain fixed explanations and programme labels, not raw model or
+player responses. Full call and validation details remain in diagnostics.
+
 ## Internal contract
 
 `linear_catalog(facet="sports", max_pages=3)` starts with a bounded read-only
