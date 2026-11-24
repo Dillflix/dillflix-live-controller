@@ -74,6 +74,32 @@ async def test_native_live_event_can_be_chosen_without_a_teamarr_identity():
     assert selected["content_id"] == "amzn1.dv.gti.event-one"
 
 
+async def test_initial_selection_accepts_null_switch_reason_from_captured_response_pattern():
+    item = candidate(title="NHL Hockey", episode_title="Toronto Maple Leafs at New York Islanders",
+                     synopsis="From UBS Arena in Elmont, N.Y.")
+    model = matcher(answer(item, classification="competition", switch_reason=None, evidence=[
+        {"field": "title", "quote": item["title"]},
+        {"field": "episode_title", "quote": item["episode_title"]},
+        {"field": "synopsis", "quote": item["synopsis"]},
+    ]))
+    captures = []
+    with capture_model_calls(captures.append):
+        selected, audit = await choose([item], matcher=model, now=NOW)
+    assert selected == item
+    assert audit["switch_reason"] == "no_eligible_current"
+    assert audit["match_status"] == "matched"
+    assert model.model.result["switch_reason"] is None  # Keep the raw model response intact.
+    assert captures[-1]["validation"]["state"] == "passed"
+
+
+@pytest.mark.parametrize('reason', ['keep_current', 'stronger_preference', 'current_unsuitable'])
+async def test_initial_selection_still_rejects_a_claimed_switch_from_nonexistent_current(reason):
+    item = candidate()
+    with pytest.raises(ExecutorError) as error:
+        await choose([item], matcher=matcher(answer(item, switch_reason=reason)), now=NOW)
+    assert error.value.validation_reason == 'invented_current_program'
+
+
 @pytest.mark.parametrize("changes", [
     {"entitlement_status": "UNENTITLED"}, {"entitlement_status": None}, {"has_watch_action": False},
     {"station_id": "guessed-station"}, {"airing_id": None}, {"starts_at": None}, {"ends_at": None},
