@@ -1,4 +1,5 @@
 import { leagueName } from "./leagues";
+import { isIdleSports } from "./idleSports";
 import { eventSchedule } from "./eventSchedule";
 import { ScheduleCalendar, ScheduleViewToggle, useScheduleView } from "./ScheduleCalendar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import { LiveStreams } from "./LiveStreams";
 import "./styles.css";
 
 interface PublicEvent {
+  source?: string;
   entitlement?: Entitlement | null;
   content_id: string;
   title: string;
@@ -258,7 +260,7 @@ function PublicWorkspace({ deviceId, selectDevice }: {
   const time = (value: string) => new Intl.DateTimeFormat(undefined, {
     hour: "numeric", minute: "2-digit", timeZone: data.timezone,
   }).format(new Date(value));
-  const entitledEvents = data.events.filter(e => e.entitlement?.status === "entitled");
+  const entitledEvents = data.events.filter(e => !isIdleSports(e) && e.entitlement?.status === "entitled");
   const filteredEvents = entitledEvents.filter(
     (e) =>
       e.active &&
@@ -428,7 +430,9 @@ function PublicWorkspace({ deviceId, selectDevice }: {
             <p className="df-playing-detail">
               {now.switching
                 ? "Switching coverage · waiting for playback confirmation"
-                : "Shared live coverage on Dillflix"}
+                : now.event && isIdleSports(now.event)
+                  ? "Sports from Prime Video while the schedule is idle"
+                  : "Shared live coverage on Dillflix"}
             </p>
           </div>
         </section>

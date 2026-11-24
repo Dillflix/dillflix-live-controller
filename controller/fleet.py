@@ -4,11 +4,17 @@ import copy
 import json
 from datetime import timedelta
 
-from .planner import choose, entitlement_eligible, ordered_plan, parse_time, preview_plan
+from .planner import choose, entitlement_eligible, idle_candidate_eligible, is_idle, ordered_plan, parse_time, preview_plan, retained_idle_identity, scheduled_choice, idle_blocked
 from .entitlement_store import identity
 
 
 SHARED_FIELDS = ("plan", "rules", "team_ranks", "manual_completions", "public_access")
+
+
+def idle_station(item):
+    if not is_idle(item):
+        return None
+    return item.get("station_id") or ((item.get("snapshot") or {}).get("prime_idle") or {}).get("station_id")
 
 
 def catalogue_reservation(device, items, real, *, load_source=None):
@@ -27,9 +33,11 @@ def catalogue_reservation(device, items, real, *, load_source=None):
         and real.timestamp() < pending.get("expires", 0)
         and device["automation"] == "active"
         and not device.get("manual_control") and not device.get("input_handoff")
-        and (item["active"] or item["content_id"] in {p["content_id"] for p in device["plan"]})
+        and (item["active"] or item["content_id"] in {p["content_id"] for p in device["plan"]}
+             or is_idle(item) and retained_idle_identity(device, item, real))
         and (item["playable"] or item["lifecycle"]["state"] == "unknown")
-        and entitlement_eligible(item)
+        and (entitlement_eligible(item) or is_idle(item) and retained_idle_identity(device, item, real))
+        and (not is_idle(item) or retained_idle_identity(device, item, real))
         and pending.get("identity") == identity(load_source(item) if load_source else item)
     ):
         return item["content_id"]
@@ -177,28 +185,55 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
 
     runtimes = service.root.runtimes
     if len(runtimes) < 2:
+        held = catalogue_reservation(device, items, real,
+            load_source=lambda item: item if "snapshot" in item else service.with_source(db, item))
+        held_item = next((item for item in items if item["content_id"] == held), None)
+        if (held_item and is_idle(held_item)
+                and not idle_blocked(scheduled_choice(device, items, now, real))):
+            return {"content_id": held, "manual": False, "rule_id": None,
+                    "selection_only": not idle_candidate_eligible(device, held_item, real),
+                    "reason": "Checking Prime catalogue before switching playback"}
         return choose(device, items, now, real)
 
     devices, claims = allocation_inputs(service, db, device)
     reserved = set().union(*(value for key, value in claims.items() if key != device["id"]))
-    available = [item for item in items if item["content_id"] not in reserved]
+    indexed_claims = {item["content_id"]: item for item in items}
+    if any(is_idle(item) for item in items):
+        # A retained physical claim can outlive its guide row's active window.
+        # Read only missing claimed identities, not every peer catalogue.
+        for content_id in set().union(*claims.values()) - indexed_claims.keys():
+            row = db.execute("SELECT snapshot FROM contents WHERE id=?", (content_id,)).fetchone()
+            if row:
+                indexed_claims[content_id] = {"snapshot": json.loads(row[0])}
+
+    def claimed_stations(content_ids):
+        return {station for cid in content_ids if (station := idle_station(indexed_claims.get(cid, {})))}
+
+    reserved_stations = claimed_stations(reserved)
+    available = [item for item in items if item["content_id"] not in reserved
+                 and idle_station(item) not in reserved_stations]
     idle = {key: value for key, value in devices.items() if not claims[key] and available_stream(service, key, value)}
     assignments = {}
     held = catalogue_reservation(device, items, real,
         load_source=lambda item: item if "snapshot" in item else service.with_source(db, item))
-    if held and held not in reserved:
+    held_item = next((item for item in available if item["content_id"] == held), None)
+    if (held_item and (not is_idle(held_item)
+                      or not idle_blocked(scheduled_choice(device, available, now, real)))):
         # Do not let one scheduler tick replace a still-running catalogue read
         # with the previously playing event when feed status briefly expires.
         return {"content_id": held, "manual": held in {p["content_id"] for p in device["plan"]},
+                "selection_only": is_idle(held_item) and not idle_candidate_eligible(device, held_item, real),
                 "rule_id": None, "reason": "Checking Prime catalogue before switching playback"}
     if device["id"] in idle:
         occupied = set().union(*claims.values())
+        occupied_stations = claimed_stations(occupied)
         candidates, indexed = {}, {}
         # N choices per stream suffice: at most N-1 other idle streams can
         # occupy earlier choices. Keep choose's local access/retry/policy rules.
         for key, other in idle.items():
             local = items if key == device["id"] else runtimes[key].planning_items(db, key)
-            remaining = [item for item in local if item["content_id"] not in occupied]
+            remaining = [item for item in local if item["content_id"] not in occupied
+                         and idle_station(item) not in occupied_stations]
             options = candidates[key] = {}
             for _ in range(len(idle)):
                 selected = choose(other, remaining, now, real)
@@ -207,14 +242,19 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
                     break
                 options[content_id] = selected
                 indexed[content_id] = next(item for item in remaining if item["content_id"] == content_id)
+                if is_idle(indexed[content_id]):
+                    # The nomination already follows every available normal
+                    # candidate. Removing it would expose only a deferred
+                    # upcoming retry, which must not outrank ready idle TV.
+                    break
                 remaining = [item for item in remaining if item["content_id"] != content_id]
         plan_order = {entry["content_id"]: index for index, entry in reversed(list(enumerate(ordered_plan(device))))}
 
         def event_order(content_id):
             item = indexed[content_id]
-            if content_id in plan_order:
+            if not is_idle(item) and content_id in plan_order:
                 return (0, plan_order[content_id], 0, "", content_id)
-            return (1, priority(device, item), team_priority(device, item), item["start_time"], content_id)
+            return (2 if is_idle(item) else 1, priority(device, item), team_priority(device, item), item["start_time"], content_id)
 
         # Augmenting paths can move an unstarted assignment to another eligible
         # stream, preserving higher-priority events while filling spare capacity.
@@ -235,6 +275,9 @@ def select_for_stream(service, db, device, items, now, real, *, reserve=True):
             return False
 
         for content_id in sorted(indexed, key=event_order):
+            station = idle_station(indexed[content_id])
+            if station and any(idle_station(indexed[cid]) == station for cid in assignments.values()):
+                continue
             place(content_id, set())
             if len(assignments) == len(idle):
                 break

@@ -16,6 +16,9 @@ async def test_export_is_read_only_and_keeps_device_scope(tmp_path):
         with service.db.transaction() as db:
             service.db.log(db, "2026-10-03T08:00:00Z", "Decision", "detail", "test", "living-room")
             service.db.log(db, "2026-10-03T08:00:00Z", "Other device", "hidden", "test", "other")
+            service.db.set_meta(db, "idle_sports_audit:living-room", {
+                "candidate_count": 0, "coverage": {"exhausted": False}, "reason": "Partial catalogue"})
+            service.db.set_meta(db, "idle_sports_audit:other", {"reason": "Other stream"})
         store = ModelCaptureStore(service.settings.database)
         assert store.record({
             "call_id": "failed-choice", "context": {"device_id": "living-room"},
@@ -34,6 +37,8 @@ async def test_export_is_read_only_and_keeps_device_scope(tmp_path):
             assert bundle["prime_player"]["state"] == "not_configured"
             assert any(r["message"] == "Decision" for r in bundle["activity"])
             assert not any(r["message"] == "Other device" for r in bundle["activity"])
+            assert bundle["idle_sports"]["reason"] == "Partial catalogue"
+            assert bundle["idle_sports"]["coverage"]["exhausted"] is False
             capture = bundle["model_capture"]["records"][0]
             assert capture["call_id"] == "failed-choice"
             assert capture["response"]["json"]["answer"] == "selected ID"

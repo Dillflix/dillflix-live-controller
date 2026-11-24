@@ -183,8 +183,9 @@ class ExecutorStore:
                 "SELECT snapshot,seen_at FROM contents WHERE id=?", (row["content_id"],)
             ).fetchone()
             if catalog:
+                snapshot = json.loads(catalog["snapshot"])
                 feed = source_observation(
-                    json.loads(catalog["snapshot"]),
+                    snapshot,
                     catalog["seen_at"],
                     now,
                     now,
@@ -192,6 +193,12 @@ class ExecutorStore:
                     self.settings.status_ttl,
                 )
                 feed.update(source="teamarr_feed", simulated=False)
+                if snapshot.get("source") == "prime_idle":
+                    from ..idle_sports import lifecycle as idle_lifecycle
+                    idle = idle_lifecycle(snapshot, now, True)
+                    feed.update(state=idle["state"], source="prime_live_catalogue",
+                        observed_at=idle["observed_at"], received_at=idle["received_at"],
+                        valid_until=idle["valid_until"])
                 lifecycle.update(
                     observation=feed,
                     effective_state=feed["state"],

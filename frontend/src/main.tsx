@@ -1,4 +1,5 @@
 import { leagueName } from "./leagues";
+import { idleSportsStatus, isIdleSports } from "./idleSports";
 import { eventSchedule } from "./eventSchedule";
 import { ScheduleCalendar, ScheduleViewToggle, useScheduleView } from "./ScheduleCalendar";
 import { EntitlementFilter, matchesEntitlement } from "./EntitlementFilter";
@@ -548,7 +549,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
   const allTeams = data.teams;
   const leagues = [
     ...new Set([
-      ...data.events.map((e) => e.league),
+      ...data.events.filter((e) => !isIdleSports(e)).map((e) => e.league),
       ...allTeams.map((t) => t.league),
       ...Object.keys(d.team_ranks),
       ...d.rules.map((r) => r.league).filter((l) => l !== "all"),
@@ -890,6 +891,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
     e.lifecycle.state === "live" || e.playable;
   const filteredEvents = data.events.filter(
     (e) =>
+      !isIdleSports(e) &&
       matchesEntitlement(e.entitlement, entitlementFilter) &&
       (e.active || e.lifecycle.state === "live" || e.playable) &&
       (sport === "all" || e.league === sport) &&
@@ -987,6 +989,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                       ? "You choose what’s on TV"
                       : "Waiting for live sports")}
                   {protectedEvent && <Pill protected>Protected</Pill>}
+                  {currentEvent && isIdleSports(currentEvent) && <Pill>Idle sports</Pill>}
                   {currentEntry && (
                     <Pill>
                       {currentEntry.actor?.type === "user"
@@ -1012,9 +1015,15 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                       : "Playback is unverified. Your watch plan is retained."}
                   </div>
                 )}
+                {d.preferences.idle_sports_enabled && !d.manual_control && d.automation === "active" && (
+                  <div className="df-playing-detail" data-testid="idle-sports-status" aria-live="polite">
+                    {idleSportsStatus(d)}
+                  </div>
+                )}
               </div>
               <div className="df-playing-controls">
                 {currentEvent &&
+                  !isIdleSports(currentEvent) &&
                   !["ended", "cancelled"].includes(
                     currentEvent.lifecycle.state,
                   ) && (
@@ -1634,6 +1643,26 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                   <h2>Automatic switching</h2>
                   <div className="df-setting">
                     <div className="df-row-copy">
+                      <strong>Play sports when schedule is idle</strong>
+                      <p>
+                        Choose sports on now from Prime Video, including live TV
+                        sports shows and games, using your priorities. Scheduled
+                        coverage and manual choices take priority. Pausing
+                        automatic playback also pauses idle sports.
+                      </p>
+                      <p data-testid="idle-sports-setting-status">{idleSportsStatus(d)}</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="df-switch"
+                      aria-label="Play sports when schedule is idle"
+                      checked={d.preferences.idle_sports_enabled ?? false}
+                      disabled={busy}
+                      onChange={(e) => preference({ idle_sports_enabled: e.target.checked })}
+                    />
+                  </div>
+                  <div className="df-setting">
+                    <div className="df-row-copy">
                       <strong>Minimum time on an event</strong>
                       <p>Manual choices take effect immediately.</p>
                     </div>
@@ -2137,12 +2166,13 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                 </dd>
               </dl>
               <div className="df-info df-spacer">
-                Manual protection survives delays and overtime. Other manual
-                entries may take precedence during overlap.
+                {isIdleSports(modalEvent)
+                  ? "Selected from Prime Video while the schedule is idle. Scheduled coverage and manual choices take priority."
+                  : "Manual protection survives delays and overtime. Other manual entries may take precedence during overlap."}
               </div>
               <EntitlementStatus value={modalEvent.entitlement} timezone={d.preferences.timezone}
                 details />
-              <div className="df-dialog-actions">
+              {!isIdleSports(modalEvent) && <div className="df-dialog-actions">
                 {!entitlementConfirmed(modalEvent.entitlement) && <Button
                   disabled={busy || modalEvent.entitlement?.state === "checking" || !modalEvent.entitlement?.can_check}
                   onClick={() => checkEntitlement(modalEvent)}
@@ -2188,7 +2218,7 @@ function DeviceWorkspace({ deviceId, selectDevice, view, setView }: {
                     Play now
                   </Button>
                 )}
-              </div>
+              </div>}
             </>
           )}
           {modal.type === "playback" && (

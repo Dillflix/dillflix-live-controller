@@ -52,7 +52,9 @@ class TransactionConnection(sqlite3.Connection):
 
 class Database:
     # Older releases must not ignore completion, discovery, or source priority.
-    SCHEMA_VERSION = 25
+    # Older planners treat Prime idle rows as ordinary wildcard-rule content.
+    # Fence downgrades even though the persisted schema needs no new columns.
+    SCHEMA_VERSION = 26
 
     def __init__(self, path):
         self.path = path

@@ -126,6 +126,9 @@ def collect(path, device_id="living-room"):
         return redact(
             {
                 "schema_version": 1,
+                "idle_sports": json.loads((db.execute(
+                    "SELECT value FROM metadata WHERE key=?", ("idle_sports_audit:" + device_id,)
+                ).fetchone() or ["null"])[0]),
                 "model_capture": ModelCaptureStore(path).diagnostics(
                     device_id,
                     content_id=(json.loads((db.execute(

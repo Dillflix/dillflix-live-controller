@@ -239,6 +239,7 @@ def default_device(mode):
             "minimum_viewing_seconds": 300,
             "switch_cooldown_seconds": 30,
             "same_tier_switching": False,
+            "idle_sports_enabled": False,
             "discovery_leagues": list(DEFAULT_LEAGUES),
         },
         "force_switch": False,

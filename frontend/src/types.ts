@@ -78,6 +78,7 @@ export interface VPNPolicy {
   access_ttl: number;
 }
 export interface Preferences {
+  idle_sports_enabled?: boolean;
   event_attempt_limit?: number;
   vpn_policy?: VPNPolicy | null;
   discovery_leagues: string[];
@@ -126,6 +127,12 @@ export interface Device {
     presentation: string;
   } | null;
   playback_state: string;
+  idle_sports?: {
+    state: string;
+    reason?: string;
+    checked_at?: string;
+    content_id?: string;
+  } | null;
   prime_network?: {
     state: string;
     target_id?: string | null;

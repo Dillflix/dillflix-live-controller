@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from .database import encode
-from .planner import parse_time
+from .planner import parse_time, is_idle, idle_blocked, retained_idle_identity
 from .recovery import PlaybackRecovery, compatible_options
 
 
@@ -24,7 +24,8 @@ class PlaybackCoordinator(PlaybackRecovery):
             and job["content_id"] == device.get("desired")
             and job["deadline_at"] is not None
             and job["deadline_at"] > time.time()
-            and item["lifecycle"]["state"] == "unknown"
+            and (item["lifecycle"]["state"] == "unknown" or is_idle(item))
+            and (not is_idle(item) or retained_idle_identity(device, item, datetime.now(UTC)))
             and not device.get("manual_control")
             and not device.get("input_handoff")
             and device["automation"] == "active"
@@ -91,6 +92,11 @@ class PlaybackCoordinator(PlaybackRecovery):
                 "SELECT * FROM jobs WHERE device_id=? AND intent=? AND state='pending'",
                 (d["id"], d["intent_version"]),
             ).fetchone()
+            if decision.get("selection_only") and not pending:
+                # An already-issued read may finish under its original budget.
+                # Its stale nomination is never permission for a new Play.
+                self.db.save_device(db, d)
+                return True
             if decision.get("retry_after") and decision.get("prime_readiness") and self.executor:
                 # Catalogue waiting is an observation, not a new playback intent.
                 self.db.save_device(db, d)
@@ -109,9 +115,15 @@ class PlaybackCoordinator(PlaybackRecovery):
                 d["playback_state"] = "waiting" if decision.get("prime_readiness") else "failed"
                 self.db.save_device(db, d)
                 return True
-            if not target and self.keep_pending_launch(d, pending, indexed.get(d.get("desired"))):
+            pending_item = indexed.get(d.get("desired"))
+            retain_pending = self.keep_pending_launch(d, pending, pending_item)
+            may_hold = ((not idle_blocked(decision) or is_idle(indexed.get(target, {})))
+                        if is_idle(pending_item or {}) else (not target or is_idle(indexed.get(target, {}))))
+            if may_hold and retain_pending:
                 target = pending["content_id"]
                 d["reason"] = "Continuing the accepted playback request; event status temporarily unavailable"
+                if d.get("stream_assignment") is not None:
+                    d["stream_assignment"]["content_id"] = target
             observed = d.get("observed") or {}
             if observed.get("verified") and observed.get("content_id") == d.get("retry_playback"):
                 d["retry_playback"] = None
@@ -356,7 +368,10 @@ class PlaybackCoordinator(PlaybackRecovery):
             from .fleet import select_for_stream
             decision = select_for_stream(self, db, d, items, self.now(db), datetime.now(UTC), reserve=False)
             item = next((i for i in items if i["content_id"] == job["content_id"]), None)
-            holding = not decision["content_id"] and self.keep_pending_launch(d, job, item)
+            chosen = next((i for i in items if i["content_id"] == decision["content_id"]), {})
+            may_hold = ((not idle_blocked(decision) or is_idle(chosen)) if is_idle(item or {})
+                        else not decision["content_id"] or is_idle(chosen))
+            holding = may_hold and self.keep_pending_launch(d, job, item)
             if (
                 d.get("manual_control")
                 or d.get("input_handoff")

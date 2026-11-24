@@ -1,6 +1,7 @@
 """On-demand catalogue checks before committing a playback switch."""
 
 import asyncio
+from copy import deepcopy
 import hashlib
 import json
 import time
@@ -20,6 +21,7 @@ from .client import (
 from .match_context import IDENTITY_CONTRACT
 from .matching import selection_state
 from .search import choose_search
+from .linear import catalogue_capability, read_catalogue, is_idle, is_linear, choose_airing, choose_idle_event, timestamp
 
 SELECTION_HANDOFF_SECONDS = 60
 
@@ -41,6 +43,64 @@ def key(device_id):
     return "prime_catalogue_probe:" + device_id
 
 
+def snapshot_identity(snapshot):
+    """Native observation age can refresh without changing programme identity."""
+    if snapshot.get("source") != "prime_idle":
+        return snapshot
+    value = deepcopy(snapshot)
+    value.get("prime_idle", {}).pop("observed_at", None)
+    return value
+
+
+def renew_idle_evidence(db, database, device, request, results, selected):
+    """Persist an exact fresh native recheck, never extend evidence from a timer.
+
+    Callers must first validate their probe/token intent and service ownership.
+    Submitted playback requests remain immutable; only catalogue availability
+    and the same device nomination receive the provider's new observation time.
+    """
+    if not is_idle(request):
+        return None
+    from ..idle_sports import candidate_blocked, catalogue_candidates, expires_at
+    now = datetime.now(UTC)
+    snapshot = request["content_snapshot"]
+    cid = snapshot["id"]
+    nomination = device.get("idle_sports") or {}
+    if (device["automation"] != "active" or device.get("manual_control") or device.get("input_handoff")
+            or not device["preferences"].get("idle_sports_enabled") or nomination.get("content_id") != cid):
+        return None
+    validated, _ = (choose_airing if is_linear(request) else choose_idle_event)(request, results, now=now)
+    if (not validated or validated.get("readiness") != "ready" or not selected
+            or any(validated.get(k) != selected.get(k) for k in ("content_id", "viewing_option_id"))):
+        return None
+    native = next((candidate for candidate in catalogue_candidates({**results, "events": results.get("events") or []}, now)
+                   if candidate["candidate_id"] == cid), None)
+    expected = snapshot.get("prime_idle") or {}
+    if native is None or any(native.get(k) != expected.get(k) for k in (
+        "title", "synopsis", "episode_title", "sport", "competition", "genres",
+        "language", "audio_language", "languages", "station_name", "starts_at", "ends_at",
+    )):
+        return None  # Changed programming/preferences evidence needs a new chooser assessment.
+    row = db.execute("SELECT snapshot FROM contents WHERE id=? AND source='prime_idle'", (cid,)).fetchone()
+    current = json.loads(row[0]) if row else None
+    if current is None or snapshot_identity(current) != snapshot_identity(snapshot):
+        return None
+    renewed = deepcopy(snapshot)
+    renewed["prime_idle"]["observed_at"] = results["observed_at"]
+    candidate = renewed["prime_idle"]
+    if candidate_blocked(db, device, candidate) or expires_at(candidate) <= now.timestamp():
+        return None
+    prior_observed = timestamp(current["prime_idle"].get("observed_at"))
+    if not prior_observed or timestamp(results["observed_at"]) >= prior_observed:
+        db.execute("UPDATE contents SET snapshot=?,seen_at=?,active=1 WHERE id=? AND source='prime_idle'",
+                   (json.dumps(renewed, separators=(",", ":")), results["observed_at"], cid))
+    device["idle_sports"] = {**nomination, "state": "ready", "candidate": candidate,
+        "expires_at": expires_at(candidate), "checked_at": now.isoformat(),
+        "scope": {k: results.get(k) for k in ("session_id", "generation", "network_context_id")}}
+    database.save_device(db, device)
+    return renewed
+
+
 def signature(device, item):
     return hashlib.sha256(
         json.dumps(
@@ -49,7 +109,7 @@ def signature(device, item):
                 device["revision"],
                 device["intent_version"],
                 item["content_id"],
-                item["snapshot"],
+                snapshot_identity(item["snapshot"]),
                 item["viewing_options"],
                 device.get("prime_network_scope"),
             ],
@@ -184,6 +244,8 @@ class CatalogueChecks:
         }
         self.db.set_meta(db, key(device["id"]), probe)
         assignment = device.get("stream_assignment")
+        if assignment is None and is_idle(probe["request"]):
+            assignment = device["stream_assignment"] = {"content_id": item["content_id"], "revision": device["revision"]}
         if assignment and assignment.get("content_id") == item["content_id"]:
             assignment["catalogue"] = {"id": probe["id"], "intent": probe["intent"],
                                        "expires": probe["expires"], "identity": identity(item)}
@@ -221,15 +283,17 @@ class CatalogueChecks:
                     nonlocal session
                     async with self.input_lock:
                         await require_current("search")
-                        evidence["runtime_capability"] = "search"
-                        health = await self.check_session(session, capabilities=("search",))
+                        capability = catalogue_capability(probe["request"])
+                        evidence["runtime_capability"] = capability
+                        health = await self.check_session(session, capabilities=(capability,))
                         if health.get("api_version", 0) < 11:
                             raise ExecutorError(
                                 "prime_api_incompatible", "Prime Player API 11 or newer is required", retryable=False
                             )
                         session = health["session_id"]
                         ownership = self.player.ownership(health, automatic=True)
-                        results = await self.player.search(query, self.config.prime_search_timeout, ownership)
+                        results = await read_catalogue(self.player, probe["request"], query,
+                                                       self.config.prime_search_timeout, ownership)
                     if results.get("session_id") != session:
                         raise ExecutorError("prime_stale_result", "Catalogue result belongs to another session")
                     self.require_catalogue_generation(health, results)
@@ -339,6 +403,10 @@ class CatalogueChecks:
             superseded = bool(evidence.get("invalidation") or error.get("code") == "prime_stale_result")
             if superseded:
                 valid, state = False, "discarded"
+            if valid and state == "ready" and not error and is_idle(probe["request"]):
+                if renew_idle_evidence(db, self.db, device, probe["request"], evidence.get("results") or {},
+                                       evidence.get("selected")) is None:
+                    valid, state = False, "discarded"
             rule = self.network_policy.rule(probe["request"]["allowed_viewing_options"], probe["request"]["content_snapshot"])
             fallback = state
             if valid and rule and (
@@ -457,7 +525,7 @@ class CatalogueChecks:
             and probe.get("results", {}).get("network_context_id") == network_context_id
             and (generation is None or probe.get("results", {}).get("generation") == generation)
             and time.time() < probe.get("expires", 0)
-            and probe.get("request", {}).get("content_snapshot") == request["content_snapshot"]
+            and snapshot_identity(probe.get("request", {}).get("content_snapshot") or {}) == snapshot_identity(request["content_snapshot"])
             and probe.get("request", {}).get("allowed_viewing_options") == request["allowed_viewing_options"]
         ):
             return probe

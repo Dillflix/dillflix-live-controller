@@ -19,6 +19,7 @@ from .prime_player.entitlement import choose_entitlement
 from .prime_player.identity_cache import EventMatchCache
 from .prime_player.labels import prime_option, search_queries
 from .prime_player.search import choose_search
+from .prime_player.linear import catalogue_capability, read_catalogue
 
 log = logging.getLogger(__name__)
 SEARCH_SECONDS = 15
@@ -129,6 +130,14 @@ class EntitlementChecks:
                 WHERE e.device_id=? AND e.content_id IN {scope}""", params
         )}
         for item in items:
+            if item.get("source") == "prime_idle":
+                fresh = item["lifecycle"]["state"] == "live" and not item["lifecycle"].get("stale")
+                item["entitlement"] = {"status": "entitled" if fresh else "unknown",
+                    "state": "complete" if fresh else "retry", "checked_at": item["lifecycle"].get("observed_at"),
+                    "next_check_at": None, "blocked": False, "result": None,
+                    "reason": "Fresh Prime live catalogue" if fresh else "Awaiting fresh Prime catalogue",
+                    "can_check": False}
+                continue
             row = records.get(item["content_id"])
             relevant = any(prime_option(o) for o in item["viewing_options"])
             if not self.executor or not relevant:
@@ -585,9 +594,9 @@ class EntitlementChecks:
                 health = await workflow.player.health()
                 if health.get("serial") != self.settings.screen_adb_serial:
                     raise ExecutorError("prime_device_mismatch", "Prime Player device differs")
-                workflow.player.require(health, "search")
+                workflow.player.require(health, catalogue_capability(request))
                 ownership = workflow.player.ownership(health, automatic=True)
-                result = await workflow.player.search(query, SEARCH_SECONDS, ownership)
+                result = await read_catalogue(workflow.player, request, query, SEARCH_SECONDS, ownership)
                 after = await workflow.player.health()
                 if after["session_id"] != health["session_id"] or result.get("session_id") != after["session_id"]:
                     raise ExecutorError("prime_stale_result", "Prime session changed during entitlement check")
