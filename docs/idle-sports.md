@@ -62,11 +62,19 @@ can expand to eight pages within the original request budget. The playback
 monitor schedules the next read before the remaining guide evidence expires,
 including when a slow response arrived with little lifetime left.
 
+Catalogue refresh finishes before the monitor reads its final playback sample.
+A slow catalogue request must not age a previously fresh playback observation
+past its acceptance limit. If a native event is missing from the refreshed
+catalogue, the monitor still checks bound playback status so a fresh native Ended
+result can complete it; a still-playing result cannot bypass missing guide proof.
+
 If guide freshness lapses during an active attempt, the controller retains that
 attempt and displays it as unverified until matching evidence returns. This does
 not authorize another Play or extend any timestamp. Eligible scheduled content,
 manual intent, disabled idle mode, withdrawn nominations and the actual TV slot
 boundary still take precedence. A refresh gap alone does not cancel playback.
+An explicitly failed attempt is not retained by that hold: the coordinator clears
+its stale recovery state so idle discovery can resume and nominate a fresh choice.
 
 The controller validates positive rows, uses a separate
 `idle_sports_selection` model task, then rechecks intent, ownership, generation,

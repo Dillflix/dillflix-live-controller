@@ -219,6 +219,7 @@ def choose(device, items, now, real_now):
         current = next((item for item in items if item['content_id'] == observed.get('content_id')), None)
         if (current and device.get('automation') == 'active'
                 and not device.get('manual_control') and not device.get('input_handoff')
+                and device.get('playback_state') != 'failed'
                 and observed.get('request_id') and observed.get('content_id') == device.get('desired')
                 and retained_idle_identity(device, current, real_now, allow_refresh=True)):
             # Guide expiry withdraws verification, not the existing physical

@@ -911,7 +911,9 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
         if (not choice or choice["readiness"] != "ready" or choice["content_id"] != selected["content_id"]
                 or choice["viewing_option_id"] != selected["viewing_option_id"]
                 or (is_linear(request) and choice["linear_airing"]["airing_id"] != selected["linear_airing"]["airing_id"])):
-            raise ExecutorError("prime_linear_airing_unverified", "Current guide no longer confirms the selected TV airing")
+            message = ("Current guide no longer confirms the selected TV airing" if is_linear(request)
+                       else "Current Prime catalogue no longer confirms the selected live event")
+            raise ExecutorError("prime_linear_airing_unverified", message)
         await self.database_call(self.save_catalogue_refresh, token, request, choice, results, audit)
         workflow.update(selected=choice, catalogue=results, selection=audit)
 
@@ -923,13 +925,22 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
             request = json.loads(row["request"])
             await self.revalidate_identity(token, request, workflow)
             idle_event = is_idle(request) and not is_linear(request)
-            if not idle_event:
+            guide_error = None
+            try:
                 await self.refresh_linear_airing(token, request, workflow)
+            except ExecutorError as exc:
+                if not idle_event or exc.code != "prime_linear_airing_unverified":
+                    raise
+                # A native event can leave the catalogue when it ends. Still
+                # read bound status so fresh Ended evidence can complete it.
+                guide_error = exc
             await self.check_session(workflow["session_id"], capabilities=("playback_status",))
             async with self.input_lock:
+                # Catalogue reads can exceed observation_ttl. Take the final
+                # playback sample after that work, never before it.
                 status = await self.player.status(workflow["attempt_id"], self.config.prime_status_timeout)
-            if idle_event and status.get("state") != "ended":
-                await self.refresh_linear_airing(token, request, workflow)
+            if guide_error and status.get("state") != "ended":
+                raise guide_error
             await self.database_call(lambda: self.record_status(token, status))
         except asyncio.CancelledError:
             raise
