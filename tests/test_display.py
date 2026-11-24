@@ -122,6 +122,65 @@ def test_current_last_and_target_remain_distinct(playing):
     assert second["observed_at"] == first["observed_at"]
 
 
+def test_prime_idle_program_is_current_but_never_a_schedule_entry(playing):
+    from controller.idle_sports import content_snapshot
+    client, service, _ = playing
+    now = datetime.now(UTC)
+    native = {'candidate_id': 'demo:lions', 'kind': 'linear_program', 'title': 'NHL Hockey',
+              'episode_title': 'Toronto Maple Leafs at New York Islanders',
+              'station_name': ' Sportsnet\n Pacific ', 'sport': 'ice hockey', 'competition': 'NHL',
+              'observed_at': now.isoformat(), 'starts_at': (now - timedelta(minutes=10)).isoformat(),
+              'ends_at': (now + timedelta(minutes=30)).isoformat(), 'entitlement_status': 'ENTITLED',
+              'private_field': 'must-not-leak'}
+    with service.db.transaction() as db:
+        db.execute("UPDATE contents SET source='prime_idle',snapshot=? WHERE id='demo:lions'",
+                   (encode(content_snapshot(native)),))
+        device = service.db.device(db)
+        device['preferences']['idle_sports_enabled'] = True
+        device['idle_sports'] = {'state': 'ready', 'expires_at': now.timestamp() + 60, 'reason': 'must-not-leak'}
+        service.db.save_device(db, device)
+        service.db.set_meta(db, 'feed_health', {'state': 'error'})
+    response = client.get(URL)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    event = data['playback']['event']
+    assert data['playback']['state'] == 'playing' and data['playback']['idle_sports_state'] == 'ready'
+    assert event['source'] == 'prime_idle' and event['title'] == 'NHL Hockey'
+    assert event['program'] == {'episode_title': native['episode_title'], 'station_name': 'Sportsnet Pacific',
+                                'sport': 'ice hockey', 'competition': 'NHL'}
+    assert event['teams'] == [] and event['scores'] == [None, None]
+    assert not any(e['content_id'] == 'demo:lions' for e in data['events'])
+    assert data['schedule']['state'] == 'unavailable'
+    assert 'must-not-leak' not in response.text and 'prime_idle' not in event['program'].values()
+    with service.db.transaction() as db:
+        device = service.db.device(db)
+        device['observed']['valid_until'] = (now - timedelta(seconds=1)).isoformat()
+        device['idle_sports']['expires_at'] = now.timestamp() - 1
+        service.db.save_device(db, device)
+    playback = client.get(URL).json()['playback']
+    assert playback['state'] == 'unverified' and playback['event'] is None
+    assert playback['last_event']['source'] == 'prime_idle'
+    assert playback['idle_sports_state'] == 'waiting'
+
+
+@pytest.mark.parametrize('enabled,worker_state,expected', [
+    (False, 'checking', 'off'), (True, 'checking', 'checking'),
+    (True, 'unavailable', 'unavailable'), (True, 'internal-error', 'waiting'),
+])
+def test_idle_discovery_state_does_not_claim_playback_or_expose_worker_errors(rig, enabled, worker_state, expected):
+    client, service, _ = rig
+    with service.db.transaction() as db:
+        device = service.db.device(db)
+        device['preferences']['idle_sports_enabled'] = enabled
+        device['idle_sports'] = {'state': worker_state, 'reason': 'must-not-leak'}
+        service.db.save_device(db, device)
+    response = client.get(URL)
+    playback = response.json()['playback']
+    assert playback['state'] == 'idle' and playback['event'] is None
+    assert playback['idle_sports_state'] == expected
+    assert 'must-not-leak' not in response.text
+
+
 @pytest.mark.parametrize("condition,status,state", [
     ("expired", "rechecking", "unverified"),
     ("offline", "unavailable", "unverified"),

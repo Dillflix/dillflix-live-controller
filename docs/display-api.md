@@ -51,6 +51,9 @@ The existing top-level `playback` remains the requested device for older clients
   This is not a claim that playback continues and may be a completed event.
 - `target_event`: current desired identity, or null. It is not verified playback
   or a promise of the next selection; it may match the current event.
+- `idle_sports_state`: `off`, `waiting`, `checking`, `ready`, or `unavailable`.
+  This reports discovery only. `ready` means a fresh nomination exists, not that
+  playback has started. It is supplied independently for each stream.
 
 Display status gives manual control and paused automation precedence, then a
 current navigating request, accepted playback, offline executor, unverified
@@ -62,10 +65,15 @@ Each `DisplayEvent` contains exactly:
 ```text
 content_id, title, league, kind, start_time, expected_end_time,
 end_time_estimated, teams, scores, status_detail, lifecycle,
-planned, priority, artwork
+planned, priority, artwork, source, program
 ```
 
 - `content_id` is opaque and must not be reconstructed from titles or teams.
+- `source` distinguishes `prime_idle` programming from the scheduled catalogue.
+  For idle programming, `program` contains nullable `episode_title`,
+  `station_name`, `sport`, and `competition` from the selected native metadata.
+  It contains no inferred teams, scores, playback identifiers or raw diagnostics.
+  Missing native artwork remains missing; clients can use a local sports/TV icon.
 - `teams` is empty for broadcasts without competitors. Otherwise it contains
   away then home, each with nullable `abbreviation`, `full_name`, `logo_url`.
   A missing side remains a null-valued entry to preserve positional identity.
@@ -91,6 +99,10 @@ The list is a schedule, not an exact future playback sequence. Current, retained
 and desired events are available separately even if they fail these schedule
 filters. Simulator/non-Prime entries without entitlement records are omitted
 from the schedule; simulated current playback remains explicitly identified.
+Prime idle rows are excluded from this shared schedule. Accepted, retained and
+desired idle programming remains available in the corresponding playback fields.
+Teamarr schedule freshness does not determine Prime idle programme freshness;
+the programme's own evidence and playback expiry still apply.
 
 ## Freshness and connection failure
 
