@@ -269,7 +269,7 @@ class ContentStatusCoordinator:
                     "error": None,
                 },
             }
-        if row and row["source"] == "prime_idle":
+        if row and "source" in row.keys() and row["source"] == "prime_idle":
             from .idle_sports import lifecycle
             snapshot = snapshot if snapshot is not None else json.loads(row["snapshot"])
             native = json.loads(check["observation"]) if check and check["observation"] else {}

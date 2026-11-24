@@ -193,5 +193,5 @@ def test_schema_24_upgrade_preserves_data_and_adds_conditional_fences(catalogue)
     upgraded = Database(service.db.path)
     with upgraded.snapshot() as db:
         assert [tuple(row) for row in db.execute("SELECT * FROM contents ORDER BY id")] == before
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 25
+        assert db.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
         assert db.execute("SELECT 1 FROM sqlite_master WHERE name='entitlement_summary'").fetchone()
