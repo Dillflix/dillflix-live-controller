@@ -169,7 +169,7 @@ def test_expired_active_idle_attempt_is_retained_without_authorizing_a_launch(st
     assert decide(device, items)['content_id'] is None
 
 
-@pytest.mark.parametrize('condition', ['slot_ended', 'disabled', 'manual_finished', 'withdrawn', 'native_ended'])
+@pytest.mark.parametrize('condition', ['slot_ended', 'disabled', 'manual_finished', 'withdrawn', 'native_ended', 'failed'])
 def test_expired_active_idle_hold_cannot_outlive_programme_or_explicit_withdrawal(condition):
     device, items = setup()
     items = idle_items(items)
@@ -182,6 +182,7 @@ def test_expired_active_idle_hold_cannot_outlive_programme_or_explicit_withdrawa
     if condition == 'manual_finished': device['manual_completions'] = {'idle-a': NOW.isoformat()}
     if condition == 'withdrawn': device['idle_sports'] = {'state': 'unavailable'}
     if condition == 'native_ended': items[0]['lifecycle'] = {'state': 'ended'}
+    if condition == 'failed': device['playback_state'] = 'failed'
     assert decide(device, items)['content_id'] is None
 
 

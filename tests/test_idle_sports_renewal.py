@@ -74,7 +74,7 @@ async def test_preflight_survives_old_nomination_expiry_and_hands_off_refreshed_
 
 
 @pytest.mark.parametrize("kind", ["event", "linear_program"])
-async def test_monitor_renews_source_and_nomination_without_replaying_or_extending_request(tmp_path, kind):
+async def test_only_linear_monitor_renews_catalogue_without_replaying_or_extending_request(tmp_path, kind):
     controller, workflow = rig(tmp_path)
     try:
         value = candidate(kind)
@@ -87,8 +87,8 @@ async def test_monitor_renews_source_and_nomination_without_replaying_or_extendi
         old = expire_source(controller, value["candidate_id"])
         await workflow.monitor(row(workflow, token))
         device, snapshot = stored(controller, value["candidate_id"])
-        assert snapshot["prime_idle"]["observed_at"] != old
-        assert device["idle_sports"]["expires_at"] > time.time()
+        assert (snapshot["prime_idle"]["observed_at"] != old) is (kind == 'linear_program')
+        assert (device["idle_sports"]["expires_at"] > time.time()) is (kind == 'linear_program')
         assert row(workflow, token)["request"] == before
         assert workflow.store.report(token)["observation"]["verified"]
         assert len([c for c in workflow.player.calls if c[0] == "play"]) == 1
@@ -140,7 +140,7 @@ async def test_coordinator_keeps_verified_attempt_during_expired_guide_refresh(t
             assert db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == 1
         await workflow.monitor(row(workflow, token))
         renewed, _ = stored(controller, value['candidate_id'])
-        assert renewed['idle_sports']['expires_at'] > time.time()
+        assert (renewed['idle_sports']['expires_at'] > time.time()) is (kind == 'linear_program')
         assert workflow.store.report(token)['observation']['verified']
         assert len([c for c in workflow.player.calls if c[0] == 'play']) == 1
     finally:
@@ -181,7 +181,7 @@ async def test_exact_idle_match_avoids_wide_scan_but_missing_target_expands(tmp_
 
 
 @pytest.mark.parametrize('kind', ['linear_program', 'event'])
-async def test_launch_and_monitor_schedule_refresh_before_old_on_receipt_guide_expires(tmp_path, kind):
+async def test_only_linear_monitor_schedule_depends_on_catalogue_age(tmp_path, kind):
     controller, workflow = rig(tmp_path)
     try:
         value = candidate(kind)
@@ -197,10 +197,12 @@ async def test_launch_and_monitor_schedule_refresh_before_old_on_receipt_guide_e
         token = report['token']
         await workflow.navigate(row(workflow, token))
         assert workflow.store.report(token)['operation']['state'] == 'playing_verified'
-        assert 0 < row(workflow, token)['next_check'] - time.time() < 15
+        delay = row(workflow, token)['next_check'] - time.time()
+        assert 0 < delay < 15 if kind == 'linear_program' else 90 < delay <= 100
         await workflow.monitor(row(workflow, token))
         assert workflow.store.report(token)['observation']['verified']
-        assert 0 < row(workflow, token)['next_check'] - time.time() < 15
+        delay = row(workflow, token)['next_check'] - time.time()
+        assert 0 < delay < 15 if kind == 'linear_program' else 90 < delay <= 100
     finally:
         await cleanup(controller)
 

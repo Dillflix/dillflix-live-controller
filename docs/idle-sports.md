@@ -33,8 +33,9 @@ software rollback. Disabling the setting leaves scheduled playback available.
 The primary and secondary players are independent installations: both need the
 catalogue capability if both streams will use idle sports. Catalogue failures do
 not renew evidence or become subscription denials. Missing capability, invalid
-model responses and service outages leave the stream without an idle nomination
-and retry with bounded backoff. Existing manual/device ownership is preserved.
+model responses and service outages cannot authorize new playback and retry with
+bounded backoff. An already verified native event continues under direct playback
+monitoring. Existing manual/device ownership is preserved.
 
 The stream's activity log shows catalogue checks, chooser progress, selections,
 unconfirmed results and failures with retry delays. A selection entry is not a
@@ -56,17 +57,33 @@ observed request latency exceeds the remaining budget, and returns validated
 pages with explicit partial coverage if a continuation stalls. A timeout before
 any usable page is reported as a catalogue timeout, not an empty selection.
 
-Rechecking a selected programme uses one page for a linear channel or three for
-a native event. An exact current match ends the read; if absent, the controller
-can expand to eight pages within the original request budget. The playback
-monitor schedules the next read before the remaining guide evidence expires,
-including when a slow response arrived with little lifetime left.
+Before launch, rechecking a selected programme uses one page for a linear channel
+or three for a native event. An exact current match ends the read; if absent, the
+controller can expand to eight pages within the original request budget. Fresh
+catalogue admission is required immediately before Play.
 
-If guide freshness lapses during an active attempt, the controller retains that
-attempt and displays it as unverified until matching evidence returns. This does
-not authorize another Play or extend any timestamp. Eligible scheduled content,
+After a native EVENT launch, playback uses the same direct status monitoring as
+scheduled events: matching session, attempt, requested/resolved identity, network
+context and fresh native playback evidence. No catalogue check is required after
+dispatch or during monitoring, and catalogue expiry during startup cannot reject
+confirmed live launch proof. A fresh, bound native Ended result completes the event.
+Independent discovery can propose a replacement, but an omitted current event
+cannot erase owned, verified playback or renew its permission for a new launch.
+An explicit chooser reassessment or higher-priority intent can still replace it.
+
+A linear station needs continuing guide validation because its programme can
+change while the station playback ID stays the same. Its monitor schedules a read
+before the remaining guide evidence expires, even for responses old on receipt.
+That guide read finishes before the final playback sample, so a slow read cannot
+age otherwise fresh playback evidence past the acceptance limit.
+
+If station guide freshness lapses during an active attempt, the controller retains
+that attempt and displays it as unverified until matching evidence returns. This
+does not authorize another Play or extend any timestamp. Eligible scheduled content,
 manual intent, disabled idle mode, withdrawn nominations and the actual TV slot
 boundary still take precedence. A refresh gap alone does not cancel playback.
+An explicitly failed attempt is not retained by that hold: the coordinator clears
+its stale recovery state so idle discovery can resume and nominate a fresh choice.
 
 The controller validates positive rows, uses a separate
 `idle_sports_selection` model task, then rechecks intent, ownership, generation,

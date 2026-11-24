@@ -219,14 +219,16 @@ def choose(device, items, now, real_now):
         current = next((item for item in items if item['content_id'] == observed.get('content_id')), None)
         if (current and device.get('automation') == 'active'
                 and not device.get('manual_control') and not device.get('input_handoff')
+                and device.get('playback_state') != 'failed'
                 and observed.get('request_id') and observed.get('content_id') == device.get('desired')
                 and retained_idle_identity(device, current, real_now, allow_refresh=True)):
-            # Guide expiry withdraws verification, not the existing physical
-            # attempt. The monitor must be allowed to renew it. selection_only
-            # prevents this retained identity from authorizing another Play.
+            # Catalogue expiry cannot cancel an existing native event. A station
+            # still needs its guide refreshed. Neither case permits another Play
+            # from the retained identity without new admission evidence.
             return {'content_id': current['content_id'], 'manual': False, 'rule_id': None,
                     'selection_only': True, 'playback_origin': 'idle_sports',
-                    'reason': 'Rechecking the current idle sports programme'}
+                    'reason': ('Monitoring the current idle sports event' if current.get('kind') == 'event'
+                               else 'Rechecking the current idle sports programme')}
         return result
     # Reuse route exclusions, attempt limits and retry backoff. The only rule
     # admitted here is the fresh, device-scoped nomination; regular rules and
