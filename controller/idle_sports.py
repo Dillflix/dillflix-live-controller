@@ -328,7 +328,7 @@ class IdleSports:
                     raise ExecutorError("prime_device_mismatch", "Prime Player device differs")
                 workflow.player.require(health, "linear_catalog")
                 ownership = workflow.player.ownership(health, automatic=True)
-                result = await workflow.player.rpc("linear_catalog", timeout=45, budget=50,
+                result = await workflow.player.rpc("linear_catalog", timeout=45, budget=60,
                     facet="sports", max_pages=8, ownership=ownership)
                 after = await workflow.player.health()
                 if (after["session_id"] != health["session_id"] or result.get("session_id") != after["session_id"]

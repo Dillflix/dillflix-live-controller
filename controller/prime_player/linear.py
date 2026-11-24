@@ -29,7 +29,8 @@ async def read_catalogue(player, request, query, timeout, ownership):
     if not is_linear(request) and not is_idle(request):
         return await player.search(query, timeout, ownership)
     params = {"facet": "sports", "max_pages": 8} if is_idle(request) else {}
-    result = await player.rpc("linear_catalog", timeout=timeout, ownership=ownership, budget=timeout + 5, **params)
+    # The player may renew its network evidence after a long catalogue read.
+    result = await player.rpc("linear_catalog", timeout=timeout, ownership=ownership, budget=timeout + 15, **params)
     # Keep only normalized, bounded evidence in durable controller reports.
     return {**{k: result.get(k) for k in (
         "session_id", "generation", "network_context_id", "observed_at", "coverage", "complete",
