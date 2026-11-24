@@ -263,6 +263,25 @@ class IdleSports:
                 raise ExecutorError("prime_stale_result", "Idle sports intent changed")
             return [candidate for candidate in candidates if not candidate_blocked(db, device, candidate)]
 
+    def native_idle_is_playing(self, db, device, nomination, now):
+        """Retain owned playback on catalogue absence, never grant a new launch."""
+        candidate = nomination.get("candidate") or {}
+        observed = device.get("observed") or {}
+        cid = nomination.get("content_id")
+        if (candidate.get("kind") != "event" or not cid or candidate.get("candidate_id") != cid
+                or cid != device.get("desired") or cid != observed.get("content_id")
+                or device.get("playback_state") == "failed" or candidate_blocked(db, device, candidate)):
+            return False
+        job = db.execute("SELECT * FROM jobs WHERE id=? AND device_id=?",
+                         (observed.get("request_id"), device["id"])).fetchone()
+        if not job or self.observation_error(job, observed, now=now):
+            return False
+        return bool(db.execute(
+            "SELECT 1 FROM executor_jobs j JOIN executor_devices d ON d.current_token=j.token "
+            "AND d.device_id=j.device_id WHERE j.device_id=? AND j.request_id=? AND j.content_id=? "
+            "AND j.state='playing_verified' AND j.cancel_requested=0 AND j.retired_at IS NULL",
+            (device["id"], job["id"], cid)).fetchone())
+
     def idle_publish(self, context, selected, audit, scope):
         """Recheck priority inside the writer before making a nomination visible."""
         with self.db.transaction() as db:
@@ -277,6 +296,8 @@ class IdleSports:
                              or not eligible_candidates([selected], now=real, peers=fresh["peers"])[0]):
                 return False
             previous = device.get("idle_sports") or {}
+            continuing_native = bool(not selected and audit.get("current_classification") is None
+                                     and self.native_idle_is_playing(db, device, previous, real))
             if selected:
                 snapshot = content_snapshot(selected)
                 db.execute("INSERT INTO contents VALUES (?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET "
@@ -290,6 +311,14 @@ class IdleSports:
                     "scope": scope, "checked_at": real.isoformat(), "phase": "idle", "failures": 0,
                     "model_checked_at": previous.get("model_checked_at", 0) if audit.get("method") == "renewal" else real.timestamp(),
                     "preferences_digest": context["preferences_digest"],
+                    "next_check_at": real.timestamp() + REFRESH_SECONDS}
+            elif continuing_native:
+                # A partial catalogue can omit the playing event. Preserve its
+                # identity, not its expired launch permission. Native monitoring
+                # remains authoritative; discovery can propose a replacement.
+                device["idle_sports"] = {**previous, "state": "unavailable", "phase": "idle",
+                    "reason": "Current sports event is playing; checking for other sports",
+                    "checked_at": real.isoformat(), "failures": 0,
                     "next_check_at": real.timestamp() + REFRESH_SECONDS}
             elif audit.get("match_status") == "uncertain" and previous.get("expires_at", 0) > real.timestamp():
                 # A partial/uncertain read withdraws no existing evidence and
@@ -315,6 +344,10 @@ class IdleSports:
                 detail = ' · '.join(dict.fromkeys(' '.join(v.split())[:320] for v in fields if isinstance(v, str) and v.strip()))
                 self.idle_activity(db, context, 'result', 'Idle sports selected', detail,
                                    identity=['selected', selected['candidate_id']], repeat_after=None)
+            elif continuing_native:
+                self.idle_activity(db, context, 'result', 'Current idle sports playback continues',
+                    'No replacement from this catalogue check; monitoring the current Prime event',
+                    identity=['continuing_native', previous['content_id']])
             else:
                 retaining = device['idle_sports']['state'] == 'ready'
                 self.idle_activity(db, context, 'result',
