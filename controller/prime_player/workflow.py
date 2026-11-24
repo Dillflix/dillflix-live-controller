@@ -574,6 +574,16 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                             "network_context_id": workflow.get("network_context_id"),
                         })
 
+    def monitor_delay(self, request, workflow, now):
+        delay = self.config.monitor_interval
+        until = (airing_valid_until(workflow['selected'], now) if is_linear(request)
+                 else self.idle_evidence_until(workflow, now) if is_idle(request) else None)
+        if is_linear(request) or is_idle(request):
+            # Leave time for the read itself. A fixed 30-second sleep can
+            # outlive guide evidence that was already old on receipt.
+            delay = min(delay, max(1, (until - now).total_seconds() / 2) if until else 1)
+        return delay
+
     def record_launch(self, token, outcome):
         """Accept Prime Player's startup proof; current status belongs to monitoring."""
         now = datetime.now(UTC)
@@ -631,7 +641,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 token,
                 report,
                 state="playing_verified",
-                next_check=time.time() + self.config.monitor_interval,
+                next_check=time.time() + self.monitor_delay(json.loads(row['request']), workflow, now),
             )
 
     def record_status(self, token, status):
@@ -769,7 +779,7 @@ class PrimePlaybackWorkflow(NetworkAcquisition, CatalogueChecks, PlaybackWorker)
                 token,
                 report,
                 state="playing_verified" if verified else row["state"],
-                next_check=time.time() + self.config.monitor_interval,
+                next_check=time.time() + self.monitor_delay(json.loads(row['request']), workflow, now),
             )
             return verified
 

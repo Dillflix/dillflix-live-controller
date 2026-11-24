@@ -5,6 +5,7 @@ Guide windows bound verification; they do not establish sporting completion.
 """
 from datetime import UTC, datetime, timedelta
 import re
+import time
 
 from .labels import norm, prime_option
 from .match_context import IDENTITY_CONTRACT
@@ -28,9 +29,20 @@ def catalogue_capability(request):
 async def read_catalogue(player, request, query, timeout, ownership):
     if not is_linear(request) and not is_idle(request):
         return await player.search(query, timeout, ownership)
-    params = {"facet": "sports", "max_pages": 8} if is_idle(request) else {}
-    # The player may renew its network evidence after a long catalogue read.
+    started = time.monotonic()
+    params = {"facet": "sports", "max_pages": 1 if is_linear(request) else 3} if is_idle(request) else {}
     result = await player.rpc("linear_catalog", timeout=timeout, ownership=ownership, budget=timeout + 15, **params)
+    if is_idle(request):
+        # Revalidate the exact selected programme first. Most linear stations
+        # are on the first guide page; unrelated later pages cannot improve a
+        # positive exact match and can consume almost its entire evidence TTL.
+        selected, _ = (choose_airing if is_linear(request) else choose_idle_event)(request, result)
+        remaining = timeout - (time.monotonic() - started)
+        if (not selected or selected.get('readiness') != 'ready') and remaining >= 5 and (
+                result.get('catalogue_coverage') or {}).get('exhausted') is not True:
+            result = await player.rpc('linear_catalog', timeout=remaining, ownership=ownership,
+                                      budget=remaining + 15, facet='sports', max_pages=8)
+    # The player may renew its network evidence after a long catalogue read.
     # Keep only normalized, bounded evidence in durable controller reports.
     return {**{k: result.get(k) for k in (
         "session_id", "generation", "network_context_id", "observed_at", "coverage", "complete",

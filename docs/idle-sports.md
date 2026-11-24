@@ -56,6 +56,18 @@ observed request latency exceeds the remaining budget, and returns validated
 pages with explicit partial coverage if a continuation stalls. A timeout before
 any usable page is reported as a catalogue timeout, not an empty selection.
 
+Rechecking a selected programme uses one page for a linear channel or three for
+a native event. An exact current match ends the read; if absent, the controller
+can expand to eight pages within the original request budget. The playback
+monitor schedules the next read before the remaining guide evidence expires,
+including when a slow response arrived with little lifetime left.
+
+If guide freshness lapses during an active attempt, the controller retains that
+attempt and displays it as unverified until matching evidence returns. This does
+not authorize another Play or extend any timestamp. Eligible scheduled content,
+manual intent, disabled idle mode, withdrawn nominations and the actual TV slot
+boundary still take precedence. A refresh gap alone does not cancel playback.
+
 The controller validates positive rows, uses a separate
 `idle_sports_selection` model task, then rechecks intent, ownership, generation,
 network and peer claims before publishing a per-device nomination. Full model
